@@ -1,6 +1,6 @@
 # Home
 
-A starter Android app written in Kotlin with Jetpack Compose and Material 3.
+Balloon Pop — a simple, friendly tapping game for young kids, written in Kotlin with Jetpack Compose. Balloons float up; tap to pop them and collect stars. No ads, no internet, no way to lose.
 
 ## Build
 
