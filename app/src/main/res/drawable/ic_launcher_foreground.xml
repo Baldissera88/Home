@@ -3,8 +3,8 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Simple house -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,32 L76,52 L70,52 L70,74 L60,74 L60,60 L48,60 L48,74 L38,74 L38,52 L32,52 Z" />
+    <!-- Red 2x2 brick -->
+    <path android:fillColor="#B00D0F" android:pathData="M35,38 h14 v8 h-14 z M59,38 h14 v8 h-14 z" />
+    <path android:fillColor="#D01012" android:pathData="M30,46 h48 v30 h-48 z" />
+    <path android:fillColor="#9E0B0D" android:pathData="M30,71 h48 v5 h-48 z" />
 </vector>

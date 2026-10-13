@@ -1,6 +1,6 @@
-# Home
+# Victor's Bricks
 
-Balloon Pop — a simple, friendly tapping game for young kids, written in Kotlin with Jetpack Compose. Balloons float up; tap to pop them and collect stars. No ads, no internet, no way to lose.
+A friendly tapping game for young kids, written in Kotlin with Jetpack Compose. Toy bricks with animal faces float up; tap to pop them. A voice counts the pops out loud and cheers Victor on. **Colours** mode asks for one colour at a time. Speaks Danish or English (tap the flag on the start screen). No ads, no internet, no way to lose.
 
 ## Build
 
