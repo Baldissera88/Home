@@ -9,3 +9,9 @@ A friendly tapping game for young kids, written in Kotlin with Jetpack Compose. 
 - **GitHub Actions:** every push builds a debug APK. Download it from the workflow run's **Artifacts** (`home-debug-apk`).
 
 Requirements: JDK 17+, Android SDK 35. Min Android version: 8.0 (API 26).
+
+## Filuccas Klodser
+
+A second app in the `filucca/` module: a falling-blocks puzzle game (Danish UI) with toy-brick styling, levels, a saved high score, a ghost piece, and spoken cheers for Filucca. It installs separately from Victor's Bricks and has its own icon.
+
+GitHub Actions builds both apps; download `victors-bricks-apk` or `filuccas-klodser-apk` from the run's Artifacts.

@@ -1,0 +1,11 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Purple T-piece made of studded bricks -->
+    <path android:fillColor="#8E44AD" android:pathData="M33,40 h42 v14 h-42 z M47,54 h14 v14 h-14 z" />
+    <path android:fillColor="#6C3483" android:pathData="M33,51 h14 v3 h-14 z M61,51 h14 v3 h-14 z M47,65 h14 v3 h-14 z" />
+    <path android:fillColor="#7D3C98"
+        android:pathData="M35,46 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0 M49,46 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0 M63,46 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0 M49,60 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+</vector>
