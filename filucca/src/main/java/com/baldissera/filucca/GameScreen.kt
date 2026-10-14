@@ -53,27 +53,18 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val pieceColors = listOf(
-    Color(0xFF00A3DA), // I light blue
-    Color(0xFFF2CD37), // O yellow
-    Color(0xFF8E44AD), // T purple
-    Color(0xFF4B9F4A), // S green
-    Color(0xFFD01012), // Z red
-    Color(0xFF0055BF), // J blue
-    Color(0xFFFE8A18), // L orange
-)
-private val background = Color(0xFF1B2A41)
-private val boardColor = Color(0xFF263850)
-private val pink = Color(0xFFEC407A)
+internal val background = Color(0xFF1B2A41)
+internal val boardColor = Color(0xFF263850)
+internal val pink = Color(0xFFEC407A)
 
-private val cheers = listOf(
+internal val cheers = listOf(
     "Flot, Filucca!", "Sejt, Filucca!", "Super, Filucca!", "Wow, Filucca!", "Du er vild, Filucca!",
 )
 
 private const val RECORD_KEY = "record"
 
 @Composable
-fun GameScreen(game: BlockGame, audio: GameAudio, prefs: SharedPreferences) {
+fun GameScreen(game: BlockGame, audio: GameAudio, prefs: SharedPreferences, onHome: () -> Unit) {
     var record by remember { mutableIntStateOf(prefs.getInt(RECORD_KEY, 0)) }
     var newRecord by remember { mutableStateOf(false) }
     var cheer by remember { mutableStateOf<String?>(null) }
@@ -180,11 +171,13 @@ fun GameScreen(game: BlockGame, audio: GameAudio, prefs: SharedPreferences) {
                         Text("Rekord: $record", color = Color.White.copy(alpha = 0.8f), fontSize = 20.sp)
                     }
                     BigButton("Spil igen") { game.start() }
+                    BigButton("Menu", color = Color(0xFF546E7A), onClick = onHome)
                 }
                 game.paused -> Overlay {
                     Text("Pause", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Black)
                     BigButton("Fortsæt") { game.paused = false }
                     BigButton("Start forfra", color = Color(0xFF546E7A)) { game.start() }
+                    BigButton("Menu", color = Color(0xFF546E7A), onClick = onHome)
                 }
             }
 
@@ -196,7 +189,7 @@ fun GameScreen(game: BlockGame, audio: GameAudio, prefs: SharedPreferences) {
 }
 
 @Composable
-private fun CheerBubble(cheer: String?) {
+internal fun CheerBubble(cheer: String?) {
     AnimatedVisibility(
         visible = cheer != null,
         enter = fadeIn() + scaleIn(),
@@ -284,22 +277,6 @@ private fun Board(game: BlockGame, modifier: Modifier) {
     }
 }
 
-private fun Color.darker(f: Float) = Color(red * f, green * f, blue * f, alpha)
-
-/** One square brick with a stud on top. */
-private fun DrawScope.drawStudCell(topLeft: Offset, c: Float, color: Color) {
-    val inset = c * 0.04f
-    drawRoundRect(color, Offset(topLeft.x + inset, topLeft.y + inset), Size(c - 2 * inset, c - 2 * inset), CornerRadius(c * 0.12f))
-    drawRoundRect(
-        color.darker(0.75f),
-        Offset(topLeft.x + inset, topLeft.y + c * 0.78f),
-        Size(c - 2 * inset, c * 0.18f),
-        CornerRadius(c * 0.08f),
-    )
-    drawCircle(color.darker(0.88f), radius = c * 0.27f, center = Offset(topLeft.x + c / 2f, topLeft.y + c * 0.45f))
-    drawCircle(Color.White.copy(alpha = 0.3f), radius = c * 0.11f, center = Offset(topLeft.x + c * 0.4f, topLeft.y + c * 0.36f))
-}
-
 private fun DrawScope.drawPreview(type: Int) {
     val cells = shapeOf(type)
     val minX = cells.minOf { it.x }
@@ -358,7 +335,7 @@ private fun ControlButton(label: String, color: Color, modifier: Modifier, repea
 }
 
 @Composable
-private fun Overlay(content: @Composable () -> Unit) {
+internal fun Overlay(content: @Composable () -> Unit) {
     Column(
         modifier = Modifier
             .padding(16.dp)
@@ -370,7 +347,7 @@ private fun Overlay(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun Title() {
+internal fun Title() {
     val text = buildAnnotatedString {
         var i = 0
         "Filuccas\nKlodser".forEach { ch ->
@@ -382,10 +359,10 @@ private fun Title() {
 }
 
 @Composable
-private fun BigButton(label: String, color: Color = pink, onClick: () -> Unit) {
+internal fun BigButton(label: String, color: Color = pink, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .size(width = 220.dp, height = 64.dp)
+            .size(width = 270.dp, height = 64.dp)
             .background(color, RoundedCornerShape(14.dp))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
