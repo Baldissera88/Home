@@ -29,7 +29,13 @@ data class BlastPiece(val cells: List<Cell>, val color: Int) {
 }
 
 sealed interface BlastEvent {
-    data class Placed(val cleared: Set<Int>, val lines: Int, val combo: Int, val boardClear: Boolean) : BlastEvent
+    data class Placed(
+        val placed: Set<Int>,
+        val cleared: Map<Int, Int>, // board index -> colour of the cleared cell
+        val lines: Int,
+        val combo: Int,
+        val boardClear: Boolean,
+    ) : BlastEvent
     data object GameOver : BlastEvent
 }
 
@@ -57,7 +63,7 @@ class BlastGame {
         refill()
     }
 
-    private fun randomPiece() = BlastPiece(blastShapes.random(), pieceColors.indices.random())
+    private fun randomPiece() = BlastPiece(blastShapes.random(), gemColors.indices.random())
 
     /** Deal three new pieces, preferring a set where at least one can be placed. */
     private fun refill() {
@@ -107,8 +113,9 @@ class BlastGame {
 
         val b = withPiece(p, gx, gy)
         val (rows, cols) = fullLines(b)
-        val cleared = cellsOf(rows, cols)
-        cleared.forEach { b[it] = 0 }
+        val cleared = cellsOf(rows, cols).associateWith { b[it] - 1 }
+        cleared.keys.forEach { b[it] = 0 }
+        val placed = p.cells.map { (gy + it.y) * BLAST_SIZE + gx + it.x }.toSet()
         board = b
         tray[index] = null
 
@@ -122,7 +129,7 @@ class BlastGame {
         } else {
             combo = 0
         }
-        listener(BlastEvent.Placed(cleared, lines, combo, boardClear))
+        listener(BlastEvent.Placed(placed, cleared, lines, combo, boardClear))
 
         if (tray.all { it == null }) refill()
         if (tray.filterNotNull().none { fitsAnywhere(it) }) {

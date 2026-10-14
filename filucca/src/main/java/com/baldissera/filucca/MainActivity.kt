@@ -93,6 +93,6 @@ private fun MenuScreen(onFalling: () -> Unit, onBlast: () -> Unit) {
         Title()
         Text("Hej Filucca! Hvad vil du spille?", color = Color.White, fontSize = 20.sp)
         BigButton("Faldende klodser", color = Color(0xFF8E44AD), onClick = onFalling)
-        BigButton("Klods-Blast", color = pink, onClick = onBlast)
+        BigButton("💎 Juvel Blast", color = pink, onClick = onBlast)
     }
 }
