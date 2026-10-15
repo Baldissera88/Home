@@ -311,3 +311,64 @@ BIOMES = {
     "cave": (floor_cave, wall_cave, lambda s: top_generic(s, [0.25, 0.19, 0.13])),
     "hell": (floor_hell, wall_hell, lambda s: top_generic(s, [0.17, 0.08, 0.07])),
 }
+
+
+# ---------------------------------------------------------------- overworld ground
+
+def ground_grass(seed, size=128, flowers=6):
+    n = fbm(size, size, 4, 5, seed)
+    blades = fbm(size, size, 32, 2, seed + 4)
+    streak = value_noise(size, size, 64, seed + 8)
+    albedo = mix(np.array([0.17, 0.30, 0.09]), np.array([0.34, 0.45, 0.15]), n * 0.8 + streak * 0.3)
+    dry = fbm(size, size, 3, 3, seed + 31)
+    albedo = mix(albedo, np.array([0.42, 0.42, 0.2]), np.clip((dry - 0.62) * 3, 0, 0.5))
+    r = np.random.default_rng(seed)
+    for _ in range(flowers):
+        x, y = r.integers(1, size - 1), r.integers(1, size - 1)
+        col = [np.array([0.95, 0.85, 0.3]), np.array([0.9, 0.9, 0.95]), np.array([0.75, 0.4, 0.85]), np.array([0.9, 0.3, 0.3])][r.integers(0, 4)]
+        albedo[y - 1:y + 2, x - 1:x + 2] = col
+    return shade(blades * 0.6 + n * 0.4, albedo, 4.0, 0.55)
+
+
+def ground_dirt(seed, size=128):
+    n = fbm(size, size, 4, 5, seed)
+    fine = fbm(size, size, 24, 2, seed + 2)
+    albedo = mix(np.array([0.33, 0.25, 0.16]), np.array([0.48, 0.38, 0.25]), n)
+    yy, xx = np.mgrid[0:size, 0:size]
+    ruts = (np.abs(((xx + n * 10) % 64) - 20) < 4) * 0.12
+    albedo = albedo * (1 - ruts[..., None])
+    r = np.random.default_rng(seed)
+    height = n * 0.5 + fine * 0.3 - ruts
+    for _ in range(40):
+        x, y = r.integers(2, size - 2), r.integers(2, size - 2)
+        rad = r.uniform(1.2, 3)
+        m = (xx - x) ** 2 + (yy - y) ** 2 < rad * rad
+        albedo[m] = np.array([0.45, 0.42, 0.38]) * r.uniform(0.7, 1.2)
+        height[m] += 0.6
+    return shade(height, albedo, 5.0, 0.5)
+
+
+def ground_sand(seed, size=128):
+    n = fbm(size, size, 6, 4, seed)
+    yy, xx = np.mgrid[0:size, 0:size]
+    ripples = np.sin((yy + n * 20) / size * 2 * math.pi * 8) * 0.5 + 0.5
+    albedo = mix(np.array([0.62, 0.55, 0.38]), np.array([0.78, 0.7, 0.5]), n * 0.7 + ripples * 0.2)
+    return shade(ripples * 0.3 + n * 0.3, albedo, 3.0, 0.6)
+
+
+def water(seed, frame, size=128):
+    yy, xx = np.mgrid[0:size, 0:size]
+    n = fbm(size, size, 4, 4, seed)
+    phase = frame * math.pi
+    waves = np.sin((xx + yy * 0.5) / size * 2 * math.pi * 3 + n * 6 + phase) * 0.5 + 0.5
+    waves2 = np.sin((xx * 0.3 - yy) / size * 2 * math.pi * 4 + n * 4 - phase) * 0.5 + 0.5
+    base = mix(np.array([0.05, 0.16, 0.22]), np.array([0.10, 0.30, 0.38]), n)
+    spec = np.clip((waves * waves2 - 0.72) * 6, 0, 1)
+    col = base + spec[..., None] * np.array([0.5, 0.6, 0.6])
+    return np.clip(col, 0, 1)
+
+
+def world_ground():
+    cells = [ground_grass(700 + i) for i in range(4)] + [ground_dirt(710), ground_dirt(711), ground_sand(720),
+                                                           ground_grass(730, flowers=60)]
+    return np.concatenate(cells, axis=1)

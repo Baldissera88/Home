@@ -676,3 +676,307 @@ ICONS = [
     ("sword", icon_sword), ("axe", icon_axe), ("mace", icon_mace), ("helm", icon_helm), ("armor", icon_armor),
     ("boots", icon_boots), ("amulet", icon_amulet), ("ring", icon_ring), ("potion", icon_potion),
 ]
+
+
+# ================================================================ v3: weapons, outdoor creatures, world
+
+
+def _axe(hand, weapon, fore, s, frame):
+    d = norm(weapon)
+    f = frame_from(d, (0, 0, 1))
+    head_c = hand + d * 0.5 * s
+    return [
+        capsule(hand - d * 0.08 * s, hand + d * 0.56 * s, 0.02 * s, "wood"),
+        ellipsoid(head_c + f[:, 0] * 0.07 * s, v(0.09, 0.06, 0.014) * s, "steel", rot=f),
+        box(head_c, v(0.03, 0.04, 0.025) * s, "darksteel", rot=f, rnd=0.008),
+    ]
+
+
+def _mace(hand, weapon, fore, s, frame):
+    d = norm(weapon)
+    f = frame_from(d)
+    head = hand + d * 0.42 * s
+    out = [capsule(hand - d * 0.07 * s, head, 0.02 * s, "leather"), sphere(head, 0.075 * s, "darksteel")]
+    for k in range(6):
+        a = k * math.pi / 3
+        o = f[:, 0] * math.cos(a) + f[:, 2] * math.sin(a)
+        out.append(capsule(head + o * 0.05 * s, head + o * 0.11 * s, 0.018 * s, "steel", rb=0.002 * s))
+    out.append(capsule(head + d * 0.05 * s, head + d * 0.12 * s, 0.018 * s, "steel", rb=0.002 * s))
+    return out
+
+
+def _dagger(hand, weapon, fore, s, frame):
+    return blade(hand, weapon, 0.24 * s, 0.022 * s, guard="darksteel")
+
+
+def _spear(hand, weapon, fore, s, frame):
+    d = norm(weapon)
+    tip = hand + d * 0.78 * s
+    return [
+        capsule(hand - d * 0.35 * s, tip, 0.016 * s, "wood"),
+        capsule(tip, tip + d * 0.15 * s, 0.035 * s, "steel", rb=0.002 * s),
+        torus(tip, 0.022 * s, 0.008 * s, "gold", rot=frame_from(d)),
+    ]
+
+
+def _staff(hand, weapon, fore, s, frame):
+    d = norm(v(weapon[0] * 0.3, 1.0, weapon[2] * 0.3))
+    top = hand + d * 0.55 * s
+    return [
+        capsule(hand - d * 0.45 * s, top, 0.018 * s, "darkwood"),
+        octa(top + d * 0.07 * s, 0.06 * s, "rune_blue", rot=rot_y(0.5)),
+        torus(top, 0.035 * s, 0.01 * s, "gold", rot=frame_from(d)),
+    ]
+
+
+HERO_AXE = dict(HERO, right=_axe)
+HERO_MACE = dict(HERO, right=_mace)
+HERO_DAGGER = dict(HERO, right=_dagger)
+HERO_SPEAR = dict(HERO, right=_spear)
+HERO_STAFF = dict(HERO, right=_staff, left=None)
+
+
+def _bandit_torso(T, s, swing):
+    return [
+        cylinder(T(v(0, 0.49, 0) * s), 0.15 * s, 0.03 * s, "darkleather", rnd=0.01),
+        box(T(v(0, 0.41, 0.09) * s), v(0.1, 0.08, 0.018) * s, "leather", rot=rot_x(0.1 * swing), rnd=0.01),
+        capsule(T(v(0.15, 0.78, 0.05) * s), T(v(-0.14, 0.5, 0.11) * s), 0.02 * s, "darkleather"),
+        box(T(v(0, 0.58, -0.14) * s), v(0.15, 0.22, 0.015) * s, "darkleather", rot=rot_x(-0.25 - 0.15 * abs(swing)), rnd=0.01),
+    ]
+
+
+def _bandit_head(c, s, tw, swing):
+    return [
+        sphere(c, 0.115 * s, "darkleather"),
+        capsule(c + v(0, 0.06, -0.04) * s, c + v(0, 0.02, -0.16) * s, 0.05 * s, "darkleather", rb=0.02 * s),
+        sphere(c + v(0, -0.01, 0.07) * s, 0.075 * s, "black", op="sub"),
+        sphere(c + v(0, -0.01, 0.02) * s, 0.075 * s, "skin"),
+        box(c + v(0, -0.05, 0.08) * s, v(0.07, 0.03, 0.02) * s, "cloth_red", rnd=0.01),
+        sphere(c + v(0.03, 0.01, 0.085) * s, 0.012 * s, "black"),
+        sphere(c + v(-0.03, 0.01, 0.085) * s, 0.012 * s, "black"),
+    ]
+
+
+BANDIT = dict(
+    torso="leather", torso_r=(0.16, 0.19, 0.11), thigh="darkleather", shin="leather", boot="darkleather",
+    upper_arm="leather", forearm="darkleather", hand="skin", pauldron=None, neck="skin",
+    torso_extra=_bandit_torso, head=_bandit_head, right=_dagger, left=None,
+)
+
+
+def wolf(frame):
+    kind, i = frame
+    swing, lift = _walk(frame)
+    lunge = [0.0, 0.14, 0.06][i] if kind == "atk" else 0.0
+    bite = kind == "atk" and i == 1
+    prims = [
+        ellipsoid(v(0, 0.37, 0.0 + lunge), v(0.12, 0.13, 0.3), "fur"),
+        ellipsoid(v(0, 0.42, 0.18 + lunge), v(0.13, 0.15, 0.13), "fur"),
+        ellipsoid(v(0, 0.44, 0.08 + lunge), v(0.08, 0.07, 0.2), "fur_dark"),
+    ]
+    head = v(0, 0.5 - (0.07 if bite else 0), 0.36 + lunge * 1.4)
+    prims += [
+        ellipsoid(head, v(0.085, 0.08, 0.09), "fur"),
+        capsule(head + v(0, -0.02, 0.05), head + v(0, -0.035, 0.18), 0.045, "fur", rb=0.028),
+        sphere(head + v(0, -0.03, 0.2), 0.02, "black"),
+        capsule(head + v(0.05, 0.05, -0.02), head + v(0.06, 0.13, -0.03), 0.028, "fur_dark", rb=0.004),
+        capsule(head + v(-0.05, 0.05, -0.02), head + v(-0.06, 0.13, -0.03), 0.028, "fur_dark", rb=0.004),
+        sphere(head + v(0.04, 0.02, 0.07), 0.013, "eye_yellow"),
+        sphere(head + v(-0.04, 0.02, 0.07), 0.013, "eye_yellow"),
+    ]
+    if bite:
+        prims.append(capsule(head + v(0, -0.06, 0.04), head + v(0, -0.1, 0.15), 0.025, "fur_dark", rb=0.015))
+        prims.append(capsule(head + v(0.015, -0.05, 0.16), head + v(0.015, -0.08, 0.16), 0.006, "bone", rb=0.002))
+        prims.append(capsule(head + v(-0.015, -0.05, 0.16), head + v(-0.015, -0.08, 0.16), 0.006, "bone", rb=0.002))
+    prims.append(capsule(v(0, 0.42, -0.28), v(0, 0.33 + 0.06 * swing, -0.55), 0.045, "fur", rb=0.02))
+    for front in (True, False):
+        for side in (1, -1):
+            phase = (side > 0) == front
+            step = swing * (0.35 if phase else -0.35)
+            hip = v(0.08 * side, 0.33, (0.2 if front else -0.18) + (lunge if front else 0))
+            knee = hip + v(0.01 * side, -0.16, 0.06 * step / 0.35 + (0.03 if front else -0.04))
+            foot = knee + v(0, -0.16, (0.02 if front else 0.05) + 0.05 * step)
+            foot[1] = max(foot[1], 0.02)
+            prims += [capsule(hip, knee, 0.04, "fur", rb=0.03), capsule(knee, foot, 0.025, "fur_dark", rb=0.022)]
+    return prims
+
+
+# ---------------------------------------------------------------- world sprites
+
+
+def tree_pine(tall=1.0, seed=0):
+    out = [cylinder(v(0, 0.3, 0), 0.07, 0.3, "bark", rnd=0.02)]
+    layers = 4
+    for k in range(layers):
+        y0 = (0.35 + k * 0.38) * tall
+        w = (0.62 - k * 0.12) * (1 + 0.05 * math.sin(seed + k))
+        out.append(capsule(v(0, y0 + 0.55 * tall, 0), v(0, y0, 0), 0.03, "pine", rb=w))
+        out.append(capsule(v(0.02, y0 + 0.5 * tall, 0.03), v(0.02, y0 + 0.02, 0.03), 0.03, "leaf_dark", rb=w * 0.92))
+    return out
+
+
+def tree_oak(seed=0):
+    out = [capsule(v(0, 0, 0), v(0, 0.95, 0), 0.13, "bark", rb=0.09),
+           capsule(v(0, 0.75, 0), v(0.3, 1.1, 0.1), 0.05, "bark", rb=0.03),
+           capsule(v(0, 0.8, 0), v(-0.28, 1.15, -0.05), 0.05, "bark", rb=0.03),
+           ellipsoid(v(0, 0.06, 0), v(0.22, 0.06, 0.22), "bark")]
+    blobs = [(0, 1.45, 0, 0.48), (0.35, 1.3, 0.1, 0.38), (-0.36, 1.32, -0.05, 0.38), (0.1, 1.25, 0.32, 0.36),
+             (-0.12, 1.28, -0.32, 0.36), (0.05, 1.75, 0.05, 0.32)]
+    for k, (x, y, z, r) in enumerate(blobs):
+        j = math.sin(seed * 3.1 + k) * 0.06
+        out.append(sphere(v(x + j, y, z - j), r, "leaf" if k % 2 == 0 else "leaf_dark", op="smooth", k=0.12))
+    return out
+
+
+def tree_dead():
+    out = [capsule(v(0, 0, 0), v(0.05, 1.2, 0), 0.1, "darkwood", rb=0.04),
+           ellipsoid(v(0, 0.05, 0), v(0.18, 0.05, 0.18), "darkwood")]
+    for (a, y, l) in [(0.6, 0.7, 0.45), (2.4, 0.9, 0.4), (4.2, 1.05, 0.35), (1.3, 1.15, 0.3)]:
+        base = v(0.03, y, 0)
+        tip = base + v(math.cos(a) * l, 0.25, math.sin(a) * l)
+        out.append(capsule(base, tip, 0.04, "darkwood", rb=0.01))
+    return out
+
+
+def bush():
+    out = []
+    for k, (x, y, z, r) in enumerate([(0, 0.22, 0, 0.26), (0.2, 0.16, 0.08, 0.2), (-0.2, 0.17, -0.05, 0.2), (0.05, 0.15, 0.22, 0.18)]):
+        out.append(sphere(v(x, y, z), r, "leaf" if k % 2 else "leaf_dark", op="smooth", k=0.08))
+    for (x, z) in [(0.1, 0.25), (-0.15, 0.15), (0.2, -0.05)]:
+        out.append(sphere(v(x, 0.3, z), 0.03, "ruby"))
+    return out
+
+
+def rock(seed=0):
+    out = []
+    for k, (x, y, z, rx, ry, rz) in enumerate([(0, 0.2, 0, 0.42, 0.3, 0.36), (0.25, 0.12, 0.15, 0.25, 0.18, 0.22),
+                                                (-0.22, 0.1, 0.1, 0.22, 0.15, 0.2)]):
+        j = math.sin(seed + k) * 0.05
+        out.append(ellipsoid(v(x + j, y, z), v(rx, ry, rz), "stone", rot=rot_y(seed + k), op="smooth", k=0.06))
+    out.append(ellipsoid(v(0, 0.42, -0.02), v(0.28, 0.08, 0.24), "moss", op="smooth", k=0.04))
+    return out
+
+
+def stump():
+    return [cylinder(v(0, 0.14, 0), 0.2, 0.14, "bark", rnd=0.03), cylinder(v(0, 0.29, 0), 0.17, 0.01, "wood"),
+            torus(v(0, 0.29, 0), 0.1, 0.01, "darkwood"), capsule(v(0.15, 0.03, 0.1), v(0.32, 0.01, 0.2), 0.04, "bark", rb=0.015),
+            capsule(v(-0.15, 0.03, 0.05), v(-0.3, 0.01, 0.12), 0.04, "bark", rb=0.015)]
+
+
+def ruin_pillar():
+    return [box(v(0, 0.06, 0), v(0.22, 0.06, 0.22), "darkstone", rnd=0.02),
+            cylinder(v(0, 0.55, 0), 0.14, 0.5, "stone", rnd=0.02),
+            box(v(0, 1.04, 0.02), v(0.13, 0.04, 0.12), "stone", rot=rot_z(0.3), op="sub"),
+            ellipsoid(v(0.05, 0.3, 0.12), v(0.1, 0.18, 0.04), "moss"),
+            box(v(0.35, 0.06, 0.2), v(0.12, 0.06, 0.09), "stone", rot=rot_y(0.6), rnd=0.02)]
+
+
+def entrance_crypt():
+    out = [box(v(0, 0.04, 0), v(0.75, 0.04, 0.6), "darkstone", rnd=0.02)]
+    for side in (1, -1):
+        out += [box(v(0.55 * side, 0.55, 0), v(0.13, 0.55, 0.13), "stone", rnd=0.02),
+                box(v(0.55 * side, 1.13, 0), v(0.16, 0.05, 0.16), "stone", rnd=0.01)]
+    out += [box(v(0, 1.25, 0), v(0.75, 0.1, 0.18), "stone", rnd=0.02),
+            box(v(0, 1.42, 0), v(0.2, 0.08, 0.1), "stone", rnd=0.02),
+            sphere(v(0, 1.25, 0.17), 0.08, "bone"),
+            sphere(v(0.025, 1.26, 0.235), 0.022, "black", op="sub"),
+            sphere(v(-0.025, 1.26, 0.235), 0.022, "black", op="sub"),
+            box(v(0, 0.02, 0.05), v(0.4, 0.2, 0.45), "black", op="sub")]
+    for k in range(4):
+        out.append(box(v(0, 0.02 - k * 0.04, 0.35 - k * 0.12), v(0.38, 0.015, 0.06), "darkstone"))
+    out.append(ellipsoid(v(0.5, 0.95, 0.1), v(0.1, 0.2, 0.05), "moss"))
+    return out
+
+
+def entrance_cave():
+    out = []
+    for k, (x, y, z, rx, ry, rz) in enumerate([(0, 0.45, -0.1, 0.9, 0.6, 0.55), (0.7, 0.3, 0.05, 0.45, 0.35, 0.4),
+                                                (-0.75, 0.32, 0.0, 0.45, 0.38, 0.4), (0.2, 0.85, -0.2, 0.5, 0.3, 0.4)]):
+        out.append(ellipsoid(v(x, y, z), v(rx, ry, rz), "stone" if k % 2 == 0 else "darkstone", rot=rot_y(k * 0.7), op="smooth", k=0.1))
+    out.append(ellipsoid(v(0, 0.3, 0.38), v(0.42, 0.42, 0.4), "black", op="sub"))
+    out.append(ellipsoid(v(0, 1.0, -0.1), v(0.5, 0.08, 0.3), "moss"))
+    for x in (-0.25, 0.0, 0.22):
+        out.append(capsule(v(x, 0.68, 0.32), v(x, 0.55 - abs(x) * 0.2, 0.36), 0.03, "stone", rb=0.003))
+    return out
+
+
+def entrance_portal():
+    out = [cylinder(v(0, 0.05, 0), 0.75, 0.05, "darkstone", rnd=0.02)]
+    for k in range(8):
+        a = k * math.pi / 4
+        out.append(capsule(v(math.cos(a) * 0.7, 0.05, math.sin(a) * 0.7), v(math.cos(a) * 0.68, 0.45 + 0.1 * (k % 2), math.sin(a) * 0.68),
+                           0.06, "demon_dark", rb=0.01))
+    out += [torus(v(0, 0.9, 0), 0.5, 0.07, "darkstone", rot=rot_x(math.pi / 2)),
+            cylinder(v(0, 0.9, 0), 0.46, 0.015, "portal", rot=rot_x(math.pi / 2)),
+            sphere(v(0, 1.43, 0), 0.07, "crystal_red")]
+    for side in (1, -1):
+        out.append(capsule(v(0.45 * side, 0.05, 0), v(0.45 * side, 0.7, 0), 0.07, "darkstone"))
+    return out
+
+
+def signpost():
+    return [capsule(v(0, 0, 0), v(0, 0.9, 0), 0.035, "wood"),
+            box(v(0.15, 0.78, 0.0), v(0.18, 0.05, 0.015), "wood", rot=rot_y(0.3), rnd=0.01),
+            box(v(-0.12, 0.62, 0.0), v(0.16, 0.045, 0.015), "wood", rot=rot_y(-0.5), rnd=0.01)]
+
+
+WORLD = [
+    ("pine", lambda: tree_pine(1.0, 0)), ("pine_tall", lambda: tree_pine(1.18, 2)), ("oak", lambda: tree_oak(0)),
+    ("oak2", lambda: tree_oak(4)), ("dead", tree_dead), ("bush", bush), ("rock", lambda: rock(0)), ("rock2", lambda: rock(2.5)),
+    ("stump", stump), ("pillar", ruin_pillar), ("crypt", entrance_crypt), ("cave", entrance_cave), ("portal", entrance_portal),
+    ("sign", signpost),
+]
+
+
+# ---------------------------------------------------------------- extra icons (appended after the original nine)
+
+
+def icon_dagger():
+    return blade(v(-0.15, -0.15, 0), v(1, 1, 0.0), 0.36, 0.035, guard="darksteel")
+
+
+def icon_spear():
+    d = norm(v(1, 1, 0))
+    tip = v(0.25, 0.25, 0)
+    return [capsule(v(-0.35, -0.35, 0), tip, 0.022, "wood"), capsule(tip, tip + d * 0.16, 0.05, "steel", rb=0.003),
+            torus(tip, 0.03, 0.01, "gold", rot=frame_from(d))]
+
+
+def icon_staff():
+    return [capsule(v(-0.3, -0.38, 0), v(0.18, 0.25, 0), 0.025, "darkwood"), octa(v(0.24, 0.33, 0), 0.09, "rune_blue", rot=rot_y(0.5)),
+            torus(v(0.18, 0.25, 0), 0.05, 0.014, "gold", rot=frame_from(v(1, 1.3, 0)))]
+
+
+def icon_shield():
+    f = frame_from(v(0, 0.2, 1))
+    return [cylinder(v(0, 0, 0), 0.3, 0.035, "cloth_blue", rot=f, rnd=0.01), torus(v(0, 0, 0), 0.29, 0.03, "darksteel", rot=f),
+            sphere(v(0, 0.01, 0.04), 0.07, "gold"), box(v(0, 0, 0.04), v(0.2, 0.03, 0.015), "gold", rot=f)]
+
+
+def icon_gloves():
+    out = []
+    for x, a in ((-0.15, 0.25), (0.15, -0.25)):
+        out += [ellipsoid(v(x, 0.0, 0), v(0.1, 0.14, 0.06), "leather", rot=rot_z(a)),
+                cylinder(v(x - a * 0.3, -0.17, 0), 0.09, 0.05, "darksteel", rot=rot_z(a), rnd=0.01)]
+        for k in range(4):
+            out.append(capsule(v(x + (k - 1.5) * 0.045, 0.1, 0.0), v(x + (k - 1.5) * 0.05 - a * 0.2, 0.22, 0.0), 0.022, "leather"))
+    return out
+
+
+def icon_hood():
+    return [sphere(v(0, 0, 0), 0.24, "darkleather"), capsule(v(0, 0.1, -0.12), v(0, -0.02, -0.32), 0.1, "darkleather", rb=0.04),
+            sphere(v(0, -0.03, 0.15), 0.17, "black", op="sub"), cylinder(v(0, -0.2, 0), 0.24, 0.04, "leather", rnd=0.02)]
+
+
+def icon_leather():
+    return [ellipsoid(v(0, 0, 0), v(0.24, 0.28, 0.14), "leather"), cylinder(v(0, -0.17, 0), 0.22, 0.035, "darkleather"),
+            capsule(v(0.18, 0.22, 0.08), v(-0.16, -0.08, 0.13), 0.022, "darkleather"), sphere(v(0, -0.17, 0.14), 0.03, "gold")]
+
+
+def icon_scroll():
+    return [cylinder(v(0, 0, 0), 0.08, 0.26, "parchment", rot=rot_z(0.9)), cylinder(v(0.2, 0.15, 0), 0.09, 0.03, "darkwood", rot=rot_z(0.9)),
+            cylinder(v(-0.2, -0.15, 0), 0.09, 0.03, "darkwood", rot=rot_z(0.9)), torus(v(0, 0, 0), 0.085, 0.012, "cloth_red", rot=rot_z(0.9))]
+
+
+ICONS += [("dagger", icon_dagger), ("spear", icon_spear), ("staff", icon_staff), ("shield", icon_shield),
+          ("gloves", icon_gloves), ("hood", icon_hood), ("leather", icon_leather), ("scroll", icon_scroll)]

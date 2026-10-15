@@ -19,39 +19,60 @@ private val XP_COLOR = Color(0xFFB388FF)
 val HURT_COLOR = Color(0xFFFF5252)
 private val FIRE = Color(0xFFFF7A1A)
 private val FROST = Color(0xFF80DEEA)
+private val LIGHTNING = Color(0xFF9FE7FF)
 const val INVENTORY_SIZE = 24
 
+/** Base items per slot: name and icon (which also decides the weapon type). */
 private val bases = mapOf(
-    Slot.WEAPON to listOf("Sværd" to Icons.SWORD, "Klinge" to Icons.SWORD, "Økse" to Icons.AXE, "Stridsøkse" to Icons.AXE,
-        "Stridshammer" to Icons.MACE, "Morgenstjerne" to Icons.MACE),
-    Slot.HELM to listOf("Hjelm" to Icons.HELM, "Stormhjelm" to Icons.HELM, "Kronhjelm" to Icons.HELM),
-    Slot.ARMOR to listOf("Læderbrynje" to Icons.ARMOR, "Ringbrynje" to Icons.ARMOR, "Pladerustning" to Icons.ARMOR),
+    Slot.WEAPON to listOf(
+        "Sværd" to Icons.SWORD, "Bredsværd" to Icons.SWORD, "Økse" to Icons.AXE, "Stridsøkse" to Icons.AXE,
+        "Stridshammer" to Icons.MACE, "Morgenstjerne" to Icons.MACE, "Dolk" to Icons.DAGGER, "Kniv" to Icons.DAGGER,
+        "Spyd" to Icons.SPEAR, "Hellebard" to Icons.SPEAR, "Stav" to Icons.STAFF, "Troldmandsstav" to Icons.STAFF,
+    ),
+    Slot.OFFHAND to listOf("Rundskjold" to Icons.SHIELD, "Tårnskjold" to Icons.SHIELD, "Buckler" to Icons.SHIELD),
+    Slot.HELM to listOf("Hjelm" to Icons.HELM, "Stormhjelm" to Icons.HELM, "Hætte" to Icons.HOOD, "Læderhætte" to Icons.HOOD),
+    Slot.ARMOR to listOf("Ringbrynje" to Icons.ARMOR, "Pladerustning" to Icons.ARMOR, "Læderbrynje" to Icons.LEATHER, "Jægerdragt" to Icons.LEATHER),
+    Slot.GLOVES to listOf("Handsker" to Icons.GLOVES, "Jernhandsker" to Icons.GLOVES),
     Slot.BOOTS to listOf("Støvler" to Icons.BOOTS, "Jernstøvler" to Icons.BOOTS),
     Slot.AMULET to listOf("Amulet" to Icons.AMULET, "Talisman" to Icons.AMULET),
     Slot.RING to listOf("Ring" to Icons.RING, "Runering" to Icons.RING),
 )
 private val legendaryNames = mapOf(
-    Slot.WEAPON to listOf("Mjølner", "Gram", "Tyrfing", "Dainsleif"),
+    Slot.WEAPON to listOf("Mjølner", "Gram", "Tyrfing", "Dainsleif", "Hofud"),
+    Slot.OFFHAND to listOf("Svalins Skjold", "Asgårds Mur"),
     Slot.HELM to listOf("Odins Øje", "Tordenhjelmen"),
     Slot.ARMOR to listOf("Ymers Hud", "Fafners Skæl"),
-    Slot.BOOTS to listOf("Sleipners Spor"),
-    Slot.AMULET to listOf("Brisingamen"),
+    Slot.GLOVES to listOf("Tyrs Greb", "Jarngreipr"),
+    Slot.BOOTS to listOf("Sleipners Spor", "Vidars Sko"),
+    Slot.AMULET to listOf("Brisingamen", "Nornernes Tråd"),
     Slot.RING to listOf("Draupner", "Andvaranaut"),
 )
+private val mythicNames = mapOf(
+    Slot.WEAPON to listOf("Gungnir", "Ragnarok", "Surts Flammesværd"),
+    Slot.OFFHAND to listOf("Yggdrasils Bark"),
+    Slot.HELM to listOf("Allfaders Krone"),
+    Slot.ARMOR to listOf("Jormungandrs Skæl"),
+    Slot.GLOVES to listOf("Fenrirs Lænke"),
+    Slot.BOOTS to listOf("Bifrosts Skridt"),
+    Slot.AMULET to listOf("Mimers Kilde"),
+    Slot.RING to listOf("Evighedens Ring"),
+)
 private val prefixes = listOf("Dragens", "Skyggernes", "Kongens", "Ulvens", "Stormens", "Blodets", "Ravnens", "Isens", "Ildens", "Jættens")
+private val suffixes = listOf("af Asgård", "af Nordlyset", "af Midgård", "fra Udgård", "af Valhal", "fra Niflheim", "af Muspelheim")
 
 val QUESTS = listOf(
-    "Rens Krypten" to "Besejr Knoglekongen på dybde 3",
-    "Hulernes dronning" to "Besejr Edderkoppedronningen på dybde 6",
-    "Helvedes port" to "Besejr Dæmonherren på dybde 9",
+    "Rens Krypten" to "Besejr Knoglekongen på dybde 3 (Krypten, nordvest for landsbyen)",
+    "Hulernes dronning" to "Besejr Edderkoppedronningen på dybde 6 (Hulerne, mod øst)",
+    "Helvedes port" to "Besejr Dæmonherren på dybde 9 (Helvedes port, mod syd)",
     "Bryd mørket" to "Besejr Skyggekongen på dybde 10",
 )
 private val questBosses = listOf(EnemyType.SKELETON_KING, EnemyType.SPIDER_QUEEN, EnemyType.DEMON_LORD, EnemyType.SHADOW_KING)
 
 class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     private val rnd = Random(System.nanoTime())
+    private var worldSeed = 0L
 
-    var dungeon: Dungeon = Dungeon.camp(rnd)
+    var dungeon: Dungeon = Dungeon.overworld(1L)
         private set
     val player = Player()
     val enemies = mutableListOf<Enemy>()
@@ -65,7 +86,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         private set
     var floor = 0
         private set
-    var deepest = 1
+    var deepest = 0
         private set
     var questStage = 0
         private set
@@ -88,33 +109,51 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         private set
     var levelFlash = 0f
         private set
-    val merchantX = 16.5f
-    val merchantY = 11.6f
 
     var joyX = 0f
     var joyY = 0f
     var attackHeld = false
 
-    val inCamp: Boolean get() = floor == 0
+    val inWorld: Boolean get() = floor == 0
+    val inVillage: Boolean get() = inWorld && (dungeon.village?.contains(player.x, player.y) == true)
+    val merchantX: Float get() = dungeon.merchantX
+    val merchantY: Float get() = dungeon.merchantY
     val boss: Enemy? get() = enemies.firstOrNull { it.type.boss }
-    val nearMerchant: Boolean get() = inCamp && hypot(player.x - merchantX, player.y - merchantY) < 1.6f
-    val areaTitle: String get() = if (inCamp) Biome.CAMP.title else "${dungeon.biome.title} — dybde $floor"
-    val potionPrice: Int get() = 20 + deepest * 6
+    val nearMerchant: Boolean get() = dungeon.hasMerchant && hypot(player.x - merchantX, player.y - merchantY) < 1.6f
+    val areaTitle: String get() = when {
+        inVillage -> "Landsbyen"
+        inWorld -> "Landet — område ${zoneLevel(player.x, player.y)}"
+        else -> "${dungeon.biome.title} — dybde $floor"
+    }
+    val potionPrice: Int get() = 20 + max(1, deepest) * 6
+    fun gamblePrice(): Int = 60 + max(1, deepest) * 30
+
+    /** 0 = midnight, 1 = noon. A full day lasts six minutes. */
+    val daylight: Float get() = 0.5f + 0.5f * cos(time * 2f * PI.toFloat() / 360f)
+    val darknessAlpha: Float get() = if (inWorld) 0.08f + (1f - daylight) * 0.62f else dungeon.biome.darknessAlpha
 
     /** Whether a hero existed when the app started (decides if the title screen offers "continue"). */
-    val hasSave: Boolean = prefs.contains("save")
+    val hasSave: Boolean = prefs.contains("save3")
 
     init {
         if (!load()) resetHero()
         enterFloor(0)
     }
 
+    /** Monster level out in the open grows with the distance from the village. */
+    fun zoneLevel(x: Float, y: Float): Int {
+        val v = dungeon.village ?: return floor
+        return (1 + hypot(x - v.cx, y - v.cy) / 11f).toInt().coerceIn(1, 5)
+    }
+
+    private fun levelHere(x: Float = player.x, y: Float = player.y) = if (inWorld) zoneLevel(x, y) else floor
+
     // ---------------------------------------------------------------- floors & saving
 
     fun enterFloor(target: Int) {
         floor = target
         if (floor > deepest) deepest = floor
-        dungeon = if (floor == 0) Dungeon.camp(rnd) else Dungeon.generate(rnd, Biome.forFloor(floor))
+        dungeon = if (floor == 0) Dungeon.overworld(worldSeed) else Dungeon.generate(rnd, Biome.forFloor(floor))
         explored = BooleanArray(dungeon.w * dungeon.h)
         enemies.clear()
         projectiles.clear()
@@ -122,6 +161,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         texts.clear()
         particles.clear()
         decals.clear()
+        player.phoenixUsed = false
         player.x = dungeon.start.cx + 0.5f
         player.y = dungeon.start.cy + 0.5f
         player.hp = player.hp.coerceIn(1f, player.maxHp)
@@ -130,7 +170,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             player.hp = player.maxHp
             player.mana = player.maxMana
             restock()
-            showMessage("Lejren — et øjebliks fred", Color(0xFFFFE0A3))
+            populateWorld()
+            showMessage("Landsbyen — et øjebliks fred", Color(0xFFFFE0A3))
         } else {
             val pool = spawnPool()
             for (room in dungeon.rooms) {
@@ -154,15 +195,57 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         save()
     }
 
+    /** Packs of monsters out in the wild, tougher the further from the village. */
+    private fun populateWorld() {
+        val d = dungeon
+        val v = d.village ?: return
+        var groups = 0
+        var tries = 0
+        while (groups < 34 && tries++ < 600) {
+            val x = rnd.nextInt(4, d.w - 4)
+            val y = rnd.nextInt(4, d.h - 4)
+            if (!d.walkable(x, y) || d.tile(x, y) == ENTRANCE) continue
+            if (hypot((x - v.cx).toFloat(), (y - v.cy).toFloat()) < 13f) continue
+            val lvl = zoneLevel(x.toFloat(), y.toFloat())
+            val nearWater = (-2..2).any { dy -> (-2..2).any { dx -> d.tile(x + dx, y + dy) == WATER } }
+            val nearTrees = (-2..2).count { dy -> (-2..2).count { dx -> d.tile(x + dx, y + dy) == TREE } > 0 } >= 3
+            val nearCrypt = hypot(x - 14f, y - 15f) < 12f
+            val type = when {
+                nearCrypt -> EnemyType.SKELETON
+                nearWater -> EnemyType.SLIME
+                nearTrees && rnd.nextBoolean() -> EnemyType.WOLF
+                nearTrees -> EnemyType.SPIDER
+                lvl >= 3 && rnd.nextFloat() < 0.3f -> EnemyType.BRUTE
+                else -> EnemyType.BANDIT
+            }
+            val count = if (type == EnemyType.WOLF) rnd.nextInt(3, 5) else rnd.nextInt(2, 4)
+            repeat(count) {
+                val ex = x + 0.5f + (rnd.nextFloat() - 0.5f) * 2f
+                val ey = y + 0.5f + (rnd.nextFloat() - 0.5f) * 2f
+                if (d.walkableAt(ex, ey)) enemies += Enemy(type, ex, ey, lvl, elite = rnd.nextFloat() < 0.06f)
+            }
+            groups++
+        }
+        // The forest troll roams the far south-east.
+        for (k in 0 until 200) {
+            val x = rnd.nextInt(d.w - 22, d.w - 6)
+            val y = rnd.nextInt(d.h - 26, d.h - 8)
+            if (d.walkable(x, y)) {
+                enemies += Enemy(EnemyType.TROLL, x + 0.5f, y + 0.5f, 5)
+                break
+            }
+        }
+    }
+
     private fun spawnPool(): List<EnemyType> = when (dungeon.biome) {
         Biome.CRYPT -> buildList {
             addAll(listOf(EnemyType.SLIME, EnemyType.BAT, EnemyType.SKELETON, EnemyType.SKELETON))
             if (floor >= 2) add(EnemyType.CULTIST)
             if (floor >= 3) add(EnemyType.BRUTE)
         }
-        Biome.CAVE -> listOf(EnemyType.SPIDER, EnemyType.SPIDER, EnemyType.BAT, EnemyType.SLIME, EnemyType.BRUTE, EnemyType.SKELETON)
+        Biome.CAVE -> listOf(EnemyType.SPIDER, EnemyType.SPIDER, EnemyType.BAT, EnemyType.SLIME, EnemyType.BRUTE, EnemyType.WOLF)
         Biome.HELL -> listOf(EnemyType.CULTIST, EnemyType.CULTIST, EnemyType.BRUTE, EnemyType.SKELETON, EnemyType.SPIDER, EnemyType.BAT)
-        Biome.CAMP -> emptyList()
+        Biome.OVERWORLD -> listOf(EnemyType.BANDIT)
     }
 
     private fun bossFor(f: Int): EnemyType? = when {
@@ -178,26 +261,28 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         val o = JSONObject()
             .put("level", player.level).put("xp", player.xp).put("gold", player.gold).put("potions", player.potions)
             .put("deepest", deepest).put("quest", questStage).put("points", player.skillPoints).put("victory", victory)
+            .put("seed", worldSeed)
         val eq = JSONObject()
         player.equipment.forEach { (slot, item) -> eq.put(slot.name, item.toJson()) }
         o.put("equipment", eq)
         o.put("inventory", JSONArray().apply { player.inventory.forEach { put(it.toJson()) } })
         o.put("skills", JSONObject().apply { player.skills.forEach { (s, l) -> put(s.name, l) } })
-        prefs.edit().putString("save", o.toString()).apply()
+        prefs.edit().putString("save3", o.toString()).apply()
     }
 
     private fun load(): Boolean {
-        val raw = prefs.getString("save", null) ?: return false
+        val raw = prefs.getString("save3", null) ?: prefs.getString("save", null) ?: return false
         return runCatching {
             val o = JSONObject(raw)
             player.level = o.getInt("level")
             player.xp = o.getInt("xp")
             player.gold = o.getInt("gold")
             player.potions = o.getInt("potions")
-            deepest = o.optInt("deepest", 1)
+            deepest = o.optInt("deepest", 0)
             questStage = o.optInt("quest", 0)
             player.skillPoints = o.optInt("points", 0)
             victory = o.optBoolean("victory", false)
+            worldSeed = o.optLong("seed", System.nanoTime())
             val eq = o.optJSONObject("equipment")
             player.equipment.clear()
             Slot.entries.forEach { s -> Item.fromJson(eq?.optJSONObject(s.name))?.let { player.equipment[s] = it } }
@@ -213,7 +298,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     }
 
     fun newGame() {
-        prefs.edit().remove("save").apply()
+        prefs.edit().remove("save3").remove("save").apply()
         resetHero()
         dead = false
         enterFloor(0)
@@ -230,11 +315,13 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         player.skills.clear()
         player.skills.putAll(mapOf(Skill.FIREBALL to 1, Skill.WHIRL to 1, Skill.NOVA to 0))
         player.equipment[Slot.WEAPON] = Item(Slot.WEAPON, "Rustent sværd", Rarity.COMMON, Icons.SWORD, 1, damage = 2)
+        player.equipment[Slot.OFFHAND] = Item(Slot.OFFHAND, "Gammelt rundskjold", Rarity.COMMON, Icons.SHIELD, 1, armor = 2)
         player.hp = player.maxHp
         player.mana = player.maxMana
-        deepest = 1
+        deepest = 0
         questStage = 0
         victory = false
+        worldSeed = System.nanoTime()
     }
 
     fun respawn() {
@@ -247,13 +334,32 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     }
 
     fun townPortal() {
-        if (inCamp || dead) return
+        if (dead || inVillage) return
         sfx.portal()
         burst(player.x, player.y, Color(0xFF64B5F6), 40, glow = true)
-        enterFloor(0)
+        if (inWorld) {
+            player.x = dungeon.start.cx + 0.5f
+            player.y = dungeon.start.cy + 0.5f
+            burst(player.x, player.y, Color(0xFF64B5F6), 40, glow = true)
+        } else {
+            enterFloor(0)
+        }
     }
 
-    fun descendFromCamp() = enterFloor(max(1, deepest))
+    private fun enterRegion(e: Entrance) {
+        if (questStage < e.region.quest) {
+            if (messageTimer <= 0f) showMessage("${e.region.title} er låst — ${e.region.lockText}", HURT_COLOR)
+            return
+        }
+        val target = if (deepest >= e.region.firstFloor) {
+            val last = if (e.region == Region.HELL) Int.MAX_VALUE else e.region.firstFloor + 2
+            min(deepest, last)
+        } else {
+            e.region.firstFloor
+        }
+        sfx.stairs()
+        enterFloor(target)
+    }
 
     private fun showMessage(text: String, color: Color) {
         message = text
@@ -297,10 +403,10 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     private fun pushOutOfProps(b: Body, r: Float) {
         for (pr in dungeon.props) {
-            if (!solid(pr)) continue
+            if (!solid(pr) || abs(pr.x - b.x) > 1f || abs(pr.y - b.y) > 1f) continue
             pushFrom(b, r, pr.x, pr.y, 0.3f)
         }
-        if (inCamp) pushFrom(b, r, merchantX, merchantY, 0.3f)
+        if (dungeon.hasMerchant) pushFrom(b, r, merchantX, merchantY, 0.3f)
     }
 
     private fun pushFrom(b: Body, r: Float, ox: Float, oy: Float, otherR: Float) {
@@ -325,7 +431,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             if (p.buffTime <= 0f) p.buff = null
         }
         p.mana = min(p.maxMana, p.mana + (5f + p.level * 0.3f) * dt)
-        if (p.sinceHurt > 4f || inCamp) p.hp = min(p.maxHp, p.hp + p.maxHp * (if (inCamp) 0.1f else 0.012f) * dt)
+        if (p.sinceHurt > 4f || inVillage) p.hp = min(p.maxHp, p.hp + p.maxHp * (if (inVillage) 0.1f else 0.012f) * dt)
 
         val len = hypot(joyX, joyY)
         p.moving = len > 0.15f
@@ -345,7 +451,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         if (attackHeld && p.attackCd <= 0f) attack()
 
         for (pr in dungeon.props) {
-            if (pr.used || hypot(pr.x - p.x, pr.y - p.y) > 0.9f) continue
+            if (pr.used || abs(pr.x - p.x) > 1f || abs(pr.y - p.y) > 1f || hypot(pr.x - p.x, pr.y - p.y) > 0.9f) continue
             when (pr.type) {
                 PropType.CHEST -> openChest(pr)
                 PropType.SHRINE -> useShrine(pr)
@@ -353,17 +459,15 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             }
         }
 
-        if (dungeon.tile(floorInt(p.x), floorInt(p.y)) == STAIRS) {
-            when {
-                inCamp -> {
-                    sfx.stairs()
-                    descendFromCamp()
-                }
-                boss != null -> if (messageTimer <= 0f) showMessage("Besejr ${boss!!.type.label} først!", HURT_COLOR)
-                else -> {
-                    sfx.stairs()
-                    enterFloor(floor + 1)
-                }
+        val tx = floorInt(p.x)
+        val ty = floorInt(p.y)
+        when (dungeon.tile(tx, ty)) {
+            ENTRANCE -> dungeon.entrances.firstOrNull { it.x == tx && it.y == ty }?.let { enterRegion(it) }
+            STAIRS -> if (boss != null) {
+                if (messageTimer <= 0f) showMessage("Besejr ${boss!!.type.label} først!", HURT_COLOR)
+            } else {
+                sfx.stairs()
+                enterFloor(floor + 1)
             }
         }
     }
@@ -378,30 +482,35 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         player.faceY = (y - player.y) / d
     }
 
+    private fun spellMult() = 1f + player.spellBonus / 100f
+
     // ---------------------------------------------------------------- player actions
 
     fun attack() {
         val p = player
         if (dead || p.attackCd > 0f) return
-        val target = nearestEnemy(2.6f)
+        val kind = p.weaponKind
+        val target = nearestEnemy(kind.reach + 1.3f)
         if (target != null) {
             faceToward(target.x, target.y)
         } else {
             dungeon.props.filter { it.type.breakable && !it.used && hypot(it.x - p.x, it.y - p.y) < 1.6f }
                 .minByOrNull { hypot(it.x - p.x, it.y - p.y) }?.let { faceToward(it.x, it.y) }
         }
-        p.attackCd = 0.42f
-        p.swing = 0.3f
+        p.attackCd = kind.cooldown / (1f + p.attackSpeed / 100f)
+        p.swingTime = min(0.3f, p.attackCd * 0.8f)
+        p.swing = p.swingTime
         sfx.swing()
         var hitAny = false
-        for (e in enemies) {
-            if (inArc(e.x, e.y, 1.35f + e.type.radius * e.size)) {
-                damageEnemy(e, p.damage.toFloat(), 4f)
+        for (e in enemies.toList()) {
+            if (inArc(e.x, e.y, kind.reach + e.type.radius * e.size, kind.arc)) {
+                damageEnemy(e, p.damage * kind.dmgMult, kind.knock)
+                onHitPowers(e)
                 hitAny = true
             }
         }
         for (pr in dungeon.props) {
-            if (pr.type.breakable && !pr.used && inArc(pr.x, pr.y, 1.5f)) {
+            if (pr.type.breakable && !pr.used && inArc(pr.x, pr.y, kind.reach + 0.2f, 0.2f)) {
                 breakProp(pr)
                 hitAny = true
             }
@@ -409,12 +518,38 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         if (hitAny) sfx.hit()
     }
 
-    private fun inArc(x: Float, y: Float, reach: Float): Boolean {
+    private fun onHitPowers(e: Enemy) {
+        val p = player
+        if (p.has(Power.FROSTBITE) && rnd.nextFloat() < 0.15f) {
+            e.frozen = if (e.type.boss) 0.4f else 1.2f
+            e.windup = 0f
+            burst(e.x, e.y, FROST, 10, glow = true)
+        }
+        if (p.has(Power.THUNDER) && rnd.nextFloat() < 0.2f) {
+            val targets = enemies.filter { it !== e && hypot(it.x - e.x, it.y - e.y) < 3.5f }.sortedBy { hypot(it.x - e.x, it.y - e.y) }.take(3)
+            var fromX = e.x
+            var fromY = e.y
+            for (t in listOf(e) + targets) {
+                val steps = 8
+                for (k in 0..steps) {
+                    val f = k / steps.toFloat()
+                    particles += Particle(fromX + (t.x - fromX) * f + (rnd.nextFloat() - 0.5f) * 0.2f, fromY + (t.y - fromY) * f,
+                        0f, 0f, LIGHTNING, 0.05f, 0.25f, glow = true, z = 0.6f)
+                }
+                damageEnemy(t, p.damage * 0.8f, 1f)
+                fromX = t.x
+                fromY = t.y
+            }
+            sfx.explode()
+        }
+    }
+
+    private fun inArc(x: Float, y: Float, reach: Float, arc: Float): Boolean {
         val dx = x - player.x
         val dy = y - player.y
         val d = hypot(dx, dy)
         if (d > reach) return false
-        return d < 0.01f || (dx * player.faceX + dy * player.faceY) / d > 0.3f
+        return d < 0.01f || (dx * player.faceX + dy * player.faceY) / d > arc
     }
 
     fun skillReady(s: Skill) = (player.cooldowns[s] ?: 0f) <= 0f
@@ -428,21 +563,28 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             return
         }
         if (!skillReady(skill)) return
-        if (p.mana < skill.mana) {
+        val cost = if (skill == Skill.WHIRL && p.has(Power.STORM)) 0f else skill.mana
+        if (p.mana < cost) {
             showMessage("Ikke nok mana", Color(0xFF64B5F6))
             return
         }
-        p.mana -= skill.mana
+        p.mana -= cost
         p.cooldowns[skill] = skill.cooldown
         when (skill) {
             Skill.FIREBALL -> {
                 nearestEnemy(7f)?.let { faceToward(it.x, it.y) }
                 p.cast = 0.3f
-                projectiles += Projectile(
-                    p.x + p.faceX * 0.4f, p.y + p.faceY * 0.4f, p.faceX * 8f, p.faceY * 8f,
-                    p.damage * (1.6f + 0.4f * (lvl - 1)), hostile = false, color = FIRE, life = 1.5f, radius = 0.2f,
-                    aoe = 1.1f + 0.15f * lvl,
-                )
+                val angles = if (p.has(Power.INFERNO)) listOf(-0.28f, 0f, 0.28f) else listOf(0f)
+                val base = kotlin.math.atan2(p.faceY, p.faceX)
+                for (a in angles) {
+                    val dx = cos(base + a)
+                    val dy = sin(base + a)
+                    projectiles += Projectile(
+                        p.x + dx * 0.4f, p.y + dy * 0.4f, dx * 8f, dy * 8f,
+                        p.damage * (1.6f + 0.4f * (lvl - 1)) * spellMult(), hostile = false, color = FIRE, life = 1.5f, radius = 0.2f,
+                        aoe = 1.1f + 0.15f * lvl,
+                    )
+                }
                 sfx.fireball()
             }
             Skill.WHIRL -> {
@@ -450,9 +592,10 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 p.attackCd = 0.45f
                 sfx.swing()
                 var hitAny = false
-                for (e in enemies) {
+                for (e in enemies.toList()) {
                     if (dist(e) < 1.9f + e.type.radius * e.size) {
                         damageEnemy(e, p.damage * (1.3f + 0.3f * (lvl - 1)), 6f)
+                        onHitPowers(e)
                         hitAny = true
                     }
                 }
@@ -468,7 +611,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 val freeze = 2f + lvl * 0.5f
                 for (e in enemies) {
                     if (dist(e) < 3.3f) {
-                        damageEnemy(e, p.damage * (1f + 0.25f * (lvl - 1)), 2f)
+                        damageEnemy(e, p.damage * (1f + 0.25f * (lvl - 1)) * spellMult(), 2f)
                         e.frozen = if (e.type.boss) freeze * 0.4f else freeze
                         e.windup = 0f
                     }
@@ -483,7 +626,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         val p = player
         if (dead) return
         when {
-            p.potions <= 0 -> showMessage("Ingen eliksirer — køb flere i lejren", HURT_COLOR)
+            p.potions <= 0 -> showMessage("Ingen eliksirer — køb flere i landsbyen", HURT_COLOR)
             p.hp >= p.maxHp -> showMessage("Du har fuldt liv", Color.White)
             else -> {
                 p.potions--
@@ -514,6 +657,21 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         }
     }
 
+    /** Sells every normal and magic item that is not an upgrade. Returns the gold earned. */
+    fun sellJunk(): Int {
+        val junk = player.inventory.filter { it.rarity <= Rarity.MAGIC && !isUpgrade(it) }
+        val gold = junk.sumOf { it.sellPrice }
+        player.inventory.removeAll(junk)
+        player.gold += gold
+        if (gold > 0) sfx.coin()
+        save()
+        return gold
+    }
+
+    fun sortInventory() {
+        player.inventory.sortWith(compareByDescending<Item> { it.rarity.ordinal }.thenBy { it.slot.ordinal }.thenByDescending { it.score })
+    }
+
     fun buy(item: Item): Boolean {
         val p = player
         if (p.gold < item.buyPrice || p.inventory.size >= INVENTORY_SIZE) return false
@@ -534,6 +692,27 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         return true
     }
 
+    /** Diablo-style gambling: pay for an unidentified item of a chosen slot. */
+    fun gamble(slot: Slot): Item? {
+        val p = player
+        val price = gamblePrice()
+        if (p.gold < price || p.inventory.size >= INVENTORY_SIZE) return null
+        p.gold -= price
+        val roll = rnd.nextFloat()
+        val rarity = when {
+            roll < 0.012f -> Rarity.MYTHIC
+            roll < 0.07f -> Rarity.LEGENDARY
+            roll < 0.19f -> Rarity.EPIC
+            roll < 0.45f -> Rarity.RARE
+            else -> Rarity.MAGIC
+        }
+        val item = makeItem(max(1, deepest) + 1, rarity, false, slot = slot, exact = true)
+        p.inventory += item
+        if (item.rarity >= Rarity.EPIC) sfx.levelUp() else sfx.coin()
+        save()
+        return item
+    }
+
     fun learn(skill: Skill) {
         val p = player
         val lvl = p.skills[skill] ?: 0
@@ -544,11 +723,11 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         save()
     }
 
-    fun isUpgrade(item: Item): Boolean = item.power > (player.equipment[item.slot]?.power ?: -1)
+    fun isUpgrade(item: Item): Boolean = item.score > (player.equipment[item.slot]?.score ?: -1)
 
     private fun restock() {
         stock.clear()
-        repeat(4) { stock += makeItem(deepest + 1, minRarity = Rarity.MAGIC, bossDrop = false) }
+        repeat(5) { stock += makeItem(max(1, deepest) + 1, minRarity = Rarity.MAGIC, bossDrop = false) }
     }
 
     // ---------------------------------------------------------------- props
@@ -557,11 +736,12 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         pr.used = true
         val wood = pr.type != PropType.URN
         burst(pr.x, pr.y, if (wood) Color(0xFF8D6E63) else Color(0xFFBF7A50), 16)
-        if (inCamp) return
+        if (inVillage) return
+        val lvl = levelHere(pr.x, pr.y)
         when {
-            rnd.nextFloat() < 0.55f -> loot += Loot(pr.x, pr.y + 0.1f, LootKind.Gold(rnd.nextInt(2, 8) * floor))
+            rnd.nextFloat() < 0.55f -> loot += Loot(pr.x, pr.y + 0.1f, LootKind.Gold(goldAmount(rnd.nextInt(2, 8) * lvl)))
             rnd.nextFloat() < 0.15f -> loot += Loot(pr.x, pr.y + 0.1f, LootKind.Potion)
-            rnd.nextFloat() < 0.08f -> loot += Loot(pr.x, pr.y + 0.1f, LootKind.Gear(makeItem(ilvl(), Rarity.COMMON, false)))
+            rnd.nextFloat() < 0.08f -> dropGear(pr.x, pr.y + 0.1f, makeItem(ilvl(), Rarity.COMMON, false))
         }
     }
 
@@ -569,16 +749,17 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         pr.used = true
         sfx.equip()
         burst(pr.x, pr.y - 0.2f, GOLD, 30, glow = true)
-        loot += Loot(pr.x - 0.4f, pr.y + 0.5f, LootKind.Gold(rnd.nextInt(8, 20) * floor))
+        val lvl = levelHere(pr.x, pr.y)
+        loot += Loot(pr.x - 0.4f, pr.y + 0.5f, LootKind.Gold(goldAmount(rnd.nextInt(8, 20) * lvl)))
         repeat(rnd.nextInt(1, 3)) {
-            loot += Loot(pr.x + (it - 0.5f) * 0.7f, pr.y + 0.6f, LootKind.Gear(makeItem(ilvl(), Rarity.MAGIC, false)))
+            dropGear(pr.x + (it - 0.5f) * 0.7f, pr.y + 0.6f, makeItem(ilvl(), Rarity.MAGIC, false))
         }
         if (rnd.nextFloat() < 0.4f) loot += Loot(pr.x + 0.4f, pr.y + 0.5f, LootKind.Potion)
         showMessage("Skattekiste!", GOLD)
     }
 
     private fun useShrine(pr: Prop) {
-        if (inCamp) {
+        if (inVillage) {
             if (player.hp < player.maxHp) {
                 player.hp = player.maxHp
                 player.mana = player.maxMana
@@ -603,8 +784,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         EnemyType.SKELETON, EnemyType.SKELETON_KING -> Color(0xFFE0D8C3)
         EnemyType.BAT -> Color(0xFF7B1FA2)
         EnemyType.SPIDER, EnemyType.SPIDER_QUEEN -> Color(0xFF9CCC65)
-        EnemyType.CULTIST -> Color(0xFF8E1B1B)
-        EnemyType.BRUTE -> Color(0xFF8E1B1B)
+        EnemyType.CULTIST, EnemyType.BRUTE, EnemyType.WOLF, EnemyType.BANDIT, EnemyType.TROLL -> Color(0xFF8E1B1B)
         EnemyType.DEMON_LORD, EnemyType.SHADOW_KING -> Color(0xFFFF5722)
     }
 
@@ -639,6 +819,14 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         texts += FloatText(player.x, player.y - 1.2f, "-${dmg.roundToInt()}", HURT_COLOR)
         burst(player.x, player.y, Color(0xFFB71C1C), 8)
         if (player.hp <= 0f) {
+            if (player.has(Power.PHOENIX) && !player.phoenixUsed) {
+                player.phoenixUsed = true
+                player.hp = player.maxHp * 0.5f
+                ring(player.x, player.y, 0.3f, Color(0xFFFF9100), 50, 5f)
+                sfx.levelUp()
+                showMessage("Føniks! Du rejser dig af asken", Color(0xFFFF9100))
+                return
+            }
             player.hp = 0f
             dead = true
             attackHeld = false
@@ -654,11 +842,12 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         sfx.kill()
         burst(e.x, e.y, bloodColor(e.type), 20)
         if (bleeds(e.type)) addDecal(e.x, e.y, rnd.nextInt(4), 0.9f * e.size * (if (e.type.boss) 2f else 1f))
+        if (player.has(Power.VAMPIRE)) player.hp = min(player.maxHp, player.hp + player.maxHp * 0.05f)
         gainXp(e.xp)
         dropLoot(e)
         if (e.type.boss) {
             val idx = questBosses.indexOf(e.type)
-            if (idx == questStage) {
+            if (idx >= 0 && idx == questStage) {
                 questStage++
                 showMessage("${e.type.label} er besejret!\nOpgave fuldført: ${QUESTS[idx].first}", GOLD)
                 if (questStage == QUESTS.size) victory = true
@@ -691,13 +880,24 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     private fun jitter() = (rnd.nextFloat() - 0.5f) * 0.6f
 
-    private fun ilvl() = floor + player.level / 2
+    private fun ilvl() = levelHere() + player.level / 2
+
+    private fun goldAmount(base: Int) = max(1, (base * (1f + player.goldFind / 100f)).toInt())
+
+    private fun dropGear(x: Float, y: Float, item: Item) {
+        loot += Loot(x, y, LootKind.Gear(item))
+        if (item.rarity >= Rarity.EPIC) {
+            sfx.levelUp()
+            ring(x, y, 0.2f, item.rarity.color, 24, 2.5f)
+        }
+    }
 
     private fun dropLoot(e: Enemy) {
         val boss = e.type.boss
+        val lvl = e.level
         if (boss || rnd.nextFloat() < 0.6f) {
-            val amount = rnd.nextInt(3, 11) * floor * (if (boss) 12 else if (e.elite) 3 else 1)
-            loot += Loot(e.x + jitter(), e.y + jitter(), LootKind.Gold(amount))
+            val amount = rnd.nextInt(3, 11) * lvl * (if (boss) 12 else if (e.elite) 3 else 1)
+            loot += Loot(e.x + jitter(), e.y + jitter(), LootKind.Gold(goldAmount(amount)))
         }
         if (rnd.nextFloat() < (if (boss) 1f else 0.1f)) loot += Loot(e.x + jitter(), e.y + jitter(), LootKind.Potion)
         val gearChance = when {
@@ -709,55 +909,81 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         repeat(if (boss) 3 else 1) {
             if (rnd.nextFloat() < gearChance) {
                 val min = if (boss || e.elite) Rarity.MAGIC else Rarity.COMMON
-                loot += Loot(e.x + jitter(), e.y + jitter(), LootKind.Gear(makeItem(ilvl(), min, boss)))
+                dropGear(e.x + jitter(), e.y + jitter(), makeItem(lvl + player.level / 2, min, boss))
             }
         }
     }
 
-    fun makeItem(level: Int, minRarity: Rarity, bossDrop: Boolean): Item {
+    /**
+     * Rolls an item. Rarity: normal 50%, magic 30%, rare 13%, epic 5%, legendary 1.7%, mythic 0.3%
+     * (bosses roll much better). With [exact] the given rarity is used as is.
+     */
+    fun makeItem(level: Int, minRarity: Rarity, bossDrop: Boolean, slot: Slot? = null, exact: Boolean = false): Item {
         val roll = rnd.nextFloat()
-        var rarity = when {
-            roll < (if (bossDrop) 0.3f else 0.03f) -> Rarity.LEGENDARY
-            roll < (if (bossDrop) 0.85f else 0.14f) -> Rarity.RARE
-            roll < 0.45f -> Rarity.MAGIC
+        var rarity = if (exact) minRarity else when {
+            roll < (if (bossDrop) 0.04f else 0.003f) -> Rarity.MYTHIC
+            roll < (if (bossDrop) 0.25f else 0.02f) -> Rarity.LEGENDARY
+            roll < (if (bossDrop) 0.55f else 0.07f) -> Rarity.EPIC
+            roll < (if (bossDrop) 0.9f else 0.2f) -> Rarity.RARE
+            roll < 0.5f -> Rarity.MAGIC
             else -> Rarity.COMMON
         }
         if (rarity < minRarity) rarity = minRarity
-        val slot = Slot.entries.random(rnd)
-        val (base, icon) = bases.getValue(slot).random(rnd)
+        val s = slot ?: Slot.entries.random(rnd)
+        val (base, icon) = bases.getValue(s).random(rnd)
         val name = when (rarity) {
-            Rarity.LEGENDARY -> legendaryNames.getValue(slot).random(rnd)
+            Rarity.MYTHIC -> mythicNames.getValue(s).random(rnd)
+            Rarity.LEGENDARY -> legendaryNames.getValue(s).random(rnd)
+            Rarity.EPIC -> "${prefixes.random(rnd)} ${base.lowercase()} ${suffixes.random(rnd)}"
             Rarity.COMMON -> base
             else -> "${prefixes.random(rnd)} ${base.lowercase()}"
         }
         val m = rarity.mult
         fun v(b: Float) = (b * m * (0.8f + rnd.nextFloat() * 0.4f)).roundToInt().coerceAtLeast(1)
         val stats = mutableMapOf<String, Int>()
-        when (slot) {
-            Slot.WEAPON -> stats["damage"] = v(2f + level * 1.7f)
-            Slot.HELM -> { stats["armor"] = v(1f + level * 0.8f); stats["life"] = v(3f + level * 2f) }
-            Slot.ARMOR -> { stats["armor"] = v(2f + level * 1.5f); stats["life"] = v(5f + level * 3f) }
-            Slot.BOOTS -> { stats["armor"] = v(1f + level * 0.6f); stats["speed"] = v(3f).coerceAtMost(12) }
+        val leather = icon == Icons.LEATHER || icon == Icons.HOOD
+        when (s) {
+            Slot.WEAPON -> {
+                stats["damage"] = v(2f + level * 1.7f)
+                if (icon == Icons.STAFF) stats["spell"] = v(8f + level * 1.5f).coerceAtMost(90)
+            }
+            Slot.OFFHAND -> { stats["armor"] = v(2f + level * 1.2f); stats["life"] = v(3f + level * 1.5f) }
+            Slot.HELM -> { stats["armor"] = v((if (leather) 0.6f else 1f) + level * 0.8f); stats["life"] = v(3f + level * 2f) }
+            Slot.ARMOR -> {
+                stats["armor"] = v((if (leather) 1.2f else 2f) + level * (if (leather) 1f else 1.5f))
+                stats["life"] = v(5f + level * 3f)
+                if (leather) stats["speed"] = v(2f).coerceAtMost(15)
+            }
+            Slot.GLOVES -> { stats["armor"] = v(1f + level * 0.5f); stats["atkSpeed"] = v(3f).coerceAtMost(20) }
+            Slot.BOOTS -> { stats["armor"] = v(1f + level * 0.6f); stats["speed"] = v(3f).coerceAtMost(15) }
             Slot.AMULET -> { stats["life"] = v(4f + level * 2.5f); stats["mana"] = v(5f + level * 2f) }
-            Slot.RING -> stats["crit"] = v(2f).coerceAtMost(12)
+            Slot.RING -> stats["crit"] = v(2f).coerceAtMost(15)
         }
-        val extras = listOf("damage", "crit", "lifeSteal", "mana", "life", "speed", "armor").shuffled(rnd)
-        val count = rarity.ordinal
-        for (key in extras.filter { it !in stats }.take(count)) {
+        val extras = listOf("damage", "crit", "lifeSteal", "mana", "life", "speed", "armor", "spell", "atkSpeed", "goldFind").shuffled(rnd)
+        for (key in extras.filter { it !in stats }.take(rarity.ordinal)) {
             stats[key] = when (key) {
                 "damage" -> v(1f + level * 0.6f)
-                "crit" -> v(1.5f).coerceAtMost(12)
+                "crit" -> v(1.5f).coerceAtMost(15)
                 "lifeSteal" -> v(1f).coerceAtMost(8)
                 "mana" -> v(3f + level)
                 "life" -> v(3f + level * 1.5f)
-                "speed" -> v(2f).coerceAtMost(12)
+                "speed" -> v(2f).coerceAtMost(15)
+                "spell" -> v(4f + level).coerceAtMost(60)
+                "atkSpeed" -> v(2f).coerceAtMost(20)
+                "goldFind" -> v(8f).coerceAtMost(80)
                 else -> v(1f + level * 0.5f)
             }
         }
+        val power = when {
+            rarity == Rarity.MYTHIC -> Power.entries.random(rnd)
+            rarity == Rarity.LEGENDARY && rnd.nextFloat() < 0.7f -> Power.entries.random(rnd)
+            else -> null
+        }
         return Item(
-            slot, name, rarity, icon, level,
+            s, name, rarity, icon, level,
             damage = stats["damage"] ?: 0, armor = stats["armor"] ?: 0, life = stats["life"] ?: 0,
             crit = stats["crit"] ?: 0, mana = stats["mana"] ?: 0, lifeSteal = stats["lifeSteal"] ?: 0, speed = stats["speed"] ?: 0,
+            spell = stats["spell"] ?: 0, atkSpeed = stats["atkSpeed"] ?: 0, goldFind = stats["goldFind"] ?: 0, power = power,
         )
     }
 
@@ -783,9 +1009,9 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 } else if (p.inventory.size < INVENTORY_SIZE) {
                     p.inventory += item
                     sfx.coin()
-                    showMessage("Fandt: ${item.name}${if (isUpgrade(item)) "  ⬆" else ""}", item.rarity.color)
+                    showMessage("${item.rarity.label}: ${item.name}${if (isUpgrade(item)) "  ⬆" else ""}", item.rarity.color)
                 } else {
-                    if (messageTimer <= 0f) showMessage("Inventaret er fuldt — sælg noget", HURT_COLOR)
+                    if (messageTimer <= 0f) showMessage("Tasken er fuld — sælg noget", HURT_COLOR)
                     return false
                 }
                 save()
@@ -808,6 +1034,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             }
             e.flash = max(0f, e.flash - dt)
             e.moving = false
+            // Monsters far away out in the world sleep to save battery.
+            if (inWorld && !e.aggro && (abs(e.x - player.x) > 14f || abs(e.y - player.y) > 16f)) continue
             if (e.kx != 0f || e.ky != 0f) {
                 move(e, (e.kx * dt).coerceIn(-0.25f, 0.25f), (e.ky * dt).coerceIn(-0.25f, 0.25f), e.type.radius)
                 val damp = 1f - min(1f, dt * 8f)
@@ -827,7 +1055,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             val dx = player.x - e.x
             val dy = player.y - e.y
             val d = hypot(dx, dy).coerceAtLeast(0.001f)
-            if (!e.aggro && d < e.type.aggro) e.aggro = true
+            if (!e.aggro && d < e.type.aggro && !inVillage) e.aggro = true
+            if (e.aggro && inVillage && d > 4f) e.aggro = false
             if (!e.aggro) continue
             e.faceX = dx / d
             e.faceY = dy / d
@@ -883,17 +1112,21 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         }
         enemies += spawned
 
-        for (i in enemies.indices) for (j in i + 1 until enemies.size) {
+        for (i in enemies.indices) {
             val a = enemies[i]
-            val b = enemies[j]
-            val dx = b.x - a.x
-            val dy = b.y - a.y
-            val d = hypot(dx, dy)
-            val minD = a.type.radius * a.size + b.type.radius * b.size
-            if (d < minD && d > 0.001f) {
-                val push = (minD - d) / 2f
-                move(a, -dx / d * push, -dy / d * push, a.type.radius)
-                move(b, dx / d * push, dy / d * push, b.type.radius)
+            if (abs(a.x - player.x) > 12f || abs(a.y - player.y) > 14f) continue
+            for (j in i + 1 until enemies.size) {
+                val b = enemies[j]
+                val dx = b.x - a.x
+                val dy = b.y - a.y
+                if (abs(dx) > 1.5f || abs(dy) > 1.5f) continue
+                val d = hypot(dx, dy)
+                val minD = a.type.radius * a.size + b.type.radius * b.size
+                if (d < minD && d > 0.001f) {
+                    val push = (minD - d) / 2f
+                    move(a, -dx / d * push, -dy / d * push, a.type.radius)
+                    move(b, dx / d * push, dy / d * push, b.type.radius)
+                }
             }
         }
     }
@@ -915,20 +1148,27 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 projectiles += Projectile(e.x, e.y, cos(a) * 4.5f, sin(a) * 4.5f, e.dmg * 0.55f, hostile = true, color = volley.second, life = 3f)
             }
         }
+        // The troll stomps the ground instead.
+        if (e.type == EnemyType.TROLL && e.special <= 0f) {
+            e.special = 5f
+            ring(e.x, e.y, 0.5f, Color(0xFF8D6E63), 36, 5f)
+            shake = max(shake, 0.6f)
+            if (hypot(player.x - e.x, player.y - e.y) < 3f) hurtPlayer(e.dmg * 0.8f)
+        }
         val minion = when (e.type) {
             EnemyType.SKELETON_KING -> EnemyType.SKELETON
             EnemyType.SPIDER_QUEEN -> EnemyType.SPIDER
             EnemyType.SHADOW_KING -> EnemyType.CULTIST
             else -> null
         }
-        if (minion != null && e.summon <= 0f && enemies.size + spawned.size < 70) {
+        if (minion != null && e.summon <= 0f && enemies.size + spawned.size < 90) {
             e.summon = 8f
             repeat(if (e.type == EnemyType.SPIDER_QUEEN) 3 else 2) {
                 val a = rnd.nextFloat() * 2f * PI.toFloat()
                 val sx = e.x + cos(a) * 1.2f
                 val sy = e.y + sin(a) * 1.2f
                 if (dungeon.walkableAt(sx, sy)) {
-                    spawned += Enemy(minion, sx, sy, floor).also { it.aggro = true }
+                    spawned += Enemy(minion, sx, sy, e.level).also { it.aggro = true }
                     burst(sx, sy, Color(0xFF7C4DFF), 14, glow = true)
                 }
             }
@@ -942,7 +1182,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             pr.life -= dt
             val nx = pr.x + pr.vx * dt
             val ny = pr.y + pr.vy * dt
-            var explode = pr.life <= 0f || !dungeon.walkableAt(nx, ny)
+            val tile = dungeon.tile(floorInt(nx), floorInt(ny))
+            var explode = pr.life <= 0f || !(dungeon.walkableAt(nx, ny) || tile == WATER)
             if (!explode) {
                 pr.x = nx
                 pr.y = ny
@@ -962,7 +1203,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             if (explode) {
                 iter.remove()
                 if (!pr.hostile) {
-                    for (e in enemies) if (hypot(e.x - pr.x, e.y - pr.y) < pr.aoe + e.type.radius) damageEnemy(e, pr.dmg, 3f)
+                    for (e in enemies.toList()) if (hypot(e.x - pr.x, e.y - pr.y) < pr.aoe + e.type.radius) damageEnemy(e, pr.dmg, 3f)
                     for (p in dungeon.props) if (p.type.breakable && !p.used && hypot(p.x - pr.x, p.y - pr.y) < pr.aoe) breakProp(p)
                     sfx.explode()
                     shake = max(shake, 0.35f)
@@ -984,8 +1225,9 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     private fun reveal() {
         val px = floorInt(player.x)
         val py = floorInt(player.y)
-        for (y in py - 7..py + 7) for (x in px - 7..px + 7) {
-            if (x in 0 until dungeon.w && y in 0 until dungeon.h && (x - px) * (x - px) + (y - py) * (y - py) <= 49) {
+        val r = if (inWorld) 9 else 7
+        for (y in py - r..py + r) for (x in px - r..px + r) {
+            if (x in 0 until dungeon.w && y in 0 until dungeon.h && (x - px) * (x - px) + (y - py) * (y - py) <= r * r) {
                 explored[y * dungeon.w + x] = true
             }
         }
@@ -1016,16 +1258,21 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         }
     }
 
-    /** Embers from the campfire / lava and dust motes in the torchlight. */
+    /** Embers from the campfire / lava, fireflies at night and dust motes in torchlight. */
     private fun ambientParticles() {
         if (particles.size > 400) return
-        if (inCamp && rnd.nextFloat() < 0.5f) {
-            particles += Particle(13f + (rnd.nextFloat() - 0.5f) * 0.4f, 12f, (rnd.nextFloat() - 0.5f) * 0.3f, -0.2f,
+        val fire = dungeon.props.firstOrNull { it.type == PropType.CAMPFIRE }
+        if (fire != null && hypot(fire.x - player.x, fire.y - player.y) < 12f && rnd.nextFloat() < 0.5f) {
+            particles += Particle(fire.x + (rnd.nextFloat() - 0.5f) * 0.4f, fire.y, (rnd.nextFloat() - 0.5f) * 0.3f, -0.2f,
                 Color(0xFFFFAB40), 0.03f, 1.5f, glow = true, gravity = -0.6f, z = 0.4f)
+        }
+        if (inWorld && daylight < 0.35f && rnd.nextFloat() < 0.2f) {
+            particles += Particle(player.x + (rnd.nextFloat() - 0.5f) * 9f, player.y + (rnd.nextFloat() - 0.5f) * 12f,
+                (rnd.nextFloat() - 0.5f) * 0.4f, (rnd.nextFloat() - 0.5f) * 0.4f, Color(0xFFCCFF90), 0.025f, 3f, glow = true, z = 0.7f)
         } else if (dungeon.biome == Biome.HELL && rnd.nextFloat() < 0.3f) {
             particles += Particle(player.x + (rnd.nextFloat() - 0.5f) * 9f, player.y + (rnd.nextFloat() - 0.4f) * 12f,
                 (rnd.nextFloat() - 0.5f) * 0.2f, -0.3f, Color(0xFFFF6E40), 0.025f, 2.5f, glow = true, gravity = -0.1f, z = 0.2f)
-        } else if (rnd.nextFloat() < 0.15f) {
+        } else if (!inWorld && rnd.nextFloat() < 0.15f) {
             particles += Particle(player.x + (rnd.nextFloat() - 0.5f) * 6f, player.y + (rnd.nextFloat() - 0.5f) * 6f,
                 (rnd.nextFloat() - 0.5f) * 0.15f, -0.05f, Color(0x88FFF3E0), 0.015f, 4f, glow = false, z = 0.6f)
         }

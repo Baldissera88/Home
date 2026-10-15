@@ -19,7 +19,20 @@ class Assets(private val res: Resources) {
     private val opts = BitmapFactory.Options().apply { inScaled = false }
     private fun load(id: Int): ImageBitmap = BitmapFactory.decodeResource(res, id, opts).asImageBitmap()
 
-    val hero = SpriteSheet(load(R.drawable.spr_hero), 128, 1.7f, 0.86f)
+    private val heroes = mapOf(
+        WeaponKind.SWORD to SpriteSheet(load(R.drawable.spr_hero), 128, 1.7f, 0.86f),
+        WeaponKind.AXE to SpriteSheet(load(R.drawable.spr_hero_axe), 128, 1.7f, 0.86f),
+        WeaponKind.MACE to SpriteSheet(load(R.drawable.spr_hero_mace), 128, 1.7f, 0.86f),
+        WeaponKind.DAGGER to SpriteSheet(load(R.drawable.spr_hero_dagger), 128, 1.7f, 0.86f),
+        WeaponKind.SPEAR to SpriteSheet(load(R.drawable.spr_hero_spear), 128, 1.7f, 0.86f),
+        WeaponKind.STAFF to SpriteSheet(load(R.drawable.spr_hero_staff), 128, 1.7f, 0.86f),
+    )
+    fun hero(kind: WeaponKind) = heroes.getValue(kind)
+    val wolf = SpriteSheet(load(R.drawable.spr_wolf), 128, 1.7f, 0.8f)
+    val bandit = SpriteSheet(load(R.drawable.spr_bandit), 128, 1.7f, 0.86f)
+    val world = SpriteSheet(load(R.drawable.spr_world), 160, 2.6f, 0.88f)
+    val ground = load(R.drawable.tex_world_ground)
+    val water = load(R.drawable.tex_water)
     val skeleton = SpriteSheet(load(R.drawable.spr_skeleton), 128, 1.7f, 0.86f)
     val skelKing = SpriteSheet(load(R.drawable.spr_skelking), 128, 1.8f, 0.86f)
     val brute = SpriteSheet(load(R.drawable.spr_brute), 160, 2.3f, 0.86f)
@@ -34,15 +47,15 @@ class Assets(private val res: Resources) {
     val decals = load(R.drawable.tex_decals)
 
     private val floorTex = mapOf(
-        Biome.CAMP to load(R.drawable.tex_camp_floor), Biome.CRYPT to load(R.drawable.tex_crypt_floor),
+        Biome.OVERWORLD to load(R.drawable.tex_camp_floor), Biome.CRYPT to load(R.drawable.tex_crypt_floor),
         Biome.CAVE to load(R.drawable.tex_cave_floor), Biome.HELL to load(R.drawable.tex_hell_floor),
     )
     private val wallTex = mapOf(
-        Biome.CAMP to load(R.drawable.tex_camp_wall), Biome.CRYPT to load(R.drawable.tex_crypt_wall),
+        Biome.OVERWORLD to load(R.drawable.tex_camp_wall), Biome.CRYPT to load(R.drawable.tex_crypt_wall),
         Biome.CAVE to load(R.drawable.tex_cave_wall), Biome.HELL to load(R.drawable.tex_hell_wall),
     )
     private val topTex = mapOf(
-        Biome.CAMP to load(R.drawable.tex_camp_top), Biome.CRYPT to load(R.drawable.tex_crypt_top),
+        Biome.OVERWORLD to load(R.drawable.tex_camp_top), Biome.CRYPT to load(R.drawable.tex_crypt_top),
         Biome.CAVE to load(R.drawable.tex_cave_top), Biome.HELL to load(R.drawable.tex_hell_top),
     )
 
@@ -58,6 +71,9 @@ class Assets(private val res: Resources) {
         EnemyType.SPIDER -> Triple(spider, 1f, true)
         EnemyType.CULTIST -> Triple(cultist, 1f, true)
         EnemyType.BRUTE -> Triple(brute, 1f, true)
+        EnemyType.WOLF -> Triple(wolf, 1f, true)
+        EnemyType.BANDIT -> Triple(bandit, 1f, true)
+        EnemyType.TROLL -> Triple(brute, 1.7f, true)
         EnemyType.SKELETON_KING -> Triple(skelKing, 1.55f, true)
         EnemyType.SPIDER_QUEEN -> Triple(spider, 2.1f, true)
         EnemyType.DEMON_LORD -> Triple(demon, 1f, true)

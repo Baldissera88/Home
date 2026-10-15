@@ -20,6 +20,7 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.max
 import kotlin.math.min
@@ -55,6 +56,7 @@ private val grayscale = ColorFilter.colorMatrix(ColorMatrix().apply { setToSatur
 private val frozenTint = ColorFilter.tint(Color(0xFF9FD8FF), BlendMode.Modulate)
 private val queenTint = ColorFilter.tint(Color(0xFFC9A0FF), BlendMode.Modulate)
 private val shadowTint = ColorFilter.tint(Color(0xFF8E7CC3), BlendMode.Modulate)
+private val trollTint = ColorFilter.tint(Color(0xFFA5D6A7), BlendMode.Modulate)
 private val whiteFlash = ColorFilter.tint(Color.White, BlendMode.SrcAtop)
 private val redFlash = ColorFilter.tint(Color(0xFFFF1744), BlendMode.SrcAtop)
 
@@ -105,16 +107,36 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
     val y0 = max(0, floorInt(cam.oy / t) - 1)
     val y1 = min(d.h - 1, floorInt((cam.oy + size.height) / t) + 2)
 
-    // Floor.
+    // Floor: dungeon flagstones, or grass, paths, sand and water outside.
     val floorImg = a.floor(d.biome)
+    val ground = d.ground
+    val waterFrame = (g.time * 1.2f).toInt() % 2
     for (y in y0..y1) for (x in x0..x1) {
         val tile = d.tile(x, y)
         if (tile == WALL) continue
         val l = cam.px(x.toFloat())
         val tp = cam.py(y.toFloat())
         val sz = IntSize(cam.px(x + 1f) - l, cam.py(y + 1f) - tp)
-        val variant = (d.variant[y * d.w + x] * 4).toInt().coerceIn(0, 3)
-        drawImage(floorImg, IntOffset(variant * 128, 0), IntSize(128, 128), IntOffset(l, tp), sz, filterQuality = FilterQuality.Medium)
+        val i = y * d.w + x
+        if (tile == WATER) {
+            drawImage(a.water, IntOffset(waterFrame * 128, 0), IntSize(128, 128), IntOffset(l, tp), sz, filterQuality = FilterQuality.Medium)
+            if (d.tile(x, y - 1) != WATER) {
+                drawRect(
+                    Brush.verticalGradient(listOf(Color(0x88000000), Color.Transparent), startY = tp.toFloat(), endY = tp + t * 0.3f),
+                    Offset(l.toFloat(), tp.toFloat()), Size(sz.width.toFloat(), t * 0.3f),
+                )
+            }
+            continue
+        }
+        if (ground != null) {
+            drawImage(a.ground, IntOffset(ground[i] * 128, 0), IntSize(128, 128), IntOffset(l, tp), sz, filterQuality = FilterQuality.Medium)
+        } else {
+            val variant = (d.variant[i] * 4).toInt().coerceIn(0, 3)
+            drawImage(floorImg, IntOffset(variant * 128, 0), IntSize(128, 128), IntOffset(l, tp), sz, filterQuality = FilterQuality.Medium)
+        }
+        if (tile == TREE || tile == ROCK) {
+            drawOval(Color.Black.copy(alpha = 0.35f), Offset(l + t * 0.08f, tp + t * 0.5f), Size(t * 0.84f, t * 0.42f))
+        }
         if (tile == STAIRS) drawStairs(l.toFloat(), tp.toFloat(), t, g.time)
         if (d.tile(x, y - 1) == WALL) {
             drawRect(
@@ -146,7 +168,7 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
     bbs += PlayerBB(g.player.y)
     for (e in g.enemies) if (e.y > y0 - 2 && e.y < y1 + 3) bbs += EnemyBB(e)
     for (p in d.props) if (p.y > y0 - 2 && p.y < y1 + 3) bbs += PropBB(p)
-    if (g.inCamp) bbs += MerchantBB(g.merchantY)
+    if (d.hasMerchant) bbs += MerchantBB(g.merchantY)
     bbs.sortBy { it.y }
 
     // Contact shadows go under everything.
@@ -169,19 +191,20 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
     var bi = 0
     val wallImg = a.wall(d.biome)
     val topImg = a.top(d.biome)
-    for (y in y0..y1) {
-        for (x in x0..x1) if (d.tile(x, y) == WALL) drawWallTile(d, x, y, cam, g.time, wallImg, topImg)
-        while (bi < bbs.size && bbs[bi].y < y + 1f) {
-            when (val b = bbs[bi]) {
-                is PlayerBB -> drawPlayer(g, cam, a)
-                is EnemyBB -> drawEnemy(b.e, g, cam, a, measurer, styles)
-                is PropBB -> drawProp(b.p, g, cam, a)
-                is MerchantBB -> drawMerchant(g, cam, a, measurer, styles)
-            }
-            bi++
+    fun drawBillboard(b: Billboard) {
+        when (b) {
+            is PlayerBB -> drawPlayer(g, cam, a)
+            is EnemyBB -> drawEnemy(b.e, g, cam, a, measurer, styles)
+            is PropBB -> drawProp(b.p, g, cam, a)
+            is MerchantBB -> drawMerchant(g, cam, a, measurer, styles)
         }
     }
-    while (bi < bbs.size) bi++
+    for (y in y0..y1) {
+        for (x in x0..x1) if (d.tile(x, y) == WALL) drawWallTile(d, x, y, cam, g.time, wallImg, topImg)
+        while (bi < bbs.size && bbs[bi].y < y + 0.8f) drawBillboard(bbs[bi++])
+        for (x in x0..x1) drawWorldTile(g, x, y, cam, a, measurer, styles)
+        while (bi < bbs.size && bbs[bi].y < y + 1f) drawBillboard(bbs[bi++])
+    }
 
     for (pr in g.projectiles) {
         val c = Offset(cam.sx(pr.x), cam.sy(pr.y) - t * 0.4f)
@@ -215,10 +238,11 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
     for (p in d.props) {
         when {
             p.type == PropType.CAMPFIRE -> spill(p.x, p.y - 0.3f, t * 5f * flicker(g.time, 1f), Color(0x55FF8F00))
-            p.type == PropType.SHRINE && (!p.used || g.inCamp) -> spill(p.x, p.y - 0.6f, t * 1.8f, Color(0x4000E5FF))
+            p.type == PropType.SHRINE && !p.used -> spill(p.x, p.y - 0.6f, t * 1.8f, Color(0x4000E5FF))
         }
     }
     for (pr in g.projectiles) spill(pr.x, pr.y, t * 2f, pr.color.copy(alpha = 0.3f))
+    for (e in d.entrances) if (e.region == Region.HELL) spill(e.x + 0.5f, e.y + 0.2f, t * 3f * flicker(g.time, 5f), Color(0x55FF3D00))
 
     for (ft in g.texts) {
         val layout = ft.layout ?: measurer.measure(ft.text, if (ft.big) styles.big else styles.small).also { ft.layout = it }
@@ -314,7 +338,7 @@ private fun DrawScope.drawPlayer(g: Game, cam: Camera, a: Assets) {
             row = (row + ((1f - p.whirl / 0.45f) * 16f).toInt()) % 8
             6
         }
-        p.swing > 0f -> 5 + ((1f - p.swing / 0.3f) * 3f).toInt().coerceIn(0, 2)
+        p.swing > 0f -> 5 + ((1f - p.swing / p.swingTime) * 3f).toInt().coerceIn(0, 2)
         p.cast > 0f -> 6
         p.moving -> 1 + (p.walk.toInt() % 4)
         else -> 0
@@ -325,15 +349,16 @@ private fun DrawScope.drawPlayer(g: Game, cam: Camera, a: Assets) {
         val face = atan2(p.faceY, p.faceX)
         val body = Offset(cx, cy - t * 0.4f)
         val (start, sweep) = if (p.whirl > 0f) 0f to 360f else
-            Math.toDegrees((face - 1.2).toDouble()).toFloat() to Math.toDegrees(((1f - p.swing / 0.3f) * 2.4f).toDouble()).toFloat()
+            Math.toDegrees((face - 1.2).toDouble()).toFloat() to Math.toDegrees(((1f - p.swing / p.swingTime) * 2.4f).toDouble()).toFloat()
         drawArc(
             Color.White.copy(alpha = 0.3f), start, sweep, useCenter = false,
             topLeft = Offset(body.x - r, body.y - r * 0.6f), size = Size(r * 2f, r * 1.2f), style = Stroke(t * 0.12f, cap = StrokeCap.Round),
         )
     }
 
-    drawSprite(a.hero, col, row, cx, cy, t, scale = CHAR_SCALE)
-    if (p.hurt > 0f) drawSprite(a.hero, col, row, cx, cy, t, scale = CHAR_SCALE, alpha = p.hurt * 2f, filter = redFlash)
+    val sheet = a.hero(p.weaponKind)
+    drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE)
+    if (p.hurt > 0f) drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE, alpha = p.hurt * 2f, filter = redFlash)
 }
 
 private fun DrawScope.drawEnemy(e: Enemy, g: Game, cam: Camera, a: Assets, measurer: TextMeasurer, styles: TextStyles) {
@@ -372,6 +397,7 @@ private fun DrawScope.drawEnemy(e: Enemy, g: Game, cam: Camera, a: Assets, measu
         e.frozen > 0f -> frozenTint
         e.type == EnemyType.SPIDER_QUEEN -> queenTint
         e.type == EnemyType.SHADOW_KING -> shadowTint
+        e.type == EnemyType.TROLL -> trollTint
         else -> null
     }
     drawSprite(sheet, col, row, cx, cy, t, scale = scale, filter = filter)
@@ -394,15 +420,15 @@ private fun DrawScope.drawProp(p: Prop, g: Game, cam: Camera, a: Assets) {
     val cx = cam.sx(p.x)
     val cy = cam.sy(p.y)
     val col = if (p.used && p.type != PropType.SHRINE) p.type.brokenSprite else p.type.sprite
-    val filter = if (p.type == PropType.SHRINE && p.used && !g.inCamp) grayscale else null
-    drawSprite(a.props, col, 0, cx, cy, t, filter = filter)
+    val filter = if (p.type == PropType.SHRINE && p.used) grayscale else null
+    drawSprite(if (p.type.world) a.world else a.props, col, 0, cx, cy, t, filter = filter)
     when (p.type) {
         PropType.CAMPFIRE -> {
             drawFlame(cx - t * 0.1f, cy - t * 0.05f, t * 0.45f, g.time, 3f)
             drawFlame(cx + t * 0.12f, cy, t * 0.38f, g.time * 1.1f, 7f)
             drawFlame(cx, cy + t * 0.02f, t * 0.55f, g.time * 0.9f, 11f)
         }
-        PropType.SHRINE -> if (!p.used || g.inCamp) {
+        PropType.SHRINE -> if (!p.used) {
             val pulse = 0.5f + 0.5f * sin(g.time * 3f)
             val c = Offset(cx, cy - t * 0.85f)
             drawCircle(Brush.radialGradient(listOf(Color(0x8800E5FF), Color.Transparent), c, t * (0.5f + 0.15f * pulse)), t * (0.5f + 0.15f * pulse), c)
@@ -443,10 +469,21 @@ private fun DrawScope.drawLoot(l: Loot, cam: Camera, time: Float, a: Assets, mea
             val item = k.item
             val rc = item.rarity.color
             if (item.rarity >= Rarity.RARE) {
+                // Pillars of light grow taller and brighter with rarity.
+                val tier = item.rarity.ordinal - Rarity.RARE.ordinal
+                val hgt = t * (2.2f + tier * 0.9f)
+                val wid = t * (0.12f + tier * 0.05f)
+                val pulse = if (item.rarity == Rarity.MYTHIC) 0.75f + 0.25f * sin(time * 5f) else 1f
                 drawRect(
-                    Brush.verticalGradient(listOf(Color.Transparent, rc.copy(alpha = 0.5f)), startY = cy - t * 2.4f, endY = cy),
-                    Offset(cx - t * 0.07f, cy - t * 2.4f), Size(t * 0.14f, t * 2.4f),
+                    Brush.verticalGradient(listOf(Color.Transparent, rc.copy(alpha = 0.55f * pulse)), startY = cy - hgt, endY = cy),
+                    Offset(cx - wid / 2f, cy - hgt), Size(wid, hgt),
                 )
+                if (tier >= 1) {
+                    for (k in 0 until tier * 2) {
+                        val ph = (time * 0.7f + k * 0.37f + l.phase) % 1f
+                        drawCircle(rc.copy(alpha = 1f - ph), t * 0.03f, Offset(cx + sin(k * 2.1f + time * 2f) * t * 0.15f, cy - ph * hgt))
+                    }
+                }
             }
             drawCircle(Brush.radialGradient(listOf(rc.copy(alpha = 0.45f), Color.Transparent), Offset(cx, cy - t * 0.15f), t * 0.5f), t * 0.5f, Offset(cx, cy - t * 0.15f))
             drawIcon(a, item.icon, cx, cy - t * 0.25f + bob, t * 0.62f)
@@ -474,7 +511,7 @@ fun DrawScope.drawLighting(g: Game) {
     val cam = cameraFor(g)
     val t = cam.t
     val d = g.dungeon
-    drawRect(d.biome.darkness.copy(alpha = d.biome.darknessAlpha))
+    drawRect(d.biome.darkness.copy(alpha = g.darknessAlpha))
 
     fun light(x: Float, y: Float, radius: Float, strength: Float) {
         val c = Offset(cam.sx(x), cam.sy(y))
@@ -492,17 +529,18 @@ fun DrawScope.drawLighting(g: Game) {
     }
 
     val p = g.player
-    light(p.x, p.y - 0.3f, t * 5.6f * flicker(g.time, 0.3f), 1f)
+    light(p.x, p.y - 0.3f, t * (if (g.inWorld) 7f else 5.6f) * flicker(g.time, 0.3f), 1f)
+    for (e in d.entrances) light(e.x + 0.5f, e.y + 0.3f, t * (if (e.region == Region.HELL) 3.4f else 1.6f), 0.8f)
     for (i in d.torches) light(i % d.w + 0.5f, i / d.w + 1f - WALL_HEIGHT * 0.4f, t * 3.6f * flicker(g.time, i.toFloat()), 0.95f)
     for (pr in g.projectiles) light(pr.x, pr.y, t * 2.4f, 0.85f)
     light(d.exit.cx + 0.5f, d.exit.cy + 0.5f, t * 2.2f, 0.75f)
     for (pr in d.props) {
         when {
             pr.type == PropType.CAMPFIRE -> light(pr.x, pr.y - 0.3f, t * 8f * flicker(g.time, 1f), 1f)
-            pr.type == PropType.SHRINE && (!pr.used || g.inCamp) -> light(pr.x, pr.y - 0.6f, t * 2.2f, 0.7f)
+            pr.type == PropType.SHRINE && !pr.used -> light(pr.x, pr.y - 0.6f, t * 2.2f, 0.7f)
         }
     }
-    if (g.inCamp) light(g.merchantX + 0.25f, g.merchantY - 0.4f, t * 3f, 0.8f)
+    if (d.hasMerchant) light(g.merchantX + 0.25f, g.merchantY - 0.4f, t * 3f, 0.8f)
     for (l in g.loot) {
         val k = l.kind
         if (k is LootKind.Gear && k.item.rarity >= Rarity.RARE) light(l.x, l.y, t * 1.3f, 0.6f)
@@ -511,7 +549,7 @@ fun DrawScope.drawLighting(g: Game) {
 
     drawRect(
         Brush.radialGradient(
-            listOf(Color.Transparent, Color.Black.copy(alpha = 0.6f)),
+            listOf(Color.Transparent, Color.Black.copy(alpha = 0.2f + 0.45f * g.darknessAlpha)),
             center = Offset(size.width / 2f, size.height * 0.48f),
             radius = size.maxDimension * 0.75f,
         )
@@ -524,5 +562,52 @@ fun DrawScope.drawLighting(g: Game) {
                 radius = size.maxDimension * 0.7f,
             )
         )
+    }
+}
+
+// ---------------------------------------------------------------- overworld
+
+/** Trees, rocks and dungeon entrances that stand on a tile, depth-sorted with the row. */
+private fun DrawScope.drawWorldTile(g: Game, x: Int, y: Int, cam: Camera, a: Assets, measurer: TextMeasurer, styles: TextStyles) {
+    val d = g.dungeon
+    val tile = d.tile(x, y)
+    if (tile != TREE && tile != ROCK && tile != ENTRANCE) return
+    val t = cam.t
+    val cx = cam.sx(x + 0.5f)
+    if (cx < -t * 2 || cx > size.width + t * 2) return
+    val cy = cam.sy(y + 0.8f)
+    val v = d.variant[y * d.w + x]
+    when (tile) {
+        TREE -> {
+            val idx = when {
+                v < 0.05f -> 4
+                v < 0.13f -> 5
+                else -> (v * 1000f).toInt() % 4
+            }
+            val p = g.player
+            val behind = y + 0.8f > p.y && y + 0.8f - p.y < 2.6f && abs(x + 0.5f - p.x) < 1.4f
+            val scale = 0.9f + ((v * 7f) % 1f) * 0.25f
+            drawSprite(a.world, idx, 0, cx, cy, t, scale = scale, alpha = if (behind && idx < 5) 0.45f else 1f)
+        }
+        ROCK -> drawSprite(a.world, if (v < 0.4f) 6 else if (v < 0.8f) 7 else 8, 0, cx, cy, t, scale = 0.8f)
+        ENTRANCE -> {
+            val e = d.entrances.firstOrNull { it.x == x && it.y == y } ?: return
+            val foot = cam.sy(y + 0.95f)
+            drawSprite(a.world, e.region.sprite, 0, cx, foot, t)
+            if (e.region == Region.HELL) {
+                val c = Offset(cx, foot - t * 1.25f)
+                val pulse = 0.8f + 0.2f * sin(g.time * 4f)
+                drawCircle(Brush.radialGradient(listOf(Color(0xAAFF6D00), Color.Transparent), c, t * 0.9f * pulse), t * 0.9f * pulse, c)
+            }
+            val locked = g.questStage < e.region.quest
+            val label = measurer.measure(
+                (if (locked) "🔒 " else "") + e.region.title,
+                styles.label.copy(color = if (locked) Color(0xFFBDBDBD) else GOLD),
+            )
+            val lx = cx - label.size.width / 2f
+            val ly = foot - t * 2.15f
+            drawRoundRect(Color.Black.copy(alpha = 0.6f), Offset(lx - 6f, ly - 2f), Size(label.size.width + 12f, label.size.height + 4f), CornerRadius(6f))
+            drawText(label, topLeft = Offset(lx, ly))
+        }
     }
 }

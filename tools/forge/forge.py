@@ -28,6 +28,13 @@ DIRECTIONAL = {
     "spr_cultist": (M.cultist, 128, 1.7, 0.86),
     "spr_spider": (M.spider, 128, 1.7, 0.8),
     "spr_demon": (M.demon, 256, 3.4, 0.86),
+    "spr_hero_axe": (lambda f: M.humanoid(f, M.HERO_AXE), 128, 1.7, 0.86),
+    "spr_hero_mace": (lambda f: M.humanoid(f, M.HERO_MACE), 128, 1.7, 0.86),
+    "spr_hero_dagger": (lambda f: M.humanoid(f, M.HERO_DAGGER), 128, 1.7, 0.86),
+    "spr_hero_spear": (lambda f: M.humanoid(f, M.HERO_SPEAR), 128, 1.7, 0.86),
+    "spr_hero_staff": (lambda f: M.humanoid(f, M.HERO_STAFF), 128, 1.7, 0.86),
+    "spr_bandit": (lambda f: M.humanoid(f, M.BANDIT), 128, 1.7, 0.86),
+    "spr_wolf": (M.wolf, 128, 1.7, 0.8),
 }
 STRIPS = {
     "spr_slime": (M.slime, 96, 1.1, 0.82),
@@ -47,6 +54,8 @@ def _render_cell(job):
         return job, render(builder(a), cell, width, foot)
     if kind == "prop":
         return job, render(M.PROPS[a][1](), 128, 1.3, 0.8)
+    if kind == "world":
+        return job, render(M.WORLD[a][1](), 160, 2.6, 0.88)
     if kind == "icon":
         e = math.radians(25)
         view = norm((0, -math.sin(e), -math.cos(e)))
@@ -63,6 +72,9 @@ def textures():
         Image.fromarray(T.to_img(walls)).save(f"{OUT}/tex_{biome}_wall.png", optimize=True)
         Image.fromarray(T.to_img(top(300))).save(f"{OUT}/tex_{biome}_top.png", optimize=True)
         print("textures", biome, flush=True)
+    Image.fromarray(T.to_img(T.world_ground())).save(f"{OUT}/tex_world_ground.png", optimize=True)
+    waters = np.concatenate([T.water(600, f) for f in range(2)], axis=1)
+    Image.fromarray(T.to_img(waters)).save(f"{OUT}/tex_water.png", optimize=True)
     decals = [T.decal_blood(400 + i) for i in range(4)] + [T.decal_scorch(500)]
     Image.fromarray(np.concatenate(decals, axis=1)).save(f"{OUT}/tex_decals.png", optimize=True)
 
@@ -90,6 +102,8 @@ def main():
         jobs += [("prop", "props", i, 0) for i in range(len(M.PROPS))]
     if not only or "icons" in only:
         jobs += [("icon", "icons", i, 0) for i in range(len(M.ICONS))]
+    if not only or "world" in only:
+        jobs += [("world", "world", i, 0) for i in range(len(M.WORLD))]
 
     results = {}
     with Pool(os.cpu_count()) as pool:
@@ -121,6 +135,9 @@ def main():
     if not only or "icons" in only:
         strip = np.concatenate([results[("icon", "icons", i, 0)] for i in range(len(M.ICONS))], axis=1)
         Image.fromarray(strip).save(f"{OUT}/spr_icons.png", optimize=True)
+    if not only or "world" in only:
+        strip = np.concatenate([results[("world", "world", i, 0)] for i in range(len(M.WORLD))], axis=1)
+        Image.fromarray(strip).save(f"{OUT}/spr_world.png", optimize=True)
     print(f"done in {time.time() - start:.0f}s", flush=True)
 
 

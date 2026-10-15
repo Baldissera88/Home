@@ -190,7 +190,7 @@ private fun Hud(game: Game, assets: Assets, onOpen: (Overlay) -> Unit) {
                 MenuButton("🎒", p.inventory.any { game.isUpgrade(it) }) { onOpen(Overlay.INVENTORY) }
                 MenuButton("✨", p.skillPoints > 0) { onOpen(Overlay.SKILLS) }
                 MenuButton("📜", false) { onOpen(Overlay.QUESTS) }
-                if (!game.inCamp) MenuButton("🏕️", false) { game.townPortal() }
+                if (!game.inVillage) MenuButton("🏕️", false) { game.townPortal() }
             }
             Spacer(Modifier.weight(1f))
             game.boss?.takeIf { it.aggro }?.let { boss ->
@@ -259,12 +259,26 @@ private fun Minimap(game: Game) {
         val cell = size.width / max(d.w, d.h)
         for (y in 0 until d.h) for (x in 0 until d.w) {
             val i = y * d.w + x
-            if (!game.explored[i] || d.tiles[i] == WALL) continue
-            val color = if (d.tiles[i] == STAIRS) Color(0xFF4FC3F7) else Color(0xFF6D625A)
+            if (!game.explored[i]) continue
+            val color = when (d.tiles[i]) {
+                WALL -> if (game.inWorld) Color(0xFF8D6E63) else continue
+                STAIRS, ENTRANCE -> Color(0xFF4FC3F7)
+                TREE -> Color(0xFF2E5E1E)
+                ROCK -> Color(0xFF7A7570)
+                WATER -> Color(0xFF2B6C8F)
+                else -> if (game.inWorld) Color(0xFF5E7A3A) else Color(0xFF6D625A)
+            }
             drawRect(color, Offset(x * cell, y * cell), Size(cell + 0.5f, cell + 0.5f))
         }
         val st = d.exit
-        if (game.explored[st.cy * d.w + st.cx]) drawCircle(Color(0xFF4FC3F7), cell * 2f, Offset((st.cx + 0.5f) * cell, (st.cy + 0.5f) * cell))
+        if (!game.inWorld && game.explored[st.cy * d.w + st.cx]) drawCircle(Color(0xFF4FC3F7), cell * 2f, Offset((st.cx + 0.5f) * cell, (st.cy + 0.5f) * cell))
+        for (e in d.entrances) {
+            val c = if (e.region == Region.HELL) Color(0xFFFF3D00) else Color(0xFF4FC3F7)
+            drawCircle(c, cell * 2.4f, Offset((e.x + 0.5f) * cell, (e.y + 0.5f) * cell))
+        }
+        d.village?.let { v ->
+            drawRect(GOLD.copy(alpha = 0.6f), Offset(v.x * cell, v.y * cell), Size(v.w * cell, v.h * cell), style = Stroke(cell * 0.8f))
+        }
         for (e in game.enemies) {
             val i = floorInt(e.y) * d.w + floorInt(e.x)
             if (e.aggro || (i in game.explored.indices && game.explored[i])) {
@@ -477,6 +491,7 @@ private fun ItemDetail(item: Item, compare: Item?) {
     ) {
         Text(item.name, color = item.rarity.color, fontSize = 18.sp, style = serifBold)
         Text("${item.rarity.label} ${item.slot.label.lowercase()} · niveau ${item.level}", color = parchment.copy(alpha = 0.7f), fontSize = 12.sp)
+        item.weaponKind?.let { k -> Text("${k.label}: ${k.blurb}", color = Color(0xFFB0BEC5), fontSize = 12.sp) }
         Spacer(Modifier.height(4.dp))
         val keys = (item.stats().map { it.first } + (compare?.stats()?.map { it.first } ?: emptyList())).distinct()
         for (k in keys) {
@@ -489,6 +504,11 @@ private fun ItemDetail(item: Item, compare: Item?) {
                     Text(if (diff > 0) "▲ $diff" else "▼ ${-diff}", color = if (diff > 0) Color(0xFF69F0AE) else Color(0xFFFF5252), fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 }
             }
+        }
+        item.power?.let { pw ->
+            Spacer(Modifier.height(4.dp))
+            Text("✦ ${pw.label}", color = item.rarity.color, fontSize = 14.sp, style = serifBold)
+            Text(pw.text, color = parchment, fontSize = 12.sp)
         }
     }
 }
@@ -513,19 +533,27 @@ private fun InventoryScreen(game: Game, assets: Assets, tick: Int, onClose: () -
                 StatLine("Rustning", "${p.armorValue}")
                 StatLine("Kritisk", "${p.critChance}%")
                 StatLine("Livsdræn", "${p.lifeSteal}%")
+                StatLine("Magi", "+${p.spellBonus}%")
+                StatLine("Angrebsfart", "+${p.attackSpeed}%")
+                StatLine("Guldfund", "+${p.goldFind}%")
                 StatLine("Guld", "${p.gold}")
             }
         }
         Text("Udrustning", color = parchment, fontSize = 15.sp, style = serifBold)
-        for (row in Slot.entries.chunked(3)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Våben: ${p.weaponKind.label} — ${p.weaponKind.blurb}", color = Color(0xFFB0BEC5), fontSize = 12.sp)
+        for (row in Slot.entries.chunked(4)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (slot in row) {
                     val item = p.equipment[slot]
-                    ItemIcon(item, assets, 64.dp, selected = item != null && item === selected, placeholder = slot.label) { selected = item }
+                    ItemIcon(item, assets, 62.dp, selected = item != null && item === selected, placeholder = slot.label) { selected = item }
                 }
             }
         }
-        Text("Taske (${p.inventory.size}/$INVENTORY_SIZE)", color = parchment, fontSize = 15.sp, style = serifBold)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Taske (${p.inventory.size}/$INVENTORY_SIZE)", color = parchment, fontSize = 15.sp, style = serifBold)
+            SmallButton("Sortér") { game.sortInventory(); selected = null }
+            SmallButton("Sælg skrald") { game.sellJunk(); selected = null }
+        }
         if (p.inventory.isEmpty()) Text("Tom — dræb monstre og åbn kister", color = Color.Gray, fontSize = 13.sp)
         for (row in p.inventory.chunked(6)) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -542,6 +570,26 @@ private fun InventoryScreen(game: Game, assets: Assets, tick: Int, onClose: () -
                     GothicButton("Sælg (${item.sellPrice} 🪙)", { game.sell(item); selected = null }, wide = false)
                 }
             }
+        }
+        RarityLegend()
+    }
+}
+
+@Composable
+private fun SmallButton(label: String, onClick: () -> Unit) {
+    Text(
+        label, color = parchment, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+        modifier = Modifier.background(Color(0xFF3A2A1E), RoundedCornerShape(6.dp)).border(1.dp, bronze, RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 4.dp),
+    )
+}
+
+@Composable
+private fun RarityLegend() {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("Sjældenhed", color = parchment.copy(alpha = 0.6f), fontSize = 11.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (r in Rarity.entries) Text(r.label, color = r.color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -619,17 +667,43 @@ private fun QuestScreen(game: Game, onClose: () -> Unit) {
 private fun ShopScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Unit) {
     tick.let { }
     val p = game.player
-    var selling by remember { mutableStateOf(false) }
+    var tab by remember { mutableIntStateOf(0) }
+    var lastGamble by remember { mutableStateOf<Item?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
     refresh.let { }
     DarkPanel("Købmanden", onClose) {
         Text("\"Hvad må det være, eventyrer?\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp)
         Text("Du har 🪙 ${p.gold}", color = GOLD, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            GothicButton("Køb", { selling = false }, wide = false, enabled = selling)
-            GothicButton("Sælg", { selling = true }, wide = false, enabled = !selling)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            GothicButton("Køb", { tab = 0 }, wide = false, enabled = tab != 0)
+            GothicButton("Sælg", { tab = 1 }, wide = false, enabled = tab != 1)
+            GothicButton("🎲 Hasard", { tab = 2 }, wide = false, enabled = tab != 2)
         }
-        if (!selling) {
+        if (tab == 2) {
+            Text(
+                "Køb en ukendt genstand. Måske skrald… måske legendarisk!",
+                color = parchment.copy(alpha = 0.8f), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.width(300.dp),
+            )
+            Text("Pris: ${game.gamblePrice()} 🪙 pr. genstand", color = GOLD, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            for (row in Slot.entries.chunked(2)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (slot in row) {
+                        GothicButton(slot.label, {
+                            lastGamble = game.gamble(slot)
+                            refresh++
+                        }, wide = false, enabled = p.gold >= game.gamblePrice() && p.inventory.size < INVENTORY_SIZE)
+                    }
+                }
+            }
+            lastGamble?.let { item ->
+                Text("Du fik:", color = parchment, fontSize = 13.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ItemIcon(item, assets, 56.dp, upgrade = game.isUpgrade(item))
+                    Spacer(Modifier.width(8.dp))
+                    ItemDetail(item, p.equipment[item.slot])
+                }
+            }
+        } else if (tab == 0) {
             ShopRow(assets, null, "Livseliksir", "Helbreder halvdelen af dit liv", "${game.potionPrice} 🪙", p.gold >= game.potionPrice) {
                 game.buyPotion(); refresh++
             }
