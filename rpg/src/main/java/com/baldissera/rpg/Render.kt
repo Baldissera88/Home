@@ -2,6 +2,7 @@ package com.baldissera.rpg
 
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -16,6 +17,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -225,10 +227,11 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
         drawOval(Color.Black.copy(alpha = 0.45f), Offset(cx - r * t, cy - r * t * 0.4f), Size(r * t * 2f, r * t * 0.8f))
     }
 
+    val lootLabels = ArrayList<LootLabel>()
     for (l in g.loot) {
         val dx = l.x - g.player.x
         val dy = l.y - g.player.y
-        drawLoot(l, cam, g.time, a, measurer, styles, dx * dx + dy * dy < 6.25f)
+        drawLoot(l, cam, g.time, a, measurer, styles, dx * dx + dy * dy < 6.25f)?.let { lootLabels += it }
     }
 
     // Rows: walls hide what stands behind them.
@@ -273,6 +276,7 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
     }
 
     for (b in g.bolts) drawBolt(b, cam)
+    drawLootLabels(lootLabels)
 
     drawFog(g, a, cam)
     if (g.rain > 0.02f) drawRain(g)
@@ -511,10 +515,10 @@ private fun DrawScope.drawEnemy(e: Enemy, g: Game, cam: Camera, a: Assets, measu
         if (e.affixes.isNotEmpty()) {
             val affix = e.affixLabel ?: measurer.measure(e.affixText, styles.label.copy(color = Color(0xFFB0BEC5), fontSize = styles.label.fontSize * 0.85f))
                 .also { e.affixLabel = it }
-            drawText(affix, topLeft = Offset(cx - affix.size.width / 2f, top))
+            drawText(affix, topLeft = Offset(onScreenX(cx, affix.size.width.toFloat()), top))
             top -= affix.size.height
         }
-        drawText(label, topLeft = Offset(cx - label.size.width / 2f, top))
+        drawText(label, topLeft = Offset(onScreenX(cx, label.size.width.toFloat()), top))
     }
     if (e.hp < e.maxHp && !e.type.boss) {
         val w = t * 0.8f
@@ -563,12 +567,12 @@ private fun DrawScope.drawMerchant(g: Game, cam: Camera, a: Assets, measurer: Te
     drawText(label, topLeft = Offset(cx - label.size.width / 2f, cy - t * 1.35f))
 }
 
-private fun DrawScope.drawLoot(l: Loot, cam: Camera, time: Float, a: Assets, measurer: TextMeasurer, styles: TextStyles, near: Boolean) {
+private fun DrawScope.drawLoot(l: Loot, cam: Camera, time: Float, a: Assets, measurer: TextMeasurer, styles: TextStyles, near: Boolean): LootLabel? {
     val t = cam.t
     val bob = if (l.flying) 0f else sin(time * 3f + l.phase) * t * 0.04f
     val cx = cam.sx(l.x)
     val gy = cam.sy(l.y)
-    if (cx < -t * 2 || gy < -t * 3 || cx > size.width + t * 2 || gy > size.height + t * 2) return
+    if (cx < -t * 2 || gy < -t * 3 || cx > size.width + t * 2 || gy > size.height + t * 2) return null
     // The shadow stays on the ground and shrinks while the loot is in the air.
     val sh = 1f / (1f + l.z * 1.5f)
     drawOval(Color.Black.copy(alpha = 0.4f * sh), Offset(cx - t * 0.18f * sh, gy - t * 0.05f * sh), Size(t * 0.36f * sh, t * 0.12f * sh))
@@ -628,13 +632,34 @@ private fun DrawScope.drawLoot(l: Loot, cam: Camera, time: Float, a: Assets, mea
             }
             drawCircle(Brush.radialGradient(listOf(rc.copy(alpha = 0.45f), Color.Transparent), Offset(cx, cy - t * 0.15f), t * 0.5f), t * 0.5f, Offset(cx, cy - t * 0.15f))
             drawIcon(a, item.icon, cx, cy - t * 0.25f + bob, t * 0.62f)
-            if (item.rarity == Rarity.COMMON && !near) return
+            if (item.rarity == Rarity.COMMON && !near) return null
             val label = l.label ?: measurer.measure(item.name, styles.label).also { l.label = it }
-            val lx = cx - label.size.width / 2f
-            val ly = cy - t * 0.72f - label.size.height
-            drawRoundRect(Color.Black.copy(alpha = 0.65f), Offset(lx - 6f, ly - 2f), Size(label.size.width + 12f, label.size.height + 4f), CornerRadius(6f))
-            drawText(label, color = rc, topLeft = Offset(lx, ly))
+            return LootLabel(label, rc, cx, cy - t * 0.72f - label.size.height)
         }
+    }
+    return null
+}
+
+/** A name tag for an item on the ground, placed after all loot so tags can be stacked apart. */
+private class LootLabel(val layout: TextLayoutResult, val color: Color, val cx: Float, val top: Float)
+
+/** Draws loot names Diablo style: overlapping tags are pushed upwards and kept on screen. */
+private fun DrawScope.drawLootLabels(labels: List<LootLabel>) {
+    val placed = ArrayList<Rect>(labels.size)
+    for (lb in labels.sortedByDescending { it.top }) {
+        val w = lb.layout.size.width + 12f
+        val h = lb.layout.size.height + 4f
+        val left = (lb.cx - w / 2f).coerceIn(4f, max(4f, size.width - w - 4f))
+        var top = lb.top - 2f
+        var guard = 0
+        while (guard++ < 16) {
+            val hit = placed.firstOrNull { it.left < left + w && it.right > left && it.top < top + h && it.bottom > top } ?: break
+            top = hit.top - h - 3f
+        }
+        placed += Rect(left, top, left + w, top + h)
+        drawRoundRect(Color.Black.copy(alpha = 0.7f), Offset(left, top), Size(w, h), CornerRadius(6f))
+        drawRoundRect(lb.color.copy(alpha = 0.35f), Offset(left, top), Size(w, h), CornerRadius(6f), style = Stroke(1.5f))
+        drawText(lb.layout, color = lb.color, topLeft = Offset(left + 6f, top + 2f))
     }
 }
 
@@ -804,6 +829,9 @@ private fun DrawScope.drawNpc(n: Npc, g: Game, cam: Camera, a: Assets, measurer:
         drawText(layout, topLeft = Offset(bx, by))
     }
 }
+
+/** Left edge for a label of width [w] centred on [cx], kept inside the screen. */
+private fun DrawScope.onScreenX(cx: Float, w: Float) = (cx - w / 2f).coerceIn(4f, max(4f, size.width - w - 4f))
 
 /** A heart shape of half-width about [s] centred on [c]. */
 private fun heartPath(c: Offset, s: Float) = Path().apply {

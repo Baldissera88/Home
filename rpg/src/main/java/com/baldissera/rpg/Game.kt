@@ -1624,7 +1624,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 val dy = b.y - a.y
                 if (abs(dx) > 1.5f || abs(dy) > 1.5f) continue
                 val d = hypot(dx, dy)
-                val minD = a.type.radius * a.size + b.type.radius * b.size
+                // A little more room than the bodies need, so packs fan out around the hero instead of stacking.
+                val minD = (a.type.radius * a.size + b.type.radius * b.size) * 1.35f
                 if (d < minD && d > 0.001f) {
                     val push = (minD - d) / 2f
                     move(a, -dx / d * push, -dy / d * push, a.type.radius)
