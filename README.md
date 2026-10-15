@@ -18,4 +18,13 @@ GitHub Actions builds both apps; download `victors-bricks-apk` or `filuccas-klod
 
 ## Skyggernes Dyb
 
-A third app in the `rpg/` module: a top-down dark-fantasy action RPG in the spirit of Diablo and classic Zelda. Procedurally generated dungeon floors with torch lighting, dynamic darkness and particles; a virtual joystick, sword swings, fireball and whirlwind skills; skeletons, slimes, bats, orc brutes and a demon boss every third floor; randomised loot in four rarities that auto-equips when it is better; XP and levels; a minimap; and a saved hero. All graphics are drawn in code and all sounds are synthesised, so the app has no external assets. Download `skyggernes-dyb-apk` from the CI run.
+A third app in the `rpg/` module: a dark-fantasy action RPG in the spirit of Diablo and classic Zelda.
+
+- **Pre-rendered 3D art.** Characters, monsters, props and item icons are 3D models ray-marched offline into sprite sheets (8 facing directions × idle/walk/attack frames), like the original Diablo. Floors and walls are procedurally generated, pre-lit textures. Everything is produced by `tools/forge` (Python + numpy + Pillow) — re-run `python3 tools/forge/forge.py` to regenerate `rpg/src/main/res/drawable-nodpi`.
+- **World.** A camp with a merchant, campfire and healing shrine, then randomly generated floors through the Crypt (1–3), Caves (4–6) and Hell (7+), with dynamic torch lighting, shadows, blood and scorch decals, breakable barrels and urns, treasure chests and buff shrines.
+- **Story.** Four bosses — the Skeleton King, the Spider Queen, the Demon Lord and the Shadow King on floor 10 — with a quest log and an ending; the dungeon then continues endlessly.
+- **Combat.** Virtual joystick, hold-to-attack with auto-aim, Fireball, Whirlwind and Frost Nova skills with cooldowns and a 5-level skill tree, telegraphed enemy attacks, ranged cultists, summoning bosses and elite champions.
+- **Loot.** Six gear slots, four rarities with random affixes (damage, armour, life, crit, mana, life steal, speed), named legendaries, a 24-slot bag with stat comparison, and a shop to buy and sell.
+- Synthesised sound effects and ambience; the hero is saved automatically.
+
+Download `skyggernes-dyb-apk` from the CI run.

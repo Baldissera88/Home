@@ -6,540 +6,465 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import kotlin.math.PI
-import kotlin.math.abs
 import kotlin.math.atan2
-import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /** Tiles visible across the screen width. */
-private const val TILES_ACROSS = 9f
-private const val WALL_HEIGHT = 0.6f
+private const val TILES_ACROSS = 8.5f
+private const val WALL_HEIGHT = 0.75f
+/** Characters are drawn a little larger than their model scale so they read well on a phone. */
+private const val CHAR_SCALE = 1.15f
 
 class Camera(val ox: Float, val oy: Float, val t: Float) {
     fun sx(x: Float) = x * t - ox
     fun sy(y: Float) = y * t - oy
+    fun px(x: Float) = (x * t - ox).roundToInt()
+    fun py(y: Float) = (y * t - oy).roundToInt()
 }
 
 fun DrawScope.cameraFor(g: Game): Camera {
     val t = size.width / TILES_ACROSS
-    return Camera(
-        (g.player.x + g.shakeX) * t - size.width / 2f,
-        (g.player.y + g.shakeY) * t - size.height * 0.45f,
-        t,
-    )
+    return Camera((g.player.x + g.shakeX) * t - size.width / 2f, (g.player.y + g.shakeY) * t - size.height * 0.48f, t)
 }
 
-private fun frac(f: Float) = f - kotlin.math.floor(f)
-private fun Color.darker(f: Float) = Color(red * f, green * f, blue * f, alpha)
+class TextStyles(val small: TextStyle, val big: TextStyle, val label: TextStyle)
+
 private fun Color.lighter(f: Float) = lerp(this, Color.White, f)
 
 private fun flicker(time: Float, seed: Float) =
     0.88f + 0.07f * sin(time * 11f + seed * 7f) + 0.05f * sin(time * 23f + seed * 3f)
 
-class TextStyles(val small: TextStyle, val big: TextStyle, val label: TextStyle)
+private val grayscale = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0.15f) })
+private val frozenTint = ColorFilter.tint(Color(0xFF9FD8FF), BlendMode.Modulate)
+private val queenTint = ColorFilter.tint(Color(0xFFC9A0FF), BlendMode.Modulate)
+private val shadowTint = ColorFilter.tint(Color(0xFF8E7CC3), BlendMode.Modulate)
+private val whiteFlash = ColorFilter.tint(Color.White, BlendMode.SrcAtop)
+private val redFlash = ColorFilter.tint(Color(0xFFFF1744), BlendMode.SrcAtop)
+
+/** Row in a directional sheet for a facing vector (x right, y down/south). */
+fun dirRow(fx: Float, fy: Float): Int {
+    val a = atan2(fx, fy)
+    val i = (a / (PI / 4)).roundToInt()
+    return ((i % 8) + 8) % 8
+}
+
+fun DrawScope.drawSprite(
+    s: SpriteSheet, col: Int, row: Int, x: Float, y: Float, t: Float,
+    scale: Float = 1f, alpha: Float = 1f, filter: ColorFilter? = null,
+) {
+    val w = s.worldW * t * scale
+    val left = (x - w / 2f).roundToInt()
+    val top = (y - s.foot * w).roundToInt()
+    val size = w.roundToInt()
+    drawImage(
+        s.image, IntOffset(col * s.cell, row * s.cell), IntSize(s.cell, s.cell),
+        IntOffset(left, top), IntSize(size, size), alpha = alpha, colorFilter = filter, filterQuality = FilterQuality.Medium,
+    )
+}
 
 // ---------------------------------------------------------------- world
 
-fun DrawScope.drawWorld(g: Game, measurer: TextMeasurer, styles: TextStyles) {
+private sealed interface Billboard {
+    val y: Float
+}
+
+private class PlayerBB(override val y: Float) : Billboard
+private class EnemyBB(val e: Enemy) : Billboard {
+    override val y = e.y
+}
+private class PropBB(val p: Prop) : Billboard {
+    override val y = p.y
+}
+private class MerchantBB(override val y: Float) : Billboard
+
+fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: TextStyles) {
     val cam = cameraFor(g)
     val t = cam.t
     val d = g.dungeon
-    drawRect(Color(0xFF0A0908))
+    drawRect(Color(0xFF050404))
 
     val x0 = max(0, floorInt(cam.ox / t) - 1)
     val x1 = min(d.w - 1, floorInt((cam.ox + size.width) / t) + 1)
     val y0 = max(0, floorInt(cam.oy / t) - 1)
     val y1 = min(d.h - 1, floorInt((cam.oy + size.height) / t) + 2)
 
+    // Floor.
+    val floorImg = a.floor(d.biome)
     for (y in y0..y1) for (x in x0..x1) {
         val tile = d.tile(x, y)
-        if (tile != WALL) drawFloorTile(d, x, y, tile, cam, g.time)
+        if (tile == WALL) continue
+        val l = cam.px(x.toFloat())
+        val tp = cam.py(y.toFloat())
+        val sz = IntSize(cam.px(x + 1f) - l, cam.py(y + 1f) - tp)
+        val variant = (d.variant[y * d.w + x] * 4).toInt().coerceIn(0, 3)
+        drawImage(floorImg, IntOffset(variant * 128, 0), IntSize(128, 128), IntOffset(l, tp), sz, filterQuality = FilterQuality.Medium)
+        if (tile == STAIRS) drawStairs(l.toFloat(), tp.toFloat(), t, g.time)
+        if (d.tile(x, y - 1) == WALL) {
+            drawRect(
+                Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.65f), Color.Transparent), startY = tp.toFloat(), endY = tp + t * 0.55f),
+                Offset(l.toFloat(), tp.toFloat()), Size(sz.width.toFloat(), t * 0.55f),
+            )
+        }
+        if (d.tile(x - 1, y) == WALL) {
+            drawRect(
+                Brush.horizontalGradient(listOf(Color.Black.copy(alpha = 0.4f), Color.Transparent), startX = l.toFloat(), endX = l + t * 0.3f),
+                Offset(l.toFloat(), tp.toFloat()), Size(t * 0.3f, sz.height.toFloat()),
+            )
+        }
     }
 
-    for (l in g.loot) drawLoot(l, cam, g.time, measurer, styles)
+    // Decals: blood and scorch marks.
+    for (dc in g.decals) {
+        val cx = cam.sx(dc.x)
+        val cy = cam.sy(dc.y)
+        if (cx < -t * 2 || cy < -t * 2 || cx > size.width + t * 2 || cy > size.height + t * 2) continue
+        val s = (t * 1.1f * dc.scale).roundToInt()
+        rotate(dc.rotation, Offset(cx, cy)) {
+            drawImage(a.decals, IntOffset(dc.kind * 128, 0), IntSize(128, 128), IntOffset(cx.roundToInt() - s / 2, cy.roundToInt() - s / 2), IntSize(s, s))
+        }
+    }
 
-    // Row by row so walls hide whatever stands behind them.
+    // Billboards sorted by depth.
+    val bbs = ArrayList<Billboard>(g.enemies.size + d.props.size + 2)
+    bbs += PlayerBB(g.player.y)
+    for (e in g.enemies) if (e.y > y0 - 2 && e.y < y1 + 3) bbs += EnemyBB(e)
+    for (p in d.props) if (p.y > y0 - 2 && p.y < y1 + 3) bbs += PropBB(p)
+    if (g.inCamp) bbs += MerchantBB(g.merchantY)
+    bbs.sortBy { it.y }
+
+    // Contact shadows go under everything.
+    for (b in bbs) {
+        val (sx, sy, r) = when (b) {
+            is PlayerBB -> Triple(g.player.x, g.player.y, 0.32f)
+            is EnemyBB -> Triple(b.e.x, b.e.y, b.e.type.radius * b.e.size * (if (b.e.type.boss) 1.4f else 1.1f))
+            is PropBB -> Triple(b.p.x, b.p.y, if (b.p.type == PropType.SKULLS) 0f else 0.3f)
+            is MerchantBB -> Triple(g.merchantX, g.merchantY, 0.3f)
+        }
+        if (r <= 0f) continue
+        val cx = cam.sx(sx)
+        val cy = cam.sy(sy)
+        drawOval(Color.Black.copy(alpha = 0.45f), Offset(cx - r * t, cy - r * t * 0.4f), Size(r * t * 2f, r * t * 0.8f))
+    }
+
+    for (l in g.loot) drawLoot(l, cam, g.time, a, measurer, styles)
+
+    // Rows: walls hide what stands behind them.
+    var bi = 0
+    val wallImg = a.wall(d.biome)
+    val topImg = a.top(d.biome)
     for (y in y0..y1) {
-        for (x in x0..x1) if (d.tile(x, y) == WALL) drawWallTile(d, x, y, cam, g.time)
-        for (e in g.enemies) if (floorInt(e.y) == y) drawEnemy(e, g, cam)
-        if (floorInt(g.player.y) == y) drawPlayer(g, cam)
+        for (x in x0..x1) if (d.tile(x, y) == WALL) drawWallTile(d, x, y, cam, g.time, wallImg, topImg)
+        while (bi < bbs.size && bbs[bi].y < y + 1f) {
+            when (val b = bbs[bi]) {
+                is PlayerBB -> drawPlayer(g, cam, a)
+                is EnemyBB -> drawEnemy(b.e, g, cam, a, measurer, styles)
+                is PropBB -> drawProp(b.p, g, cam, a)
+                is MerchantBB -> drawMerchant(g, cam, a, measurer, styles)
+            }
+            bi++
+        }
     }
+    while (bi < bbs.size) bi++
 
     for (pr in g.projectiles) {
-        val c = Offset(cam.sx(pr.x), cam.sy(pr.y) - t * 0.35f)
+        val c = Offset(cam.sx(pr.x), cam.sy(pr.y) - t * 0.4f)
         val r = pr.radius * t
-        drawCircle(Brush.radialGradient(listOf(pr.color.copy(alpha = 0.6f), Color.Transparent), c, r * 3f), r * 3f, c)
-        drawCircle(pr.color.lighter(0.4f), r, c)
+        drawCircle(Brush.radialGradient(listOf(pr.color.copy(alpha = 0.6f), Color.Transparent), c, r * 3.2f), r * 3.2f, c)
+        drawCircle(pr.color.lighter(0.35f), r, c)
         drawCircle(Color.White.copy(alpha = 0.9f), r * 0.45f, c)
     }
 
     for (pt in g.particles) {
         val fade = 1f - pt.age / pt.life
-        val c = Offset(cam.sx(pt.x), cam.sy(pt.y) - t * 0.3f)
+        val c = Offset(cam.sx(pt.x), cam.sy(pt.y) - t * pt.z)
         val r = pt.size * t
         if (pt.glow) {
             drawCircle(pt.color.copy(alpha = 0.3f * fade), r * 2.5f, c)
             drawCircle(pt.color.lighter(0.5f).copy(alpha = fade), r, c)
         } else {
-            drawCircle(pt.color.copy(alpha = fade), r, c)
+            drawCircle(pt.color.copy(alpha = pt.color.alpha * fade), r, c)
         }
     }
 
-    // Warm light spill from torches and fire on top of the scene.
+    // Coloured light spill on top of the scene.
+    fun spill(x: Float, y: Float, radius: Float, color: Color) {
+        val c = Offset(cam.sx(x), cam.sy(y))
+        if (c.x < -radius || c.y < -radius || c.x > size.width + radius || c.y > size.height + radius) return
+        drawCircle(Brush.radialGradient(listOf(color, Color.Transparent), c, radius), radius, c)
+    }
     for (i in d.torches) {
-        val tx = i % d.w
-        val ty = i / d.w
-        if (tx < x0 - 3 || tx > x1 + 3 || ty < y0 - 3 || ty > y1 + 3) continue
-        val c = Offset(cam.sx(tx + 0.5f), cam.sy(ty + 1f) - t * WALL_HEIGHT * 0.4f)
-        val r = t * 3.2f * flicker(g.time, i.toFloat())
-        drawCircle(Brush.radialGradient(listOf(Color(0x40FF9A3C), Color.Transparent), c, r), r, c)
+        spill(i % d.w + 0.5f, i / d.w + 1f - WALL_HEIGHT * 0.4f, t * 3.2f * flicker(g.time, i.toFloat()), Color(0x40FF9A3C))
     }
-    for (pr in g.projectiles) {
-        val c = Offset(cam.sx(pr.x), cam.sy(pr.y))
-        drawCircle(Brush.radialGradient(listOf(pr.color.copy(alpha = 0.3f), Color.Transparent), c, t * 2f), t * 2f, c)
+    for (p in d.props) {
+        when {
+            p.type == PropType.CAMPFIRE -> spill(p.x, p.y - 0.3f, t * 5f * flicker(g.time, 1f), Color(0x55FF8F00))
+            p.type == PropType.SHRINE && (!p.used || g.inCamp) -> spill(p.x, p.y - 0.6f, t * 1.8f, Color(0x4000E5FF))
+        }
     }
+    for (pr in g.projectiles) spill(pr.x, pr.y, t * 2f, pr.color.copy(alpha = 0.3f))
 
     for (ft in g.texts) {
         val layout = ft.layout ?: measurer.measure(ft.text, if (ft.big) styles.big else styles.small).also { ft.layout = it }
         val maxAge = if (ft.big) 1.3f else 1f
-        val alpha = (1f - ft.age / maxAge).coerceIn(0f, 1f)
-        val color = ft.color
         drawText(
-            layout,
-            color = color,
+            layout, color = ft.color,
             topLeft = Offset(cam.sx(ft.x) - layout.size.width / 2f, cam.sy(ft.y) - layout.size.height / 2f),
-            alpha = alpha,
+            alpha = (1f - ft.age / maxAge).coerceIn(0f, 1f),
         )
     }
 }
 
-private fun DrawScope.drawFloorTile(d: Dungeon, x: Int, y: Int, tile: Int, cam: Camera, time: Float) {
-    val t = cam.t
-    val left = cam.sx(x.toFloat())
-    val top = cam.sy(y.toFloat())
-    val v = d.variant[y * d.w + x]
-    drawRect(Color(0xFF1C1916), Offset(left, top), Size(t + 1f, t + 1f))
-
-    // Four worn flagstones per tile.
-    val half = t / 2f
-    val gap = t * 0.03f
-    for (i in 0..3) {
-        val sx = left + (i % 2) * half
-        val sy = top + (i / 2) * half
-        val vv = frac(v * (7.3f + i * 3.1f))
-        val base = lerp(Color(0xFF3A342E), Color(0xFF51493F), vv)
-        drawRoundRect(base, Offset(sx + gap, sy + gap), Size(half - 2 * gap, half - 2 * gap), CornerRadius(t * 0.04f))
-        drawRect(base.lighter(0.08f), Offset(sx + gap * 2, sy + gap), Size(half - 4 * gap, t * 0.025f))
-        drawRect(base.darker(0.75f), Offset(sx + gap * 2, sy + half - gap - t * 0.03f), Size(half - 4 * gap, t * 0.03f))
+private fun DrawScope.drawStairs(l: Float, tp: Float, t: Float, time: Float) {
+    drawRect(Color(0xFF030202), Offset(l + t * 0.08f, tp + t * 0.08f), Size(t * 0.84f, t * 0.84f))
+    for (s in 0..3) {
+        val shade = lerp(Color(0xFF5A524A), Color(0xFF0E0C0A), s / 3f)
+        drawRect(shade, Offset(l + t * 0.12f, tp + t * (0.12f + s * 0.2f)), Size(t * 0.76f, t * 0.15f))
+        drawRect(shade.lighter(0.15f), Offset(l + t * 0.12f, tp + t * (0.12f + s * 0.2f)), Size(t * 0.76f, t * 0.02f))
     }
-
-    when (d.decor[y * d.w + x]) {
-        DECOR_CRACK -> {
-            val c = Color(0xFF15120F)
-            drawLine(c, Offset(left + t * 0.2f, top + t * 0.3f), Offset(left + t * 0.45f, top + t * 0.52f), t * 0.02f)
-            drawLine(c, Offset(left + t * 0.45f, top + t * 0.52f), Offset(left + t * 0.72f, top + t * 0.48f), t * 0.018f)
-            drawLine(c, Offset(left + t * 0.45f, top + t * 0.52f), Offset(left + t * 0.5f, top + t * 0.78f), t * 0.015f)
-        }
-        DECOR_BONES -> {
-            val bone = Color(0xFFCFC6B0)
-            drawLine(bone, Offset(left + t * 0.25f, top + t * 0.6f), Offset(left + t * 0.65f, top + t * 0.45f), t * 0.04f, StrokeCap.Round)
-            drawLine(bone, Offset(left + t * 0.35f, top + t * 0.4f), Offset(left + t * 0.6f, top + t * 0.7f), t * 0.035f, StrokeCap.Round)
-            drawCircle(bone, t * 0.07f, Offset(left + t * 0.72f, top + t * 0.66f))
-            drawCircle(Color(0xFF1A1714), t * 0.018f, Offset(left + t * 0.7f, top + t * 0.65f))
-        }
-        DECOR_MOSS -> {
-            val moss = Color(0x664E7D32)
-            drawCircle(moss, t * 0.16f, Offset(left + t * 0.3f, top + t * 0.7f))
-            drawCircle(moss, t * 0.11f, Offset(left + t * 0.45f, top + t * 0.78f))
-            drawCircle(Color(0x446B8E23), t * 0.09f, Offset(left + t * 0.22f, top + t * 0.82f))
-        }
-        DECOR_PUDDLE -> {
-            drawOval(Color(0x88101820), Offset(left + t * 0.2f, top + t * 0.45f), Size(t * 0.55f, t * 0.28f))
-            val shimmer = 0.15f + 0.1f * sin(time * 2f + x + y)
-            drawOval(Color.White.copy(alpha = shimmer), Offset(left + t * 0.3f, top + t * 0.5f), Size(t * 0.2f, t * 0.06f))
-        }
-    }
-
-    if (tile == STAIRS) {
-        drawRect(Color(0xFF050404), Offset(left + t * 0.08f, top + t * 0.08f), Size(t * 0.84f, t * 0.84f))
-        for (s in 0..3) {
-            val shade = lerp(Color(0xFF4A433C), Color(0xFF0E0C0A), s / 3f)
-            drawRect(shade, Offset(left + t * 0.12f, top + t * (0.12f + s * 0.2f)), Size(t * 0.76f, t * 0.16f))
-        }
-        val pulse = 0.5f + 0.5f * sin(time * 2.5f)
-        val c = Offset(left + t / 2f, top + t / 2f)
-        drawCircle(Color(0xFF4FC3F7).copy(alpha = 0.25f + 0.35f * pulse), t * 0.55f, c, style = Stroke(t * 0.05f))
-        drawCircle(Brush.radialGradient(listOf(Color(0x664FC3F7), Color.Transparent), c, t), t, c)
-    }
-
-    // Soft shadows cast by walls to the north and west.
-    if (d.tile(x, y - 1) == WALL) {
-        drawRect(
-            Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent), startY = top, endY = top + t * 0.5f),
-            Offset(left, top), Size(t + 1f, t * 0.5f),
-        )
-    }
-    if (d.tile(x - 1, y) == WALL) {
-        drawRect(
-            Brush.horizontalGradient(listOf(Color.Black.copy(alpha = 0.35f), Color.Transparent), startX = left, endX = left + t * 0.3f),
-            Offset(left, top), Size(t * 0.3f, t + 1f),
-        )
-    }
+    val pulse = 0.5f + 0.5f * sin(time * 2.5f)
+    val c = Offset(l + t / 2f, tp + t / 2f)
+    drawCircle(Color(0xFF4FC3F7).copy(alpha = 0.25f + 0.35f * pulse), t * 0.55f, c, style = Stroke(t * 0.05f))
+    drawCircle(Brush.radialGradient(listOf(Color(0x664FC3F7), Color.Transparent), c, t), t, c)
 }
 
-private fun DrawScope.drawWallTile(d: Dungeon, x: Int, y: Int, cam: Camera, time: Float) {
+private fun DrawScope.drawWallTile(
+    d: Dungeon, x: Int, y: Int, cam: Camera, time: Float,
+    wallImg: androidx.compose.ui.graphics.ImageBitmap, topImg: androidx.compose.ui.graphics.ImageBitmap,
+) {
     val t = cam.t
-    val left = cam.sx(x.toFloat())
-    val top = cam.sy(y.toFloat())
-    val h = t * WALL_HEIGHT
+    val h = (t * WALL_HEIGHT).roundToInt()
+    val l = cam.px(x.toFloat())
+    val r = cam.px(x + 1f)
+    val tp = cam.py(y.toFloat())
+    val bt = cam.py(y + 1f)
     val frontVisible = d.tile(x, y + 1) != WALL
-    val nearFloor = frontVisible || d.tile(x, y - 1) != WALL || d.tile(x - 1, y) != WALL || d.tile(x + 1, y) != WALL
-    val v = d.variant[y * d.w + x]
+    val nearFloor = frontVisible || d.tile(x, y - 1) != WALL || d.tile(x - 1, y) != WALL || d.tile(x + 1, y) != WALL ||
+        d.tile(x - 1, y + 1) != WALL || d.tile(x + 1, y + 1) != WALL
 
-    // Top surface.
-    val topColor = if (nearFloor) lerp(Color(0xFF2A2521), Color(0xFF332D27), v) else Color(0xFF0E0C0B)
-    drawRect(topColor, Offset(left, top - h), Size(t + 1f, t + 1f))
+    if (nearFloor) {
+        drawImage(topImg, IntOffset(0, 0), IntSize(128, 128), IntOffset(l, tp - h), IntSize(r - l, bt - tp), filterQuality = FilterQuality.Medium)
+        if (d.tile(x, y - 1) != WALL) drawRect(Color.Black.copy(alpha = 0.5f), Offset(l.toFloat(), (tp - h).toFloat()), Size((r - l).toFloat(), t * 0.04f))
+        if (d.tile(x - 1, y) != WALL) drawRect(Color.Black.copy(alpha = 0.35f), Offset(l.toFloat(), (tp - h).toFloat()), Size(t * 0.04f, (bt - tp).toFloat()))
+        if (d.tile(x + 1, y) != WALL) drawRect(Color.Black.copy(alpha = 0.35f), Offset(r - t * 0.04f, (tp - h).toFloat()), Size(t * 0.04f, (bt - tp).toFloat()))
+    } else {
+        drawRect(Color(0xFF050404), Offset(l.toFloat(), (tp - h).toFloat()), Size((r - l).toFloat(), (bt - tp).toFloat()))
+    }
     if (!frontVisible) return
 
-    // Front face: courses of irregular stone blocks.
-    val faceTop = top - h + t
-    drawRect(Color(0xFF1E1A17), Offset(left, faceTop), Size(t + 1f, h + 1f))
-    val rows = 3
-    val rowH = h / rows
-    for (r in 0 until rows) {
-        val shift = if ((r + y) % 2 == 0) 0f else t * 0.25f
-        var bx = left - shift
-        var k = 0
-        while (bx < left + t) {
-            val bw = t * 0.5f
-            val sx = max(bx, left)
-            val ex = min(bx + bw, left + t)
-            if (ex - sx > 1f) {
-                val vv = frac(v * (5.1f + r * 2.3f + k * 1.7f))
-                val c = lerp(Color(0xFF5B4F45), Color(0xFF75665A), vv)
-                val by = faceTop + r * rowH
-                drawRoundRect(c, Offset(sx + t * 0.02f, by + t * 0.02f), Size(ex - sx - t * 0.04f, rowH - t * 0.04f), CornerRadius(t * 0.025f))
-                drawRect(c.lighter(0.12f), Offset(sx + t * 0.03f, by + t * 0.025f), Size(ex - sx - t * 0.06f, t * 0.02f))
-            }
-            bx += bw
-            k++
-        }
-    }
-    // Ambient occlusion towards the floor and a rim along the top edge.
-    drawRect(
-        Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)), startY = faceTop, endY = faceTop + h),
-        Offset(left, faceTop), Size(t + 1f, h),
-    )
-    drawRect(Color(0xFF4A423A), Offset(left, faceTop - t * 0.03f), Size(t + 1f, t * 0.04f))
+    val variant = ((d.variant[y * d.w + x] * 2).toInt()).coerceIn(0, 1)
+    drawImage(wallImg, IntOffset(variant * 128, 0), IntSize(128, 96), IntOffset(l, bt - h), IntSize(r - l, h), filterQuality = FilterQuality.Medium)
+    drawRect(Color.White.copy(alpha = 0.08f), Offset(l.toFloat(), (bt - h).toFloat()), Size((r - l).toFloat(), t * 0.025f))
 
     if (y * d.w + x in d.torches) {
-        val cx = left + t / 2f
-        val cy = faceTop + h * 0.45f
-        drawRect(Color(0xFF2B2018), Offset(cx - t * 0.04f, cy), Size(t * 0.08f, h * 0.35f))
-        drawRect(Color(0xFF4E3A28), Offset(cx - t * 0.08f, cy - t * 0.02f), Size(t * 0.16f, t * 0.05f))
-        val f = flicker(time, (x * 31 + y).toFloat())
-        val flameH = t * 0.3f * f
-        val flameW = t * 0.16f * (2f - f)
-        drawCircle(Brush.radialGradient(listOf(Color(0x99FF8F00), Color.Transparent), Offset(cx, cy - flameH * 0.5f), t * 0.5f), t * 0.5f, Offset(cx, cy - flameH * 0.5f))
-        drawOval(Color(0xFFFF6D00), Offset(cx - flameW / 2f, cy - flameH), Size(flameW, flameH))
-        drawOval(Color(0xFFFFC400), Offset(cx - flameW * 0.3f, cy - flameH * 0.75f), Size(flameW * 0.6f, flameH * 0.65f))
-        drawOval(Color(0xFFFFF8E1), Offset(cx - flameW * 0.15f, cy - flameH * 0.45f), Size(flameW * 0.3f, flameH * 0.35f))
+        val cx = (l + r) / 2f
+        val cy = bt - h * 0.55f
+        drawRect(Color(0xFF2B2018), Offset(cx - t * 0.035f, cy), Size(t * 0.07f, h * 0.32f))
+        drawRect(Color(0xFF5D4632), Offset(cx - t * 0.08f, cy - t * 0.02f), Size(t * 0.16f, t * 0.05f))
+        drawFlame(cx, cy, t * 0.3f, time, (x * 31 + y).toFloat())
     }
 }
 
-// ---------------------------------------------------------------- loot
+private fun DrawScope.drawFlame(cx: Float, cy: Float, size: Float, time: Float, seed: Float) {
+    val f = flicker(time, seed)
+    val fh = size * f
+    val fw = size * 0.55f * (2f - f)
+    drawCircle(Brush.radialGradient(listOf(Color(0x99FF8F00), Color.Transparent), Offset(cx, cy - fh * 0.5f), size * 1.7f), size * 1.7f, Offset(cx, cy - fh * 0.5f))
+    drawOval(Color(0xFFFF6D00), Offset(cx - fw / 2f, cy - fh), Size(fw, fh))
+    drawOval(Color(0xFFFFC400), Offset(cx - fw * 0.3f, cy - fh * 0.78f), Size(fw * 0.6f, fh * 0.68f))
+    drawOval(Color(0xFFFFF8E1), Offset(cx - fw * 0.15f, cy - fh * 0.45f), Size(fw * 0.3f, fh * 0.35f))
+}
 
-private fun DrawScope.drawLoot(l: Loot, cam: Camera, time: Float, measurer: TextMeasurer, styles: TextStyles) {
+// ---------------------------------------------------------------- billboards
+
+private fun DrawScope.drawPlayer(g: Game, cam: Camera, a: Assets) {
+    val p = g.player
+    val t = cam.t
+    val cx = cam.sx(p.x)
+    val cy = cam.sy(p.y)
+
+    p.buff?.let { b ->
+        val pulse = 0.5f + 0.5f * sin(g.time * 4f)
+        drawCircle(b.color.copy(alpha = 0.25f + 0.2f * pulse), t * 0.42f, Offset(cx, cy), style = Stroke(t * 0.05f))
+    }
+    if (g.levelFlash > 0f) {
+        val k = 1f - g.levelFlash / 1.2f
+        drawCircle(GOLD.copy(alpha = 1f - k), t * (0.4f + k * 1.8f), Offset(cx, cy - t * 0.3f), style = Stroke(t * 0.08f))
+    }
+
+    var row = dirRow(p.faceX, p.faceY)
+    val col = when {
+        p.whirl > 0f -> {
+            row = (row + ((1f - p.whirl / 0.45f) * 16f).toInt()) % 8
+            6
+        }
+        p.swing > 0f -> 5 + ((1f - p.swing / 0.3f) * 3f).toInt().coerceIn(0, 2)
+        p.cast > 0f -> 6
+        p.moving -> 1 + (p.walk.toInt() % 4)
+        else -> 0
+    }
+
+    if (p.swing > 0f || p.whirl > 0f) {
+        val r = t * 0.8f
+        val face = atan2(p.faceY, p.faceX)
+        val body = Offset(cx, cy - t * 0.4f)
+        val (start, sweep) = if (p.whirl > 0f) 0f to 360f else
+            Math.toDegrees((face - 1.2).toDouble()).toFloat() to Math.toDegrees(((1f - p.swing / 0.3f) * 2.4f).toDouble()).toFloat()
+        drawArc(
+            Color.White.copy(alpha = 0.3f), start, sweep, useCenter = false,
+            topLeft = Offset(body.x - r, body.y - r * 0.6f), size = Size(r * 2f, r * 1.2f), style = Stroke(t * 0.12f, cap = StrokeCap.Round),
+        )
+    }
+
+    drawSprite(a.hero, col, row, cx, cy, t, scale = CHAR_SCALE)
+    if (p.hurt > 0f) drawSprite(a.hero, col, row, cx, cy, t, scale = CHAR_SCALE, alpha = p.hurt * 2f, filter = redFlash)
+}
+
+private fun DrawScope.drawEnemy(e: Enemy, g: Game, cam: Camera, a: Assets, measurer: TextMeasurer, styles: TextStyles) {
+    val t = cam.t
+    val cx = cam.sx(e.x)
+    val cy = cam.sy(e.y)
+    if (cx < -t * 3 || cx > size.width + t * 3) return
+
+    if (e.windup > 0f) {
+        val k = 1f - e.windup / e.type.windup
+        if (e.type.ranged) {
+            drawCircle(Color(0xFFD500F9).copy(alpha = 0.5f * k), t * 0.25f * (1 + k), Offset(cx, cy - t * 0.9f))
+        } else {
+            val reach = (e.type.range * e.size + 0.2f) * t
+            drawOval(Color.Red.copy(alpha = 0.12f + 0.15f * k), Offset(cx - reach * k, cy - reach * k * 0.6f), Size(reach * k * 2, reach * k * 1.2f))
+            drawOval(Color.Red.copy(alpha = 0.35f + 0.4f * k), Offset(cx - reach * k, cy - reach * k * 0.6f), Size(reach * k * 2, reach * k * 1.2f), style = Stroke(t * 0.04f))
+        }
+    }
+    if (e.elite || e.type.boss) {
+        val color = if (e.type.boss) Color(0x66FF1744) else Color(0x664FC3F7)
+        val pulse = 0.85f + 0.15f * sin(e.anim * 3f)
+        val r = t * (if (e.type.boss) 1.6f else 0.7f) * pulse
+        drawOval(Brush.radialGradient(listOf(color, Color.Transparent), Offset(cx, cy), r), Offset(cx - r, cy - r * 0.6f), Size(r * 2, r * 1.2f))
+    }
+
+    val (sheet, scale0, directional) = a.enemySprite(e.type)
+    val scale = scale0 * e.size * CHAR_SCALE
+    val row = if (directional) dirRow(e.faceX, e.faceY) else 0
+    val col = when {
+        !directional -> (e.anim * 7f).toInt() % 4
+        e.windup > 0f -> 5 + ((1f - e.windup / e.type.windup) * 3f).toInt().coerceIn(0, 2)
+        e.moving -> 1 + ((e.anim * 7f).toInt() % 4)
+        else -> 0
+    }
+    val filter = when {
+        e.frozen > 0f -> frozenTint
+        e.type == EnemyType.SPIDER_QUEEN -> queenTint
+        e.type == EnemyType.SHADOW_KING -> shadowTint
+        else -> null
+    }
+    drawSprite(sheet, col, row, cx, cy, t, scale = scale, filter = filter)
+    if (e.flash > 0f) drawSprite(sheet, col, row, cx, cy, t, scale = scale, alpha = e.flash / 0.12f * 0.75f, filter = whiteFlash)
+
+    val headY = cy - sheet.worldW * t * scale * (sheet.foot - 0.25f)
+    if (e.elite) {
+        val label = e.label ?: measurer.measure(e.name, styles.label.copy(color = Color(0xFF82B1FF))).also { e.label = it }
+        drawText(label, topLeft = Offset(cx - label.size.width / 2f, headY - label.size.height - t * 0.15f))
+    }
+    if (e.hp < e.maxHp && !e.type.boss) {
+        val w = t * 0.8f
+        drawRect(Color.Black.copy(alpha = 0.7f), Offset(cx - w / 2f - 2f, headY - 2f), Size(w + 4f, t * 0.07f + 4f))
+        drawRect(Color(0xFFD32F2F), Offset(cx - w / 2f, headY), Size(w * (e.hp / e.maxHp).coerceIn(0f, 1f), t * 0.07f))
+    }
+}
+
+private fun DrawScope.drawProp(p: Prop, g: Game, cam: Camera, a: Assets) {
+    val t = cam.t
+    val cx = cam.sx(p.x)
+    val cy = cam.sy(p.y)
+    val col = if (p.used && p.type != PropType.SHRINE) p.type.brokenSprite else p.type.sprite
+    val filter = if (p.type == PropType.SHRINE && p.used && !g.inCamp) grayscale else null
+    drawSprite(a.props, col, 0, cx, cy, t, filter = filter)
+    when (p.type) {
+        PropType.CAMPFIRE -> {
+            drawFlame(cx - t * 0.1f, cy - t * 0.05f, t * 0.45f, g.time, 3f)
+            drawFlame(cx + t * 0.12f, cy, t * 0.38f, g.time * 1.1f, 7f)
+            drawFlame(cx, cy + t * 0.02f, t * 0.55f, g.time * 0.9f, 11f)
+        }
+        PropType.SHRINE -> if (!p.used || g.inCamp) {
+            val pulse = 0.5f + 0.5f * sin(g.time * 3f)
+            val c = Offset(cx, cy - t * 0.85f)
+            drawCircle(Brush.radialGradient(listOf(Color(0x8800E5FF), Color.Transparent), c, t * (0.5f + 0.15f * pulse)), t * (0.5f + 0.15f * pulse), c)
+        }
+        else -> {}
+    }
+}
+
+private fun DrawScope.drawMerchant(g: Game, cam: Camera, a: Assets, measurer: TextMeasurer, styles: TextStyles) {
+    val t = cam.t
+    val cx = cam.sx(g.merchantX)
+    val cy = cam.sy(g.merchantY)
+    drawSprite(a.merchant, (g.time * 2f).toInt() % 4, 0, cx, cy, t, scale = CHAR_SCALE)
+    val c = Offset(cx + t * 0.24f, cy - t * 0.5f)
+    drawCircle(Brush.radialGradient(listOf(Color(0x66FFB74D), Color.Transparent), c, t * 0.8f), t * 0.8f, c)
+    val label = measurer.measure("Købmanden", styles.label.copy(color = GOLD))
+    drawText(label, topLeft = Offset(cx - label.size.width / 2f, cy - t * 1.35f))
+}
+
+private fun DrawScope.drawLoot(l: Loot, cam: Camera, time: Float, a: Assets, measurer: TextMeasurer, styles: TextStyles) {
     val t = cam.t
     val bob = sin(time * 3f + l.phase) * t * 0.04f
     val cx = cam.sx(l.x)
     val cy = cam.sy(l.y)
-    drawOval(Color.Black.copy(alpha = 0.4f), Offset(cx - t * 0.18f, cy - t * 0.04f), Size(t * 0.36f, t * 0.12f))
+    if (cx < -t * 2 || cy < -t * 3 || cx > size.width + t * 2 || cy > size.height + t * 2) return
+    drawOval(Color.Black.copy(alpha = 0.4f), Offset(cx - t * 0.18f, cy - t * 0.05f), Size(t * 0.36f, t * 0.12f))
     when (val k = l.kind) {
         is LootKind.Gold -> {
-            for ((i, o) in listOf(Offset(-0.08f, 0f), Offset(0.08f, 0.02f), Offset(0f, -0.07f)).withIndex()) {
-                val c = Offset(cx + o.x * t, cy + o.y * t - t * 0.08f + bob * (i % 2))
-                drawCircle(Color(0xFF8D6E00), t * 0.085f, c)
-                drawCircle(Color(0xFFFFC107), t * 0.07f, c)
-                drawCircle(Color(0xFFFFF59D), t * 0.025f, Offset(c.x - t * 0.02f, c.y - t * 0.02f))
+            for ((i, o) in listOf(Offset(-0.08f, 0f), Offset(0.08f, 0.02f), Offset(0f, -0.07f), Offset(0.03f, 0.05f)).withIndex()) {
+                val c = Offset(cx + o.x * t, cy + o.y * t - t * 0.06f + bob * (i % 2))
+                drawCircle(Color(0xFF8D6E00), t * 0.075f, c)
+                drawCircle(Color(0xFFFFC107), t * 0.062f, c)
+                drawCircle(Color(0xFFFFF59D), t * 0.022f, Offset(c.x - t * 0.02f, c.y - t * 0.02f))
             }
         }
-        LootKind.Potion -> {
-            val c = Offset(cx, cy - t * 0.15f + bob)
-            drawCircle(Color(0xFFB71C1C), t * 0.11f, c)
-            drawCircle(Color(0xFFFF5252), t * 0.07f, Offset(c.x - t * 0.02f, c.y + t * 0.01f))
-            drawRect(Color(0xFFB0BEC5), Offset(c.x - t * 0.03f, c.y - t * 0.17f), Size(t * 0.06f, t * 0.08f))
-            drawRect(Color(0xFF6D4C41), Offset(c.x - t * 0.035f, c.y - t * 0.2f), Size(t * 0.07f, t * 0.04f))
-            drawCircle(Color.White.copy(alpha = 0.6f), t * 0.025f, Offset(c.x - t * 0.04f, c.y - t * 0.04f))
-        }
+        LootKind.Potion -> drawIcon(a, Icons.POTION, cx, cy - t * 0.25f + bob, t * 0.55f)
         is LootKind.Gear -> {
             val item = k.item
             val rc = item.rarity.color
             if (item.rarity >= Rarity.RARE) {
-                // Pillar of light, like the good drops in the games you know.
                 drawRect(
-                    Brush.verticalGradient(listOf(Color.Transparent, rc.copy(alpha = 0.45f)), startY = cy - t * 2.2f, endY = cy),
-                    Offset(cx - t * 0.06f, cy - t * 2.2f), Size(t * 0.12f, t * 2.2f),
+                    Brush.verticalGradient(listOf(Color.Transparent, rc.copy(alpha = 0.5f)), startY = cy - t * 2.4f, endY = cy),
+                    Offset(cx - t * 0.07f, cy - t * 2.4f), Size(t * 0.14f, t * 2.4f),
                 )
             }
-            drawCircle(Brush.radialGradient(listOf(rc.copy(alpha = 0.5f), Color.Transparent), Offset(cx, cy - t * 0.1f), t * 0.45f), t * 0.45f, Offset(cx, cy - t * 0.1f))
-            val c = Offset(cx, cy - t * 0.15f + bob)
-            when (item.slot) {
-                Slot.WEAPON -> {
-                    drawLine(Color(0xFFCFD8DC), Offset(c.x - t * 0.18f, c.y + t * 0.12f), Offset(c.x + t * 0.16f, c.y - t * 0.18f), t * 0.06f, StrokeCap.Round)
-                    drawLine(GOLD, Offset(c.x - t * 0.16f, c.y - t * 0.0f), Offset(c.x - t * 0.02f, c.y + t * 0.14f), t * 0.05f, StrokeCap.Round)
-                    drawLine(Color(0xFF5D4037), Offset(c.x - t * 0.18f, c.y + t * 0.12f), Offset(c.x - t * 0.25f, c.y + t * 0.19f), t * 0.05f, StrokeCap.Round)
-                }
-                Slot.ARMOR -> {
-                    drawRoundRect(Color(0xFF78909C), Offset(c.x - t * 0.15f, c.y - t * 0.15f), Size(t * 0.3f, t * 0.3f), CornerRadius(t * 0.08f))
-                    drawRoundRect(rc.copy(alpha = 0.6f), Offset(c.x - t * 0.06f, c.y - t * 0.12f), Size(t * 0.12f, t * 0.24f), CornerRadius(t * 0.04f))
-                }
-                Slot.RING -> {
-                    drawCircle(GOLD, t * 0.11f, c, style = Stroke(t * 0.045f))
-                    drawCircle(rc, t * 0.05f, Offset(c.x, c.y - t * 0.11f))
-                }
-            }
+            drawCircle(Brush.radialGradient(listOf(rc.copy(alpha = 0.45f), Color.Transparent), Offset(cx, cy - t * 0.15f), t * 0.5f), t * 0.5f, Offset(cx, cy - t * 0.15f))
+            drawIcon(a, item.icon, cx, cy - t * 0.25f + bob, t * 0.62f)
             val label = l.label ?: measurer.measure(item.name, styles.label).also { l.label = it }
             val lx = cx - label.size.width / 2f
-            val ly = cy - t * 0.62f - label.size.height
-            drawRoundRect(Color.Black.copy(alpha = 0.6f), Offset(lx - 6f, ly - 2f), Size(label.size.width + 12f, label.size.height + 4f), CornerRadius(6f))
+            val ly = cy - t * 0.72f - label.size.height
+            drawRoundRect(Color.Black.copy(alpha = 0.65f), Offset(lx - 6f, ly - 2f), Size(label.size.width + 12f, label.size.height + 4f), CornerRadius(6f))
             drawText(label, color = rc, topLeft = Offset(lx, ly))
         }
     }
 }
 
-// ---------------------------------------------------------------- characters
-
-private fun DrawScope.shadow(cx: Float, cy: Float, w: Float, alpha: Float = 0.45f) {
-    drawOval(Color.Black.copy(alpha = alpha), Offset(cx - w / 2f, cy - w * 0.18f), Size(w, w * 0.36f))
-}
-
-private fun DrawScope.drawPlayer(g: Game, cam: Camera) {
-    val p = g.player
-    val t = cam.t
-    val cx = cam.sx(p.x)
-    val cy = cam.sy(p.y)
-    val bob = if (p.moving) abs(sin(p.walk)) * t * 0.03f else 0f
-    val face = atan2(p.faceY, p.faceX)
-    val perpX = -p.faceY
-    val perpY = p.faceX
-
-    shadow(cx, cy, t * 0.62f)
-
-    if (g.levelFlash > 0f) {
-        val k = 1f - g.levelFlash / 1.2f
-        drawCircle(GOLD.copy(alpha = 1f - k), t * (0.4f + k * 1.6f), Offset(cx, cy), style = Stroke(t * 0.08f))
-    }
-
-    // Feet.
-    val stride = if (p.moving) sin(p.walk) * t * 0.1f else 0f
-    drawCircle(Color(0xFF2B1D14), t * 0.075f, Offset(cx + perpX * t * 0.1f + p.faceX * stride, cy + perpY * t * 0.1f + p.faceY * stride))
-    drawCircle(Color(0xFF2B1D14), t * 0.075f, Offset(cx - perpX * t * 0.1f - p.faceX * stride, cy - perpY * t * 0.1f - p.faceY * stride))
-
-    val body = Offset(cx, cy - t * 0.28f - bob)
-
-    // Sword angle: resting at the side, sweeping during a swing, spinning in a whirlwind.
-    val swordAngle = when {
-        p.whirl > 0f -> face + (1f - p.whirl / 0.45f) * 2f * PI.toFloat() * 1.5f
-        p.swing > 0f -> face - 1.2f + (1f - p.swing / 0.25f) * 2.4f
-        else -> face + 0.9f
-    }
-    val swordBehind = p.faceY < -0.2f && p.swing <= 0f && p.whirl <= 0f
-    if (swordBehind) drawSword(body, swordAngle, t)
-
-    if (p.swing > 0f || p.whirl > 0f) {
-        val r = t * 0.75f
-        val (start, sweep) = if (p.whirl > 0f) 0f to 360f else
-            Math.toDegrees((face - 1.2f).toDouble()).toFloat() to Math.toDegrees(((1f - p.swing / 0.25f) * 2.4f).toDouble()).toFloat()
-        drawArc(
-            Color.White.copy(alpha = 0.35f), start, sweep, useCenter = false,
-            topLeft = Offset(body.x - r, body.y - r), size = Size(r * 2f, r * 2f), style = Stroke(t * 0.14f, cap = StrokeCap.Round),
-        )
-    }
-
-    // Cloak and armour.
-    drawCircle(
-        Brush.radialGradient(listOf(Color(0xFF9E2B2B), Color(0xFF3E0F0F)), Offset(body.x - t * 0.08f, body.y - t * 0.08f), t * 0.38f),
-        t * 0.27f, body,
+fun DrawScope.drawIcon(a: Assets, icon: Int, cx: Float, cy: Float, size: Float, alpha: Float = 1f) {
+    val s = size.roundToInt()
+    drawImage(
+        a.icons, IntOffset(icon * 96, 0), IntSize(96, 96), IntOffset((cx - size / 2f).roundToInt(), (cy - size / 2f).roundToInt()),
+        IntSize(s, s), alpha = alpha, filterQuality = FilterQuality.Medium,
     )
-    drawCircle(Color(0xFF263238), t * 0.18f, Offset(body.x + p.faceX * t * 0.04f, body.y + p.faceY * t * 0.04f))
-    for (s in listOf(1f, -1f)) {
-        val sh = Offset(body.x + perpX * t * 0.2f * s, body.y + perpY * t * 0.2f * s - t * 0.02f)
-        drawCircle(Brush.radialGradient(listOf(Color(0xFFB0BEC5), Color(0xFF455A64)), Offset(sh.x - t * 0.03f, sh.y - t * 0.03f), t * 0.12f), t * 0.1f, sh)
-    }
-    // Helmet.
-    val head = Offset(body.x + p.faceX * t * 0.05f, body.y - t * 0.12f + p.faceY * t * 0.04f)
-    drawCircle(Brush.radialGradient(listOf(Color(0xFF90A4AE), Color(0xFF37474F)), Offset(head.x - t * 0.04f, head.y - t * 0.05f), t * 0.18f), t * 0.13f, head)
-    if (p.faceY > -0.3f) {
-        drawLine(Color(0xFF101418), Offset(head.x - perpX * t * 0.07f + p.faceX * t * 0.06f, head.y - perpY * t * 0.07f + p.faceY * t * 0.06f + t * 0.02f),
-            Offset(head.x + perpX * t * 0.07f + p.faceX * t * 0.06f, head.y + perpY * t * 0.07f + p.faceY * t * 0.06f + t * 0.02f), t * 0.03f)
-    }
-
-    if (!swordBehind) drawSword(body, swordAngle, t)
-
-    if (p.hurt > 0f) drawCircle(Color.Red.copy(alpha = p.hurt * 1.5f), t * 0.3f, body)
-}
-
-private fun DrawScope.drawSword(body: Offset, angle: Float, t: Float) {
-    val dx = cos(angle)
-    val dy = sin(angle)
-    val hand = Offset(body.x + dx * t * 0.24f, body.y + dy * t * 0.24f)
-    val tip = Offset(hand.x + dx * t * 0.62f, hand.y + dy * t * 0.62f)
-    drawLine(Color(0xFF8D99A6), hand, tip, t * 0.075f, StrokeCap.Round)
-    drawLine(Color(0xFFE8EEF3), Offset(hand.x - dy * t * 0.012f, hand.y + dx * t * 0.012f), Offset(tip.x - dy * t * 0.012f, tip.y + dx * t * 0.012f), t * 0.025f, StrokeCap.Round)
-    drawLine(GOLD, Offset(hand.x - dy * t * 0.1f, hand.y + dx * t * 0.1f), Offset(hand.x + dy * t * 0.1f, hand.y - dx * t * 0.1f), t * 0.05f, StrokeCap.Round)
-    drawLine(Color(0xFF4E342E), hand, Offset(hand.x - dx * t * 0.12f, hand.y - dy * t * 0.12f), t * 0.055f, StrokeCap.Round)
-}
-
-private fun DrawScope.drawEnemy(e: Enemy, g: Game, cam: Camera) {
-    val t = cam.t
-    val cx = cam.sx(e.x)
-    val cy = cam.sy(e.y)
-    val r = e.type.radius * t
-    val toPlayer = atan2(g.player.y - e.y, g.player.x - e.x)
-
-    // Red telegraph circle while winding up an attack.
-    if (e.windup > 0f) {
-        val k = 1f - e.windup / e.type.windup
-        val reach = (e.type.range + 0.2f) * t
-        drawCircle(Color.Red.copy(alpha = 0.12f + 0.15f * k), reach * k, Offset(cx, cy))
-        drawCircle(Color.Red.copy(alpha = 0.35f + 0.4f * k), reach * k, Offset(cx, cy), style = Stroke(t * 0.04f))
-    }
-
-    when (e.type) {
-        EnemyType.SLIME -> {
-            shadow(cx, cy, r * 2.2f)
-            val s = 1f + 0.1f * sin(e.anim * 5f + e.phase)
-            val w = r * 2.2f * s
-            val h = r * 1.8f / s
-            val top = Offset(cx - w / 2f, cy - h + r * 0.15f)
-            drawOval(
-                Brush.radialGradient(listOf(Color(0xFF9CFF8A), Color(0xFF1E7A2E)), Offset(cx - w * 0.15f, top.y + h * 0.3f), w * 0.7f),
-                top, Size(w, h), alpha = 0.9f,
-            )
-            drawOval(Color.White.copy(alpha = 0.5f), Offset(cx - w * 0.3f, top.y + h * 0.15f), Size(w * 0.25f, h * 0.15f))
-            drawCircle(Color(0xFF0B2E12), r * 0.12f, Offset(cx - r * 0.3f, top.y + h * 0.5f))
-            drawCircle(Color(0xFF0B2E12), r * 0.12f, Offset(cx + r * 0.3f, top.y + h * 0.5f))
-        }
-        EnemyType.BAT -> {
-            shadow(cx, cy, r * 1.6f, 0.3f)
-            val hover = Offset(cx, cy - t * 0.55f + sin(e.anim * 4f + e.phase) * t * 0.06f)
-            val flap = sin(e.anim * 18f + e.phase)
-            val span = r * (1.6f + 0.6f * abs(flap))
-            for (s in listOf(1f, -1f)) {
-                val wing = Path().apply {
-                    moveTo(hover.x, hover.y)
-                    lineTo(hover.x + s * span, hover.y - r * 0.6f * flap)
-                    lineTo(hover.x + s * span * 0.7f, hover.y + r * 0.3f)
-                    lineTo(hover.x + s * span * 0.4f, hover.y + r * 0.1f)
-                    close()
-                }
-                drawPath(wing, Color(0xFF2A1F33))
-            }
-            drawCircle(Color(0xFF3B2E45), r * 0.55f, hover)
-            drawCircle(Color(0xFFFF1744), r * 0.12f, Offset(hover.x - r * 0.2f, hover.y - r * 0.1f))
-            drawCircle(Color(0xFFFF1744), r * 0.12f, Offset(hover.x + r * 0.2f, hover.y - r * 0.1f))
-        }
-        EnemyType.SKELETON -> {
-            shadow(cx, cy, r * 2f)
-            val bone = Color(0xFFE6DFCB)
-            val body = Offset(cx, cy - r * 1.1f)
-            drawOval(Color(0xFFBDB49C), Offset(body.x - r * 0.55f, body.y - r * 0.4f), Size(r * 1.1f, r * 1.2f))
-            for (i in 0..2) {
-                val yy = body.y - r * 0.15f + i * r * 0.28f
-                drawLine(Color(0xFF5D5446), Offset(body.x - r * 0.4f, yy), Offset(body.x + r * 0.4f, yy), r * 0.08f)
-            }
-            val sx = cos(toPlayer)
-            val sy = sin(toPlayer)
-            val hand = Offset(body.x + sx * r * 0.7f, body.y + sy * r * 0.5f)
-            drawLine(Color(0xFF8D6E63), hand, Offset(hand.x + sx * r * 1.6f, hand.y + sy * r * 1.6f), r * 0.16f, StrokeCap.Round)
-            val skull = Offset(body.x, body.y - r * 0.8f)
-            drawCircle(bone, r * 0.5f, skull)
-            drawCircle(Color.Black, r * 0.13f, Offset(skull.x - r * 0.18f, skull.y))
-            drawCircle(Color.Black, r * 0.13f, Offset(skull.x + r * 0.18f, skull.y))
-            drawCircle(Color(0xFFFF6E40).copy(alpha = 0.8f), r * 0.05f, Offset(skull.x - r * 0.18f, skull.y))
-            drawCircle(Color(0xFFFF6E40).copy(alpha = 0.8f), r * 0.05f, Offset(skull.x + r * 0.18f, skull.y))
-            drawLine(Color(0xFF5D5446), Offset(skull.x - r * 0.15f, skull.y + r * 0.3f), Offset(skull.x + r * 0.15f, skull.y + r * 0.3f), r * 0.06f)
-        }
-        EnemyType.BRUTE -> {
-            shadow(cx, cy, r * 2.2f)
-            val body = Offset(cx, cy - r * 0.9f)
-            val sx = cos(toPlayer)
-            val sy = sin(toPlayer)
-            val hand = Offset(body.x + sx * r * 0.9f, body.y + sy * r * 0.6f)
-            drawLine(Color(0xFF5D4037), hand, Offset(hand.x + sx * r * 1.4f, hand.y + sy * r * 1.4f), r * 0.3f, StrokeCap.Round)
-            drawCircle(Color(0xFF3E2723), r * 0.28f, Offset(hand.x + sx * r * 1.4f, hand.y + sy * r * 1.4f))
-            drawCircle(
-                Brush.radialGradient(listOf(Color(0xFF7C9A5A), Color(0xFF2E4220)), Offset(body.x - r * 0.3f, body.y - r * 0.3f), r * 1.3f),
-                r, body,
-            )
-            drawRect(Color(0xFF4E342E), Offset(body.x - r * 0.9f, body.y + r * 0.2f), Size(r * 1.8f, r * 0.22f))
-            val head = Offset(body.x, body.y - r * 0.75f)
-            drawCircle(Color(0xFF6B8A4B), r * 0.42f, head)
-            drawCircle(Color(0xFFFFEB3B), r * 0.07f, Offset(head.x - r * 0.15f, head.y - r * 0.05f))
-            drawCircle(Color(0xFFFFEB3B), r * 0.07f, Offset(head.x + r * 0.15f, head.y - r * 0.05f))
-            drawLine(Color(0xFFF5F5DC), Offset(head.x - r * 0.18f, head.y + r * 0.2f), Offset(head.x - r * 0.22f, head.y + r * 0.02f), r * 0.08f, StrokeCap.Round)
-            drawLine(Color(0xFFF5F5DC), Offset(head.x + r * 0.18f, head.y + r * 0.2f), Offset(head.x + r * 0.22f, head.y + r * 0.02f), r * 0.08f, StrokeCap.Round)
-        }
-        EnemyType.BOSS -> {
-            val pulse = 0.5f + 0.5f * sin(e.anim * 3f)
-            drawCircle(
-                Brush.radialGradient(listOf(Color(0x88FF1744), Color.Transparent), Offset(cx, cy), r * (2f + pulse * 0.4f)),
-                r * (2f + pulse * 0.4f), Offset(cx, cy),
-            )
-            shadow(cx, cy, r * 2.2f, 0.6f)
-            val body = Offset(cx, cy - r * 0.9f)
-            for (s in listOf(1f, -1f)) {
-                val wing = Path().apply {
-                    moveTo(body.x + s * r * 0.5f, body.y - r * 0.2f)
-                    lineTo(body.x + s * r * 2f, body.y - r * 1.2f)
-                    lineTo(body.x + s * r * 1.7f, body.y + r * 0.1f)
-                    lineTo(body.x + s * r * 1.2f, body.y - r * 0.1f)
-                    close()
-                }
-                drawPath(wing, Color(0xFF3E0A0A))
-            }
-            drawCircle(
-                Brush.radialGradient(listOf(Color(0xFFD32F2F), Color(0xFF3E0A0A)), Offset(body.x - r * 0.3f, body.y - r * 0.3f), r * 1.4f),
-                r, body,
-            )
-            val head = Offset(body.x, body.y - r * 0.8f)
-            drawCircle(Color(0xFF8E1B1B), r * 0.45f, head)
-            for (s in listOf(1f, -1f)) {
-                val horn = Path().apply {
-                    moveTo(head.x + s * r * 0.2f, head.y - r * 0.3f)
-                    lineTo(head.x + s * r * 0.75f, head.y - r * 1.0f)
-                    lineTo(head.x + s * r * 0.42f, head.y - r * 0.2f)
-                    close()
-                }
-                drawPath(horn, Color(0xFFE0D6C2))
-            }
-            drawCircle(Color(0xFFFFEA00), r * 0.09f, Offset(head.x - r * 0.17f, head.y))
-            drawCircle(Color(0xFFFFEA00), r * 0.09f, Offset(head.x + r * 0.17f, head.y))
-            drawCircle(Color(0x66FFEA00), r * 0.2f, Offset(head.x - r * 0.17f, head.y))
-            drawCircle(Color(0x66FFEA00), r * 0.2f, Offset(head.x + r * 0.17f, head.y))
-        }
-    }
-
-    if (e.flash > 0f) drawCircle(Color.White.copy(alpha = e.flash / 0.12f * 0.7f), r * 1.1f, Offset(cx, cy - r))
-
-    if (e.hp < e.maxHp && e.type != EnemyType.BOSS) {
-        val w = t * 0.8f
-        val top = cy - r * 2.6f - t * 0.2f
-        drawRect(Color.Black.copy(alpha = 0.7f), Offset(cx - w / 2f - 2f, top - 2f), Size(w + 4f, t * 0.08f + 4f))
-        drawRect(Color(0xFFD32F2F), Offset(cx - w / 2f, top), Size(w * (e.hp / e.maxHp).coerceIn(0f, 1f), t * 0.08f))
-    }
 }
 
 // ---------------------------------------------------------------- lighting
@@ -549,7 +474,7 @@ fun DrawScope.drawLighting(g: Game) {
     val cam = cameraFor(g)
     val t = cam.t
     val d = g.dungeon
-    drawRect(Color.Black.copy(alpha = 0.94f))
+    drawRect(d.biome.darkness.copy(alpha = d.biome.darknessAlpha))
 
     fun light(x: Float, y: Float, radius: Float, strength: Float) {
         val c = Offset(cam.sx(x), cam.sy(y))
@@ -567,21 +492,27 @@ fun DrawScope.drawLighting(g: Game) {
     }
 
     val p = g.player
-    light(p.x, p.y - 0.3f, t * 5.4f * flicker(g.time, 0.3f), 1f)
+    light(p.x, p.y - 0.3f, t * 5.6f * flicker(g.time, 0.3f), 1f)
     for (i in d.torches) light(i % d.w + 0.5f, i / d.w + 1f - WALL_HEIGHT * 0.4f, t * 3.6f * flicker(g.time, i.toFloat()), 0.95f)
     for (pr in g.projectiles) light(pr.x, pr.y, t * 2.4f, 0.85f)
     light(d.exit.cx + 0.5f, d.exit.cy + 0.5f, t * 2.2f, 0.75f)
+    for (pr in d.props) {
+        when {
+            pr.type == PropType.CAMPFIRE -> light(pr.x, pr.y - 0.3f, t * 8f * flicker(g.time, 1f), 1f)
+            pr.type == PropType.SHRINE && (!pr.used || g.inCamp) -> light(pr.x, pr.y - 0.6f, t * 2.2f, 0.7f)
+        }
+    }
+    if (g.inCamp) light(g.merchantX + 0.25f, g.merchantY - 0.4f, t * 3f, 0.8f)
     for (l in g.loot) {
         val k = l.kind
         if (k is LootKind.Gear && k.item.rarity >= Rarity.RARE) light(l.x, l.y, t * 1.3f, 0.6f)
     }
-    g.boss?.let { light(it.x, it.y - 0.5f, t * 2.5f, 0.6f) }
+    g.boss?.let { light(it.x, it.y - 0.5f, t * 2.8f, 0.6f) }
 
-    // Vignette and red flash when hurt.
     drawRect(
         Brush.radialGradient(
             listOf(Color.Transparent, Color.Black.copy(alpha = 0.6f)),
-            center = Offset(size.width / 2f, size.height * 0.45f),
+            center = Offset(size.width / 2f, size.height * 0.48f),
             radius = size.maxDimension * 0.75f,
         )
     )

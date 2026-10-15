@@ -9,6 +9,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,8 +21,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -46,7 +49,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -55,19 +57,24 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.cos
 import kotlin.math.max
+import kotlin.math.sin
 
 private val panel = Color(0xCC120D0B)
 private val bronze = Color(0xFF8C6A3F)
 private val parchment = Color(0xFFE8D9B5)
 private val textShadow = Shadow(Color.Black, Offset(2f, 2f), 4f)
+private val serifBold = TextStyle(fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, shadow = textShadow)
+
+private enum class Overlay { NONE, INVENTORY, SKILLS, QUESTS, SHOP }
 
 @Composable
-fun RpgScreen(game: Game) {
+fun RpgScreen(game: Game, assets: Assets) {
     var frame by remember { mutableLongStateOf(0L) }
     var hudTick by remember { mutableIntStateOf(0) }
     var started by remember { mutableStateOf(false) }
-    var sheetOpen by remember { mutableStateOf(false) }
+    var overlay by remember { mutableStateOf(Overlay.NONE) }
 
     LaunchedEffect(Unit) {
         var last = withFrameNanos { it }
@@ -76,16 +83,15 @@ fun RpgScreen(game: Game) {
             withFrameNanos { now ->
                 val dt = ((now - last) / 1_000_000_000f).coerceAtMost(0.05f)
                 last = now
-                if (started && !sheetOpen) game.update(dt)
+                if (started && overlay == Overlay.NONE) game.update(dt)
                 frame++
-                if (++n % 6 == 0) hudTick++
+                if (++n % 5 == 0) hudTick++
             }
         }
     }
 
     val measurer = rememberTextMeasurer()
-    val density = LocalDensity.current
-    val styles = remember(density) {
+    val styles = remember {
         TextStyles(
             small = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold, shadow = textShadow),
             big = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Black, shadow = textShadow),
@@ -96,35 +102,35 @@ fun RpgScreen(game: Game) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         Canvas(Modifier.fillMaxSize()) {
             frame.let { }
-            drawWorld(game, measurer, styles)
+            drawWorld(game, assets, measurer, styles)
         }
-        Canvas(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-        ) {
+        Canvas(Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }) {
             frame.let { }
             drawLighting(game)
         }
 
+        hudTick.let { }
         if (started) {
-            hudTick.let { }
-            Hud(game, onSheet = { sheetOpen = true })
+            Hud(game, assets, onOpen = { overlay = it })
             Controls(game, Modifier.align(Alignment.BottomCenter))
+            if (game.nearMerchant && overlay == Overlay.NONE) {
+                GothicButton(
+                    "💰 Handl med købmanden", { overlay = Overlay.SHOP },
+                    Modifier.align(Alignment.Center).offset(y = 90.dp),
+                )
+            }
             game.message?.let { msg ->
                 Text(
                     msg,
                     color = game.messageColor,
-                    fontSize = 20.sp,
-                    fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Bold,
+                    fontSize = 19.sp,
                     textAlign = TextAlign.Center,
-                    style = TextStyle(shadow = textShadow),
+                    style = serifBold,
                     modifier = Modifier
                         .align(Alignment.Center)
-                        .offset(y = (-140).dp)
+                        .offset(y = (-130).dp)
                         .padding(horizontal = 24.dp)
-                        .alpha(game.messageTimer.coerceIn(0f, 1f)),
+                        .graphicsLayer { alpha = game.messageTimer.coerceIn(0f, 1f) },
                 )
             }
         }
@@ -139,17 +145,19 @@ fun RpgScreen(game: Game) {
                 },
             )
             game.dead -> DeathScreen(onRespawn = { game.respawn() })
-            sheetOpen -> CharacterSheet(game, onClose = { sheetOpen = false })
+            game.victory -> VictoryScreen(game, onContinue = { game.victory = false; game.save() })
+            overlay == Overlay.INVENTORY -> InventoryScreen(game, assets, hudTick, onClose = { overlay = Overlay.NONE })
+            overlay == Overlay.SKILLS -> SkillsScreen(game, hudTick, onClose = { overlay = Overlay.NONE })
+            overlay == Overlay.QUESTS -> QuestScreen(game, onClose = { overlay = Overlay.NONE })
+            overlay == Overlay.SHOP -> ShopScreen(game, assets, hudTick, onClose = { overlay = Overlay.NONE })
         }
     }
 }
 
-private fun Modifier.alpha(a: Float) = this.graphicsLayer { alpha = a }
-
 // ---------------------------------------------------------------- HUD
 
 @Composable
-private fun Hud(game: Game, onSheet: () -> Unit) {
+private fun Hud(game: Game, assets: Assets, onOpen: (Overlay) -> Unit) {
     val p = game.player
     Column(Modifier.fillMaxSize().systemBarsPadding().padding(10.dp)) {
         Row(verticalAlignment = Alignment.Top, modifier = Modifier.fillMaxWidth()) {
@@ -158,51 +166,40 @@ private fun Hud(game: Game, onSheet: () -> Unit) {
                 modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(
-                    "Dybde ${game.floor}",
-                    color = parchment, fontSize = 18.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold,
-                    style = TextStyle(shadow = textShadow),
-                )
-                Text("Niveau ${p.level}", color = GOLD, fontSize = 14.sp, fontWeight = FontWeight.Bold, style = TextStyle(shadow = textShadow))
+                Text(game.areaTitle, color = parchment, fontSize = 16.sp, style = serifBold, textAlign = TextAlign.Center)
+                Text("Niveau ${p.level}", color = GOLD, fontSize = 13.sp, fontWeight = FontWeight.Bold, style = TextStyle(shadow = textShadow))
                 Box(
-                    Modifier
-                        .padding(top = 4.dp)
-                        .fillMaxWidth(0.85f)
-                        .height(6.dp)
+                    Modifier.padding(top = 3.dp).fillMaxWidth(0.85f).height(6.dp)
                         .background(Color(0xAA000000), RoundedCornerShape(3.dp))
                 ) {
                     Box(
-                        Modifier
-                            .fillMaxWidth((p.xp / p.xpToNext.toFloat()).coerceIn(0f, 1f))
-                            .height(6.dp)
-                            .background(Color(0xFFB388FF), RoundedCornerShape(3.dp))
+                        Modifier.fillMaxWidth((p.xp / p.xpToNext.toFloat()).coerceIn(0f, 1f)).height(6.dp)
+                            .background(Brush.horizontalGradient(listOf(Color(0xFF7C4DFF), Color(0xFFB388FF))), RoundedCornerShape(3.dp))
                     )
                 }
                 Text("🪙 ${p.gold}", color = GOLD, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp), style = TextStyle(shadow = textShadow))
+                p.buff?.let {
+                    Text("${it.label} (${p.buffTime.toInt()}s)", color = it.color, fontSize = 11.sp, style = TextStyle(shadow = textShadow))
+                }
             }
             Orb(p.mana / p.maxMana, Color(0xFF1E5BD8), "${p.mana.toInt()}")
         }
 
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.Top) {
-            Text(
-                "🎒",
-                fontSize = 26.sp,
-                modifier = Modifier
-                    .background(panel, RoundedCornerShape(10.dp))
-                    .border(1.dp, bronze, RoundedCornerShape(10.dp))
-                    .clickable(onClick = onSheet)
-                    .padding(6.dp)
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                MenuButton("🎒", p.inventory.any { game.isUpgrade(it) }) { onOpen(Overlay.INVENTORY) }
+                MenuButton("✨", p.skillPoints > 0) { onOpen(Overlay.SKILLS) }
+                MenuButton("📜", false) { onOpen(Overlay.QUESTS) }
+                if (!game.inCamp) MenuButton("🏕️", false) { game.townPortal() }
+            }
             Spacer(Modifier.weight(1f))
             game.boss?.takeIf { it.aggro }?.let { boss ->
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 8.dp)) {
-                    Text(boss.type.label, color = Color(0xFFFF5252), fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Box(Modifier.width(150.dp).height(10.dp).background(Color(0xAA000000), RoundedCornerShape(3.dp))) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 6.dp)) {
+                    Text(boss.type.label, color = Color(0xFFFF5252), fontSize = 15.sp, style = serifBold)
+                    Box(Modifier.width(160.dp).height(12.dp).background(Color(0xAA000000), RoundedCornerShape(3.dp)).border(1.dp, bronze, RoundedCornerShape(3.dp))) {
                         Box(
-                            Modifier
-                                .fillMaxWidth((boss.hp / boss.maxHp).coerceIn(0f, 1f))
-                                .height(10.dp)
-                                .background(Color(0xFFB71C1C), RoundedCornerShape(3.dp))
+                            Modifier.fillMaxWidth((boss.hp / boss.maxHp).coerceIn(0f, 1f)).height(12.dp)
+                                .background(Brush.verticalGradient(listOf(Color(0xFFE53935), Color(0xFF7F0000))), RoundedCornerShape(3.dp))
                         )
                     }
                 }
@@ -214,8 +211,25 @@ private fun Hud(game: Game, onSheet: () -> Unit) {
 }
 
 @Composable
+private fun MenuButton(icon: String, badge: Boolean, onClick: () -> Unit) {
+    Box {
+        Text(
+            icon, fontSize = 24.sp,
+            modifier = Modifier
+                .background(panel, RoundedCornerShape(10.dp))
+                .border(1.dp, bronze, RoundedCornerShape(10.dp))
+                .clickable(onClick = onClick)
+                .padding(6.dp)
+        )
+        if (badge) {
+            Box(Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-4).dp).size(12.dp).background(Color(0xFFFF5252), CircleShape))
+        }
+    }
+}
+
+@Composable
 private fun Orb(fraction: Float, color: Color, label: String) {
-    Box(Modifier.size(68.dp), contentAlignment = Alignment.Center) {
+    Box(Modifier.size(70.dp), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
             val r = size.minDimension / 2f
             val c = Offset(size.width / 2f, size.height / 2f)
@@ -224,14 +238,13 @@ private fun Orb(fraction: Float, color: Color, label: String) {
             val clip = Path().apply { addOval(Rect(c, r * 0.9f)) }
             clipPath(clip) {
                 drawRect(
-                    Brush.verticalGradient(listOf(color.copy(red = (color.red + 0.2f).coerceAtMost(1f)), color, Color(color.red * 0.4f, color.green * 0.4f, color.blue * 0.4f))),
-                    topLeft = Offset(0f, size.height * (1f - f)),
-                    size = Size(size.width, size.height * f),
+                    Brush.verticalGradient(listOf(color.copy(red = (color.red + 0.25f).coerceAtMost(1f)), color, Color(color.red * 0.35f, color.green * 0.35f, color.blue * 0.35f))),
+                    topLeft = Offset(0f, size.height * (1f - f)), size = Size(size.width, size.height * f),
                 )
+                drawRect(Color.White.copy(alpha = 0.15f), topLeft = Offset(0f, size.height * (1f - f)), size = Size(size.width, size.height * 0.03f))
             }
-            drawOval(Color.White.copy(alpha = 0.25f), Offset(c.x - r * 0.5f, c.y - r * 0.75f), Size(r * 0.7f, r * 0.35f))
-            drawCircle(bronze, r * 0.95f, c, style = Stroke(r * 0.12f))
-            drawCircle(Color(0xFF3B2A17), r, c, style = Stroke(r * 0.04f))
+            drawOval(Color.White.copy(alpha = 0.22f), Offset(c.x - r * 0.5f, c.y - r * 0.75f), Size(r * 0.7f, r * 0.35f))
+            drawCircle(Brush.sweepGradient(listOf(Color(0xFFB08A55), Color(0xFF5A3E1E), Color(0xFFD9B77A), Color(0xFF5A3E1E), Color(0xFFB08A55)), c), r * 0.95f, c, style = Stroke(r * 0.13f))
         }
         Text(label, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, style = TextStyle(shadow = textShadow))
     }
@@ -240,11 +253,7 @@ private fun Orb(fraction: Float, color: Color, label: String) {
 @Composable
 private fun Minimap(game: Game) {
     Canvas(
-        Modifier
-            .size(100.dp)
-            .background(panel, RoundedCornerShape(8.dp))
-            .border(1.dp, bronze, RoundedCornerShape(8.dp))
-            .padding(4.dp)
+        Modifier.size(104.dp).background(panel, RoundedCornerShape(8.dp)).border(1.dp, bronze, RoundedCornerShape(8.dp)).padding(4.dp)
     ) {
         val d = game.dungeon
         val cell = size.width / max(d.w, d.h)
@@ -257,11 +266,13 @@ private fun Minimap(game: Game) {
         val st = d.exit
         if (game.explored[st.cy * d.w + st.cx]) drawCircle(Color(0xFF4FC3F7), cell * 2f, Offset((st.cx + 0.5f) * cell, (st.cy + 0.5f) * cell))
         for (e in game.enemies) {
-            if (e.aggro || game.explored[floorInt(e.y) * d.w + floorInt(e.x)]) {
-                drawCircle(if (e.type == EnemyType.BOSS) Color(0xFFFF1744) else Color(0xFFE53935), cell * (if (e.type == EnemyType.BOSS) 2.2f else 1.1f), Offset(e.x * cell, e.y * cell))
+            val i = floorInt(e.y) * d.w + floorInt(e.x)
+            if (e.aggro || (i in game.explored.indices && game.explored[i])) {
+                drawCircle(if (e.type.boss) Color(0xFFFF1744) else if (e.elite) Color(0xFF64B5F6) else Color(0xFFE53935),
+                    cell * (if (e.type.boss) 2.4f else 1.1f), Offset(e.x * cell, e.y * cell))
             }
         }
-        drawCircle(GOLD, cell * 1.6f, Offset(game.player.x * cell, game.player.y * cell))
+        drawCircle(GOLD, cell * 1.7f, Offset(game.player.x * cell, game.player.y * cell))
     }
 }
 
@@ -269,27 +280,53 @@ private fun Minimap(game: Game) {
 
 @Composable
 private fun Controls(game: Game, modifier: Modifier) {
-    Box(
-        modifier
-            .fillMaxWidth()
-            .systemBarsPadding()
-            .padding(16.dp)
-            .height(190.dp)
-    ) {
+    Box(modifier.fillMaxWidth().systemBarsPadding().padding(14.dp).height(210.dp)) {
         Joystick(game, Modifier.align(Alignment.BottomStart))
-        Box(Modifier.align(Alignment.BottomEnd).size(200.dp, 190.dp)) {
+        Box(Modifier.align(Alignment.BottomEnd).size(236.dp, 210.dp)) {
+            val attackC = Offset(236f - 48f, 210f - 48f)
             ActionButton(
-                "⚔️", null, Color(0xFFB0BEC5), 92.dp,
-                Modifier.align(Alignment.BottomEnd),
+                "⚔️", Color(0xFFB0BEC5), 96.dp, Modifier.at(attackC, 96f),
                 onPress = {
                     game.attackHeld = true
                     game.attack()
                 },
                 onRelease = { game.attackHeld = false },
             )
-            ActionButton("🔥", "12", Color(0xFFFF7A1A), 60.dp, Modifier.align(Alignment.TopEnd).offset(x = (-6).dp), onPress = { game.fireball() })
-            ActionButton("🌀", "20", Color(0xFF90CAF9), 60.dp, Modifier.align(Alignment.CenterStart).offset(x = 18.dp, y = 6.dp), onPress = { game.whirlwind() })
-            ActionButton("🧪", "${game.player.potions}", Color(0xFFFF5370), 52.dp, Modifier.align(Alignment.BottomStart), onPress = { game.drinkPotion() })
+            val skills = listOf(Skill.FIREBALL, Skill.WHIRL, Skill.NOVA)
+            val angles = listOf(270f, 228f, 186f)
+            for ((i, s) in skills.withIndex()) {
+                val a = Math.toRadians(angles[i].toDouble())
+                val c = Offset(attackC.x + cos(a).toFloat() * 100f, attackC.y + sin(a).toFloat() * 100f)
+                SkillButton(game, s, Modifier.at(c, 62f))
+            }
+            val pa = Math.toRadians(150.0)
+            ActionButton(
+                "🧪", Color(0xFFFF5370), 54.dp,
+                Modifier.at(Offset(attackC.x + cos(pa).toFloat() * 118f, attackC.y + sin(pa).toFloat() * 118f + 12f), 54f),
+                sub = "${game.player.potions}",
+                onPress = { game.drinkPotion() },
+            )
+        }
+    }
+}
+
+private fun Modifier.at(center: Offset, sizeDp: Float) =
+    this.offset(x = (center.x - sizeDp / 2f).dp, y = (center.y - sizeDp / 2f).dp)
+
+@Composable
+private fun SkillButton(game: Game, skill: Skill, modifier: Modifier) {
+    val level = game.player.skills[skill] ?: 0
+    val cd = game.player.cooldowns[skill] ?: 0f
+    Box(modifier) {
+        ActionButton(
+            if (level > 0) skill.icon else "🔒", skill.color, 62.dp, Modifier,
+            sub = if (level > 0) "${skill.mana.toInt()}" else null,
+            onPress = { game.cast(skill) },
+        )
+        if (cd > 0f && skill.cooldown > 0.5f) {
+            Canvas(Modifier.size(62.dp)) {
+                drawArc(Color(0xAA000000), -90f, 360f * (cd / skill.cooldown), useCenter = true)
+            }
         }
     }
 }
@@ -298,64 +335,54 @@ private fun Controls(game: Game, modifier: Modifier) {
 private fun Joystick(game: Game, modifier: Modifier) {
     var knob by remember { mutableStateOf(Offset.Zero) }
     Box(
-        modifier
-            .size(150.dp)
-            .pointerInput(Unit) {
-                val radius = size.width / 2f
-                val reach = radius * 0.75f
-                awaitEachGesture {
-                    val down = awaitFirstDown()
-                    fun update(pos: Offset) {
-                        var v = pos - Offset(radius, radius)
-                        val len = v.getDistance()
-                        if (len > reach) v = v * (reach / len)
-                        knob = v
-                        game.joyX = v.x / reach
-                        game.joyY = v.y / reach
-                    }
-                    update(down.position)
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        if (!change.pressed) break
-                        update(change.position)
-                        change.consume()
-                    }
-                    knob = Offset.Zero
-                    game.joyX = 0f
-                    game.joyY = 0f
+        modifier.size(150.dp).pointerInput(Unit) {
+            val radius = size.width / 2f
+            val reach = radius * 0.75f
+            awaitEachGesture {
+                val down = awaitFirstDown()
+                fun update(pos: Offset) {
+                    var v = pos - Offset(radius, radius)
+                    val len = v.getDistance()
+                    if (len > reach) v = v * (reach / len)
+                    knob = v
+                    game.joyX = v.x / reach
+                    game.joyY = v.y / reach
                 }
+                update(down.position)
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                    if (!change.pressed) break
+                    update(change.position)
+                    change.consume()
+                }
+                knob = Offset.Zero
+                game.joyX = 0f
+                game.joyY = 0f
             }
+        }
     ) {
         Canvas(Modifier.fillMaxSize()) {
             val c = Offset(size.width / 2f, size.height / 2f)
             val r = size.minDimension / 2f
-            drawCircle(Color(0x55000000), r, c)
+            drawCircle(Brush.radialGradient(listOf(Color(0x33000000), Color(0x88000000)), c, r), r, c)
             drawCircle(bronze.copy(alpha = 0.7f), r, c, style = Stroke(r * 0.05f))
             val k = c + knob
-            drawCircle(
-                Brush.radialGradient(listOf(Color(0xFFB08A55), Color(0xFF4A3520)), Offset(k.x - r * 0.1f, k.y - r * 0.1f), r * 0.45f),
-                r * 0.36f, k,
-            )
+            drawCircle(Brush.radialGradient(listOf(Color(0xFFC9A46A), Color(0xFF4A3520)), Offset(k.x - r * 0.1f, k.y - r * 0.1f), r * 0.45f), r * 0.36f, k)
         }
     }
 }
 
 @Composable
 private fun ActionButton(
-    icon: String,
-    sub: String?,
-    color: Color,
-    size: Dp,
-    modifier: Modifier,
-    onPress: () -> Unit,
-    onRelease: () -> Unit = {},
+    icon: String, color: Color, size: Dp, modifier: Modifier,
+    sub: String? = null, onPress: () -> Unit, onRelease: () -> Unit = {},
 ) {
     Box(
         modifier
             .size(size)
             .background(Brush.radialGradient(listOf(color.copy(alpha = 0.35f), Color(0xDD120D0B))), CircleShape)
-            .border(2.dp, color.copy(alpha = 0.85f), CircleShape)
+            .border(2.dp, Brush.sweepGradient(listOf(color, bronze, color, bronze, color)), CircleShape)
             .pointerInput(Unit) {
                 awaitEachGesture {
                     awaitFirstDown()
@@ -369,13 +396,99 @@ private fun ActionButton(
         Text(icon, fontSize = (size.value * 0.4f).sp)
         if (sub != null) {
             Text(
-                sub,
-                color = Color.White,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                style = TextStyle(shadow = textShadow),
+                sub, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, style = TextStyle(shadow = textShadow),
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp),
             )
+        }
+    }
+}
+
+// ---------------------------------------------------------------- shared widgets
+
+@Composable
+private fun DarkPanel(title: String, onClose: () -> Unit, content: @Composable () -> Unit) {
+    Box(Modifier.fillMaxSize().background(Color(0xCC000000)).systemBarsPadding(), contentAlignment = Alignment.Center) {
+        Column(
+            modifier = Modifier
+                .padding(14.dp)
+                .background(Brush.verticalGradient(listOf(Color(0xF51E1511), Color(0xF50E0A08))), RoundedCornerShape(12.dp))
+                .border(2.dp, bronze, RoundedCornerShape(12.dp))
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(title, color = GOLD, fontSize = 24.sp, style = serifBold, modifier = Modifier.weight(1f))
+                Text("✕", color = parchment, fontSize = 24.sp, modifier = Modifier.clickable(onClick = onClose).padding(6.dp))
+            }
+            Spacer(Modifier.height(8.dp))
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) { content() }
+        }
+    }
+}
+
+@Composable
+private fun GothicButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, wide: Boolean = true) {
+    Box(
+        modifier
+            .then(if (wide) Modifier.width(250.dp) else Modifier)
+            .background(
+                Brush.verticalGradient(if (enabled) listOf(Color(0xFF6A1717), Color(0xFF2A0808)) else listOf(Color(0xFF3A3530), Color(0xFF1E1B18))),
+                RoundedCornerShape(6.dp),
+            )
+            .border(2.dp, bronze, RoundedCornerShape(6.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, color = if (enabled) parchment else Color.Gray, fontSize = 17.sp, style = serifBold, textAlign = TextAlign.Center)
+    }
+}
+
+@Composable
+private fun ItemIcon(item: Item?, assets: Assets, size: Dp, selected: Boolean = false, upgrade: Boolean = false, placeholder: String = "", onClick: () -> Unit = {}) {
+    val color = item?.rarity?.color ?: Color(0xFF4A4038)
+    Box(
+        Modifier
+            .size(size)
+            .background(Brush.radialGradient(listOf(color.copy(alpha = if (item == null) 0.05f else 0.28f), Color(0xFF0C0907))), RoundedCornerShape(6.dp))
+            .border(if (selected) 3.dp else 1.dp, if (selected) Color.White else color.copy(alpha = 0.8f), RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (item != null) {
+            Canvas(Modifier.fillMaxSize()) { drawIcon(assets, item.icon, this.size.width / 2f, this.size.height / 2f, this.size.width * 0.92f) }
+            if (upgrade) Text("⬆", color = Color(0xFF69F0AE), fontSize = 13.sp, fontWeight = FontWeight.Black,
+                modifier = Modifier.align(Alignment.TopEnd).padding(2.dp), style = TextStyle(shadow = textShadow))
+        } else {
+            Text(placeholder, color = Color(0xFF6D625A), fontSize = 10.sp, textAlign = TextAlign.Center)
+        }
+    }
+}
+
+@Composable
+private fun ItemDetail(item: Item, compare: Item?) {
+    Column(
+        Modifier.width(300.dp).background(Color(0x66000000), RoundedCornerShape(8.dp))
+            .border(1.dp, item.rarity.color.copy(alpha = 0.7f), RoundedCornerShape(8.dp)).padding(10.dp)
+    ) {
+        Text(item.name, color = item.rarity.color, fontSize = 18.sp, style = serifBold)
+        Text("${item.rarity.label} ${item.slot.label.lowercase()} · niveau ${item.level}", color = parchment.copy(alpha = 0.7f), fontSize = 12.sp)
+        Spacer(Modifier.height(4.dp))
+        val keys = (item.stats().map { it.first } + (compare?.stats()?.map { it.first } ?: emptyList())).distinct()
+        for (k in keys) {
+            val mine = item.stats().firstOrNull { it.first == k }?.second ?: 0
+            val theirs = compare?.stats()?.firstOrNull { it.first == k }?.second ?: 0
+            Row {
+                Text(if (mine > 0) "+$mine $k" else "—  $k", color = if (mine > 0) Color.White else Color.Gray, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                if (compare != null && mine != theirs) {
+                    val diff = mine - theirs
+                    Text(if (diff > 0) "▲ $diff" else "▼ ${-diff}", color = if (diff > 0) Color(0xFF69F0AE) else Color(0xFFFF5252), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                }
+            }
         }
     }
 }
@@ -383,66 +496,212 @@ private fun ActionButton(
 // ---------------------------------------------------------------- screens
 
 @Composable
-private fun DarkPanel(content: @Composable () -> Unit) {
-    Box(Modifier.fillMaxSize().background(Color(0xB3000000)), contentAlignment = Alignment.Center) {
-        Column(
-            modifier = Modifier
-                .padding(24.dp)
-                .background(Color(0xF0140E0B), RoundedCornerShape(12.dp))
-                .border(2.dp, bronze, RoundedCornerShape(12.dp))
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) { content() }
+private fun InventoryScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Unit) {
+    tick.let { }
+    val p = game.player
+    var selected by remember { mutableStateOf<Item?>(null) }
+    DarkPanel("Helten", onClose) {
+        Row(Modifier.width(310.dp)) {
+            Column(Modifier.weight(1f)) {
+                StatLine("Niveau", "${p.level}")
+                StatLine("Liv", "${p.hp.toInt()}/${p.maxHp.toInt()}")
+                StatLine("Mana", "${p.mana.toInt()}/${p.maxMana.toInt()}")
+                StatLine("Skade", "${p.damage}")
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                StatLine("Rustning", "${p.armorValue}")
+                StatLine("Kritisk", "${p.critChance}%")
+                StatLine("Livsdræn", "${p.lifeSteal}%")
+                StatLine("Guld", "${p.gold}")
+            }
+        }
+        Text("Udrustning", color = parchment, fontSize = 15.sp, style = serifBold)
+        for (row in Slot.entries.chunked(3)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                for (slot in row) {
+                    val item = p.equipment[slot]
+                    ItemIcon(item, assets, 64.dp, selected = item != null && item === selected, placeholder = slot.label) { selected = item }
+                }
+            }
+        }
+        Text("Taske (${p.inventory.size}/$INVENTORY_SIZE)", color = parchment, fontSize = 15.sp, style = serifBold)
+        if (p.inventory.isEmpty()) Text("Tom — dræb monstre og åbn kister", color = Color.Gray, fontSize = 13.sp)
+        for (row in p.inventory.chunked(6)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (item in row) ItemIcon(item, assets, 46.dp, selected = item === selected, upgrade = game.isUpgrade(item)) { selected = item }
+            }
+        }
+        selected?.let { item ->
+            val equipped = p.equipment[item.slot]
+            val isEquipped = equipped === item
+            ItemDetail(item, if (isEquipped) null else equipped)
+            if (!isEquipped) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GothicButton("Tag på", { game.equip(item); selected = item }, wide = false)
+                    GothicButton("Sælg (${item.sellPrice} 🪙)", { game.sell(item); selected = null }, wide = false)
+                }
+            }
+        }
     }
 }
 
 @Composable
-private fun GothicButton(label: String, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .width(240.dp)
-            .background(Brush.verticalGradient(listOf(Color(0xFF5A1414), Color(0xFF2A0808))), RoundedCornerShape(6.dp))
-            .border(2.dp, bronze, RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 14.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(label, color = parchment, fontSize = 20.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold)
+private fun StatLine(label: String, value: String) {
+    Row(Modifier.fillMaxWidth()) {
+        Text(label, color = parchment.copy(alpha = 0.7f), fontSize = 13.sp, modifier = Modifier.weight(1f))
+        Text(value, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
     }
 }
+
+@Composable
+private fun SkillsScreen(game: Game, tick: Int, onClose: () -> Unit) {
+    tick.let { }
+    val p = game.player
+    DarkPanel("Færdigheder", onClose) {
+        Text(
+            if (p.skillPoints > 0) "Du har ${p.skillPoints} point at bruge" else "Du får et point for hvert nyt niveau",
+            color = if (p.skillPoints > 0) GOLD else parchment.copy(alpha = 0.7f), fontSize = 14.sp,
+        )
+        for (s in Skill.entries) {
+            val lvl = p.skills[s] ?: 0
+            Row(
+                Modifier.width(310.dp).background(Color(0x55000000), RoundedCornerShape(8.dp))
+                    .border(1.dp, s.color.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(s.icon, fontSize = 30.sp)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("${s.label}  ${"★".repeat(lvl)}${"☆".repeat(5 - lvl)}", color = s.color, fontSize = 16.sp, style = serifBold)
+                    Text(if (lvl > 0) s.describe(lvl) else "Ikke lært endnu. ${s.describe(1)}", color = parchment, fontSize = 12.sp)
+                    if (lvl in 1..4) Text("Næste: ${s.describe(lvl + 1)}", color = Color.Gray, fontSize = 11.sp)
+                    Text("Mana: ${s.mana.toInt()} · Ventetid: ${s.cooldown}s", color = Color(0xFF64B5F6), fontSize = 11.sp)
+                }
+                if (p.skillPoints > 0 && lvl < 5) {
+                    Text(
+                        "+", color = Color.Black, fontSize = 22.sp, fontWeight = FontWeight.Black,
+                        modifier = Modifier.background(GOLD, CircleShape).clickable { game.learn(s) }.padding(horizontal = 12.dp, vertical = 2.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuestScreen(game: Game, onClose: () -> Unit) {
+    DarkPanel("Opgaver", onClose) {
+        Text(
+            "Et mørke stiger op fra dybet under lejren. Fire herskere vogter vejen til Skyggekongens trone.",
+            color = parchment.copy(alpha = 0.85f), fontSize = 13.sp, fontFamily = FontFamily.Serif, modifier = Modifier.width(300.dp),
+        )
+        for ((i, q) in QUESTS.withIndex()) {
+            val done = i < game.questStage
+            val current = i == game.questStage
+            Row(
+                Modifier.width(300.dp).background(if (current) Color(0x332E7D32) else Color(0x33000000), RoundedCornerShape(6.dp)).padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(if (done) "✅" else if (current) "⚔️" else "🔒", fontSize = 20.sp)
+                Spacer(Modifier.width(8.dp))
+                Column {
+                    Text(q.first, color = if (done) Color(0xFF81C784) else if (current) GOLD else Color.Gray, fontSize = 15.sp, style = serifBold)
+                    Text(q.second, color = parchment.copy(alpha = if (current) 0.9f else 0.5f), fontSize = 12.sp)
+                }
+            }
+        }
+        Text("Dybeste: ${game.deepest}", color = parchment.copy(alpha = 0.6f), fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun ShopScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Unit) {
+    tick.let { }
+    val p = game.player
+    var selling by remember { mutableStateOf(false) }
+    var refresh by remember { mutableIntStateOf(0) }
+    refresh.let { }
+    DarkPanel("Købmanden", onClose) {
+        Text("\"Hvad må det være, eventyrer?\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp)
+        Text("Du har 🪙 ${p.gold}", color = GOLD, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GothicButton("Køb", { selling = false }, wide = false, enabled = selling)
+            GothicButton("Sælg", { selling = true }, wide = false, enabled = !selling)
+        }
+        if (!selling) {
+            ShopRow(assets, null, "Livseliksir", "Helbreder halvdelen af dit liv", "${game.potionPrice} 🪙", p.gold >= game.potionPrice) {
+                game.buyPotion(); refresh++
+            }
+            for (item in game.stock.toList()) {
+                ShopRow(assets, item, item.name, item.statLine(), "${item.buyPrice} 🪙", p.gold >= item.buyPrice && p.inventory.size < INVENTORY_SIZE,
+                    upgrade = game.isUpgrade(item)) { game.buy(item); refresh++ }
+            }
+        } else {
+            if (p.inventory.isEmpty()) Text("Din taske er tom", color = Color.Gray, fontSize = 13.sp)
+            for (item in p.inventory.toList()) {
+                ShopRow(assets, item, item.name, item.statLine(), "+${item.sellPrice} 🪙", true, upgrade = game.isUpgrade(item), action = "Sælg") {
+                    game.sell(item); refresh++
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShopRow(
+    assets: Assets, item: Item?, name: String, desc: String, price: String, enabled: Boolean,
+    upgrade: Boolean = false, action: String = "Køb", onClick: () -> Unit,
+) {
+    Row(
+        Modifier.width(320.dp).background(Color(0x44000000), RoundedCornerShape(8.dp)).padding(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (item != null) {
+            ItemIcon(item, assets, 48.dp, upgrade = upgrade)
+        } else {
+            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                Canvas(Modifier.fillMaxSize()) { drawIcon(assets, Icons.POTION, size.width / 2f, size.height / 2f, size.width) }
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(name, color = item?.rarity?.color ?: Color(0xFFFF8A80), fontSize = 14.sp, style = serifBold)
+            Text(desc, color = parchment.copy(alpha = 0.8f), fontSize = 11.sp)
+            Text(price, color = GOLD, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+        GothicButton(action, onClick, wide = false, enabled = enabled)
+    }
+}
+
+@Composable
+private fun BoxScope.Backdrop() {
+    Box(Modifier.matchParentSizeCompat().background(Brush.verticalGradient(listOf(Color(0xCC000000), Color(0x88200606), Color(0xEE000000)))))
+}
+
+private fun Modifier.matchParentSizeCompat() = this.fillMaxSize()
 
 @Composable
 private fun TitleScreen(game: Game, onContinue: () -> Unit, onNew: () -> Unit) {
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Color(0xCC000000), Color(0x88200606), Color(0xEE000000)))),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Backdrop()
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(
                 "SKYGGERNES\nDYB",
                 textAlign = TextAlign.Center,
                 style = TextStyle(
-                    color = Color(0xFFE0B25A),
-                    fontSize = 48.sp,
-                    lineHeight = 52.sp,
-                    fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Black,
-                    shadow = Shadow(Color(0xFFFF3D00), Offset(0f, 0f), 24f),
+                    color = Color(0xFFE0B25A), fontSize = 50.sp, lineHeight = 54.sp, fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Black, shadow = Shadow(Color(0xFFFF3D00), Offset(0f, 0f), 28f),
                 ),
             )
             Text("Stig ned i mørket. Find skattene. Overlev.", color = parchment.copy(alpha = 0.8f), fontFamily = FontFamily.Serif, fontSize = 15.sp)
-            Spacer(Modifier.height(12.dp))
-            if (game.hasSave) {
-                GothicButton("Fortsæt — Dybde ${game.floor}, Niv. ${game.player.level}", onContinue)
-            }
+            Spacer(Modifier.height(10.dp))
+            if (game.hasSave) GothicButton("Fortsæt — niveau ${game.player.level}, dybde ${game.deepest}", onContinue)
             GothicButton("Nyt eventyr", onNew)
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
             Text(
-                "Joystick: gå · ⚔️ hold for at angribe\n🔥 ildkugle · 🌀 hvirvelslag · 🧪 eliksir\nFind trappen ned for at gå dybere",
-                color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp, textAlign = TextAlign.Center,
+                "Joystick: gå · ⚔️ hold for at angribe\n🔥 ildkugle · 🌀 hvirvelslag · ❄️ frostnova · 🧪 eliksir\n🎒 udstyr · ✨ færdigheder · 📜 opgaver · 🏕️ portal hjem",
+                color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp, textAlign = TextAlign.Center,
             )
         }
     }
@@ -450,53 +709,28 @@ private fun TitleScreen(game: Game, onContinue: () -> Unit, onNew: () -> Unit) {
 
 @Composable
 private fun DeathScreen(onRespawn: () -> Unit) {
-    DarkPanel {
-        Text("DU ER FALDET", color = Color(0xFFD32F2F), fontSize = 34.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Black)
-        Text("Mørket tog dig denne gang.", color = parchment, fontFamily = FontFamily.Serif)
-        GothicButton("Rejs dig (−20% guld)", onRespawn)
+    Box(Modifier.fillMaxSize().background(Color(0xAA200000)), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("DU ER FALDET", color = Color(0xFFD32F2F), fontSize = 38.sp, style = serifBold.copy(fontWeight = FontWeight.Black))
+            Text("Mørket tog dig denne gang.", color = parchment, fontFamily = FontFamily.Serif)
+            GothicButton("Vågn op i lejren (−20% guld)", onRespawn)
+        }
     }
 }
 
 @Composable
-private fun CharacterSheet(game: Game, onClose: () -> Unit) {
-    val p = game.player
-    DarkPanel {
-        Text("Helten", color = GOLD, fontSize = 28.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Black)
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            StatRow("Niveau", "${p.level}  (${p.xp}/${p.xpToNext} XP)")
-            StatRow("Liv", "${p.hp.toInt()} / ${p.maxHp.toInt()}")
-            StatRow("Skade", "${p.damage}")
-            StatRow("Rustning", "${p.armorValue}")
-            StatRow("Kritisk chance", "${p.critChance}%")
-            StatRow("Guld", "${p.gold}")
-            StatRow("Eliksirer", "${p.potions}")
+private fun VictoryScreen(game: Game, onContinue: () -> Unit) {
+    Box(Modifier.fillMaxSize().background(Color(0xCC000000)), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.padding(24.dp)) {
+            Text("MØRKET ER BRUDT", color = GOLD, fontSize = 34.sp, textAlign = TextAlign.Center,
+                style = serifBold.copy(fontWeight = FontWeight.Black, shadow = Shadow(Color(0xFFFFD54F), Offset.Zero, 24f)))
+            Text(
+                "Skyggekongen er faldet, og lyset vender tilbage til landet. Sangene om din bedrift vil blive sunget i generationer.",
+                color = parchment, fontFamily = FontFamily.Serif, fontSize = 15.sp, textAlign = TextAlign.Center,
+            )
+            Text("Niveau ${game.player.level} · ${game.player.gold} guld", color = GOLD, fontSize = 15.sp)
+            Text("Dybet fortsætter dog… og monstrene bliver kun stærkere.", color = Color.Gray, fontSize = 13.sp, textAlign = TextAlign.Center)
+            GothicButton("Fortsæt eventyret", onContinue)
         }
-        for (slot in Slot.entries) {
-            val item = game.equipped(slot)
-            Column(
-                Modifier
-                    .width(280.dp)
-                    .background(Color(0x66000000), RoundedCornerShape(6.dp))
-                    .border(1.dp, (item?.rarity?.color ?: Color.Gray).copy(alpha = 0.6f), RoundedCornerShape(6.dp))
-                    .padding(10.dp)
-            ) {
-                Text(slot.label, color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp)
-                if (item == null) {
-                    Text("Intet", color = Color.Gray, fontSize = 16.sp)
-                } else {
-                    Text(item.name, color = item.rarity.color, fontSize = 17.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold)
-                    Text("${item.rarity.label} · ${item.statLine()}", color = parchment, fontSize = 12.sp)
-                }
-            }
-        }
-        GothicButton("Luk", onClose)
-    }
-}
-
-@Composable
-private fun StatRow(label: String, value: String) {
-    Row(Modifier.width(260.dp)) {
-        Text(label, color = parchment.copy(alpha = 0.75f), fontSize = 15.sp, modifier = Modifier.weight(1f))
-        Text(value, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
     }
 }

@@ -15,6 +15,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 class MainActivity : ComponentActivity() {
     private lateinit var sfx: Sfx
     private lateinit var game: Game
+    private lateinit var assets: Assets
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -25,10 +26,11 @@ class MainActivity : ComponentActivity() {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
         sfx = Sfx(this)
+        assets = Assets(resources)
         game = Game(sfx, getSharedPreferences("hero", Context.MODE_PRIVATE))
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                RpgScreen(game)
+                RpgScreen(game, assets)
             }
         }
     }

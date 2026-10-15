@@ -29,6 +29,7 @@ class Sfx(context: Context) {
             "swing" to R.raw.swing, "hit" to R.raw.hit, "kill" to R.raw.kill, "coin" to R.raw.coin,
             "equip" to R.raw.equip, "potion" to R.raw.potion, "fireball" to R.raw.fireball,
             "explode" to R.raw.explode, "hurt" to R.raw.hurt, "levelup" to R.raw.levelup, "stairs" to R.raw.stairs,
+            "frost" to R.raw.frost, "portal" to R.raw.portal,
         )
         for ((name, res) in sounds) ids[name] = pool.load(context, res, 1)
         ambientId = pool.load(context, R.raw.ambient, 1)
@@ -51,6 +52,8 @@ class Sfx(context: Context) {
     fun hurt() = play("hurt", 0.9f)
     fun levelUp() = play("levelup", 0.9f, varyPitch = false)
     fun stairs() = play("stairs", 0.9f, varyPitch = false)
+    fun frost() = play("frost", 0.8f)
+    fun portal() = play("portal", 0.8f, varyPitch = false)
 
     fun pause() = pool.autoPause()
     fun resume() = pool.autoResume()
