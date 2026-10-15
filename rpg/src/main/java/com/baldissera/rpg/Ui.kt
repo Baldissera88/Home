@@ -72,7 +72,7 @@ private enum class Overlay { NONE, INVENTORY, SKILLS, QUESTS, SHOP, MAP, SMITH, 
 @Composable
 fun RpgScreen(
     game: Game, assets: Assets, music: Music, sfx: Sfx, settings: android.content.SharedPreferences,
-    autoStart: Boolean = false, debugOverlay: Int = -1,
+    autoStart: Boolean = false, debugOverlay: Int = -1, animate: Boolean = true,
 ) {
     var frame by remember { mutableLongStateOf(0L) }
     var hudTick by remember { mutableIntStateOf(0) }
@@ -80,6 +80,7 @@ fun RpgScreen(
     var overlay by remember { mutableStateOf(if (debugOverlay >= 0) Overlay.entries[debugOverlay] else Overlay.NONE) }
 
     LaunchedEffect(Unit) {
+        if (!animate) return@LaunchedEffect
         var last = withFrameNanos { it }
         var n = 0
         while (true) {

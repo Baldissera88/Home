@@ -44,7 +44,8 @@ class UiScreenTest {
         repeat(20) { game.update(1f / 60f) }
         activity.setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                RpgScreen(game, assets, music, sfx, settings, autoStart = overlay != -2, debugOverlay = if (overlay < 0) -1 else overlay)
+                RpgScreen(game, assets, music, sfx, settings, autoStart = overlay != -2,
+                    debugOverlay = if (overlay < 0) -1 else overlay, animate = false)
             }
         }
         log("content set")
