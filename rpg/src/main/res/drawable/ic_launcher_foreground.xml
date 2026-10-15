@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Sword pointing up over an ember glow -->
+    <path android:fillColor="#55FF6A00" android:pathData="M54,54 m-26,0 a26,26 0 1,0 52,0 a26,26 0 1,0 -52,0" />
+    <path android:fillColor="#D8DEE6" android:pathData="M54,22 L59,30 L59,64 L49,64 L49,30 Z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M54,24 L56,30 L56,63 L54,63 Z" />
+    <path android:fillColor="#C9A227" android:pathData="M40,64 h28 v5 h-28 z" />
+    <path android:fillColor="#5D3A1A" android:pathData="M51,69 h6 v12 h-6 z" />
+    <path android:fillColor="#C9A227" android:pathData="M54,81 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+</vector>

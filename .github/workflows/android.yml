@@ -25,3 +25,7 @@ jobs:
         with:
           name: filuccas-klodser-apk
           path: filucca/build/outputs/apk/debug/*.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skyggernes-dyb-apk
+          path: rpg/build/outputs/apk/debug/*.apk
