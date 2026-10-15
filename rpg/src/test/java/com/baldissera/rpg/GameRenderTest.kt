@@ -139,6 +139,10 @@ class GameRenderTest {
         step(g, 40)
         g.cast(Skill.WHIRL)
         step(g, 6)
+        g.player.skills[Skill.CHAIN] = 3
+        g.player.mana = g.player.maxMana
+        g.cast(Skill.CHAIN)
+        step(g, 2)
         render(g, a, "08_hell")
 
         if (g.dead) g.respawn()
@@ -220,6 +224,7 @@ class GameRenderTest {
         val r = Random(7)
         g.player.level = 25
         g.player.skills[Skill.NOVA] = 3
+        g.player.skills[Skill.CHAIN] = 4
         for (floor in listOf(0, 1, 2, 3, 4, 6, 7, 9, 10, 12)) {
             g.enterFloor(floor)
             g.enemies += Enemy(EnemyType.BANDIT, g.player.x + 3f, g.player.y, floor + 1, elite = true, affixes = Affix.entries, title = "Test")
@@ -232,6 +237,7 @@ class GameRenderTest {
                 if (i % 120 == 0) g.cast(Skill.FIREBALL)
                 if (i % 200 == 0) g.cast(Skill.WHIRL)
                 if (i % 400 == 0) g.cast(Skill.NOVA)
+                if (i % 150 == 75) g.cast(Skill.CHAIN)
                 if (i % 500 == 0) g.drinkPotion()
                 if (i == 900 && floor > 0) g.townPortal()
                 if (g.dead) g.respawn()

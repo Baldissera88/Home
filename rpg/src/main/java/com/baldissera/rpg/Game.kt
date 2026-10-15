@@ -94,6 +94,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     val decals = ArrayDeque<Decal>()
     val corpses = mutableListOf<Corpse>()
     val ghosts = mutableListOf<Ghost>()
+    val bolts = mutableListOf<Bolt>()
     /** Smoothed camera centre in world tiles. */
     var camX = 0f
         private set
@@ -389,7 +390,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         player.equipment.clear()
         player.inventory.clear()
         player.skills.clear()
-        player.skills.putAll(mapOf(Skill.FIREBALL to 1, Skill.WHIRL to 1, Skill.NOVA to 0))
+        player.skills.putAll(mapOf(Skill.FIREBALL to 1, Skill.WHIRL to 1, Skill.NOVA to 0, Skill.CHAIN to 0))
         player.equipment[Slot.WEAPON] = Item(Slot.WEAPON, "Rustent sværd", Rarity.COMMON, Icons.SWORD, 1, damage = 2)
         player.equipment[Slot.OFFHAND] = Item(Slot.OFFHAND, "Gammelt rundskjold", Rarity.COMMON, Icons.SHIELD, 1, armor = 2)
         player.hp = player.maxHp
@@ -479,6 +480,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             if (bossIntroTime <= 0f) bossIntro = null
         }
         corpses.removeAll { it.age += dt; it.age > 1.2f }
+        bolts.removeAll { it.age += dt; it.age > 0.28f }
         ghosts.removeAll { it.age += dt; it.age > 0.3f }
         if (dead || victory) return
         updatePlayer(dt)
@@ -743,17 +745,14 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             var fromX = e.x
             var fromY = e.y
             for (t in listOf(e) + targets) {
-                val steps = 8
-                for (k in 0..steps) {
-                    val f = k / steps.toFloat()
-                    particles += Particle(fromX + (t.x - fromX) * f + (rnd.nextFloat() - 0.5f) * 0.2f, fromY + (t.y - fromY) * f,
-                        0f, 0f, LIGHTNING, 0.05f, 0.25f, glow = true, z = 0.6f)
-                }
+                if (t !== e) bolts += Bolt(fromX, fromY, t.x, t.y, rnd.nextInt())
+                burst(t.x, t.y - 0.5f, LIGHTNING, 5, glow = true)
                 damageEnemy(t, p.damage * 0.8f, 1f)
                 fromX = t.x
                 fromY = t.y
             }
-            sfx.explode()
+            bolts += Bolt(e.x, e.y - 3f, e.x, e.y, rnd.nextInt())
+            sfx.zap()
         }
     }
 
@@ -776,6 +775,11 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             return
         }
         if (!skillReady(skill)) return
+        val chainTarget = if (skill == Skill.CHAIN) nearestEnemy(6.5f) else null
+        if (skill == Skill.CHAIN && chainTarget == null) {
+            texts += FloatText(p.x, p.y - 1.4f, "Intet mål", LIGHTNING)
+            return
+        }
         val cost = if (skill == Skill.WHIRL && p.has(Power.STORM)) 0f else skill.mana
         if (p.mana < cost) {
             showMessage("Ikke nok mana", Color(0xFF64B5F6))
@@ -832,7 +836,32 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 ring(p.x, p.y, 0.4f, FROST, 48, 7f)
                 shake = max(shake, 0.3f)
             }
+            Skill.CHAIN -> chainLightning(chainTarget!!, lvl)
         }
+    }
+
+    private fun chainLightning(first: Enemy, lvl: Int) {
+        val p = player
+        faceToward(first.x, first.y)
+        p.cast = 0.3f
+        val hit = mutableListOf<Enemy>()
+        var fromX = p.x + p.faceX * 0.3f
+        var fromY = p.y + p.faceY * 0.3f - 0.6f
+        var next: Enemy? = first
+        val dmg = p.damage * (1.1f + 0.3f * (lvl - 1)) * spellMult()
+        while (next != null && hit.size < 2 + lvl) {
+            val t = next
+            bolts += Bolt(fromX, fromY, t.x, t.y - 0.5f, rnd.nextInt())
+            burst(t.x, t.y - 0.5f, LIGHTNING, 6, glow = true)
+            damageEnemy(t, dmg * (1f - 0.08f * hit.size), 1.5f)
+            hit += t
+            fromX = t.x
+            fromY = t.y - 0.5f
+            next = enemies.filter { it !in hit && it.hp > 0f && hypot(it.x - t.x, it.y - t.y) < 4f }
+                .minByOrNull { hypot(it.x - t.x, it.y - t.y) }
+        }
+        sfx.zap()
+        shake = max(shake, 0.15f)
     }
 
     fun drinkPotion() {

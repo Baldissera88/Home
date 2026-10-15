@@ -350,17 +350,17 @@ private fun Controls(game: Game, modifier: Modifier) {
                 },
                 onRelease = { game.attackHeld = false },
             )
-            val skills = listOf(Skill.FIREBALL, Skill.WHIRL, Skill.NOVA)
-            val angles = listOf(270f, 228f, 186f)
+            // Four skills on an arc around the attack button, the potion at its foot.
+            val skills = listOf(Skill.FIREBALL, Skill.WHIRL, Skill.NOVA, Skill.CHAIN)
+            val angles = listOf(280f, 245f, 210f, 175f)
             for ((i, s) in skills.withIndex()) {
                 val a = Math.toRadians(angles[i].toDouble())
-                val c = Offset(attackC.x + cos(a).toFloat() * 100f, attackC.y + sin(a).toFloat() * 100f)
-                SkillButton(game, s, Modifier.at(c, 62f))
+                val c = Offset(attackC.x + cos(a).toFloat() * 104f, attackC.y + sin(a).toFloat() * 104f)
+                SkillButton(game, s, Modifier.at(c, 58f))
             }
-            val pa = Math.toRadians(150.0)
             ActionButton(
-                "🧪", Color(0xFFFF5370), 54.dp,
-                Modifier.at(Offset(attackC.x + cos(pa).toFloat() * 118f, attackC.y + sin(pa).toFloat() * 118f + 12f), 54f),
+                "🧪", Color(0xFFFF5370), 50.dp,
+                Modifier.at(Offset(28f, 184f), 50f),
                 sub = "${game.player.potions}",
                 onPress = { game.drinkPotion() },
             )
@@ -377,12 +377,12 @@ private fun SkillButton(game: Game, skill: Skill, modifier: Modifier) {
     val cd = game.player.cooldowns[skill] ?: 0f
     Box(modifier) {
         ActionButton(
-            if (level > 0) skill.icon else "🔒", skill.color, 62.dp, Modifier,
+            if (level > 0) skill.icon else "🔒", skill.color, 58.dp, Modifier,
             sub = if (level > 0) "${skill.mana.toInt()}" else null,
             onPress = { game.cast(skill) },
         )
         if (cd > 0f && skill.cooldown > 0.5f) {
-            Canvas(Modifier.size(62.dp)) {
+            Canvas(Modifier.size(58.dp)) {
                 drawArc(Color(0xAA000000), -90f, 360f * (cd / skill.cooldown), useCenter = true)
             }
         }

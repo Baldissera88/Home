@@ -146,6 +146,12 @@ enum class Skill(val label: String, val icon: String, val mana: Float, val coold
     FIREBALL("Ildkugle", "🔥", 12f, 0.35f, Color(0xFFFF7A1A), { l -> "Kaster en eksploderende ildkugle. ${160 + (l - 1) * 40}% skade." }),
     WHIRL("Hvirvelslag", "🌀", 20f, 1.0f, Color(0xFF90CAF9), { l -> "Svinger våbnet hele vejen rundt. ${130 + (l - 1) * 30}% skade." }),
     NOVA("Frostnova", "❄️", 25f, 6f, Color(0xFF80DEEA), { l -> "Fryser alle fjender tæt på i ${"%.1f".format(2f + l * 0.5f)} sek. ${100 + (l - 1) * 25}% skade." }),
+    CHAIN("Kædelyn", "⚡", 16f, 0.7f, Color(0xFF9FE7FF), { l -> "Et lyn springer mellem op til ${2 + l} fjender. ${110 + (l - 1) * 30}% skade." }),
+}
+
+/** A jagged lightning segment that fades out quickly. */
+class Bolt(val x1: Float, val y1: Float, val x2: Float, val y2: Float, val seed: Int) {
+    var age = 0f
 }
 
 enum class Buff(val label: String, val color: Color) {

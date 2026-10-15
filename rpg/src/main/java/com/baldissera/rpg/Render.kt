@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -23,10 +24,12 @@ import androidx.compose.ui.unit.IntSize
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.random.Random
 
 /** Tiles visible across the screen width. */
 private const val TILES_ACROSS = 7f
@@ -251,6 +254,8 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
             drawCircle(pt.color.copy(alpha = pt.color.alpha * fade), r, c)
         }
     }
+
+    for (b in g.bolts) drawBolt(b, cam)
 
     drawFog(g, a, cam)
     if (g.rain > 0.02f) drawRain(g)
@@ -604,6 +609,7 @@ fun DrawScope.drawLighting(g: Game) {
     for (e in d.entrances) light(e.x + 0.5f, e.y + 0.3f, t * (if (e.region == Region.HELL) 3.4f else 1.6f), 0.8f)
     for (i in d.torches) light(i % d.w + 0.5f, i / d.w + 1f - WALL_HEIGHT * 0.4f, t * 3.6f * flicker(g.time, i.toFloat()), 0.95f)
     for (pr in g.projectiles) light(pr.x, pr.y, t * 2.4f, 0.85f)
+    for (b in g.bolts) light((b.x1 + b.x2) / 2f, (b.y1 + b.y2) / 2f, t * 2.6f, 0.9f * (1f - b.age / 0.28f))
     light(d.exit.cx + 0.5f, d.exit.cy + 0.5f, t * 2.2f, 0.75f)
     for (pr in d.props) {
         when {
@@ -731,6 +737,38 @@ private fun DrawScope.drawNpc(n: Npc, g: Game, cam: Camera, a: Assets, measurer:
         drawText(layout, topLeft = Offset(bx, by))
     }
 }
+
+// ---------------------------------------------------------------- lightning
+
+/** A jagged, glowing bolt between two world points, re-jittered a few times while it lives. */
+private fun DrawScope.drawBolt(b: Bolt, cam: Camera) {
+    val t = cam.t
+    val fade = (1f - b.age / 0.28f).coerceIn(0f, 1f)
+    val x1 = cam.sx(b.x1)
+    val y1 = cam.sy(b.y1) - t * 0.1f
+    val x2 = cam.sx(b.x2)
+    val y2 = cam.sy(b.y2) - t * 0.1f
+    val len = hypot(x2 - x1, y2 - y1)
+    if (len < 1f) return
+    val nx = -(y2 - y1) / len
+    val ny = (x2 - x1) / len
+    val segments = (len / (t * 0.22f)).toInt().coerceIn(4, 24)
+    val rnd = Random(b.seed + (b.age * 30f).toInt())
+    val path = Path().apply {
+        moveTo(x1, y1)
+        for (i in 1 until segments) {
+            val f = i / segments.toFloat()
+            val off = (rnd.nextFloat() - 0.5f) * t * 0.45f * sin(f * PI.toFloat())
+            lineTo(x1 + (x2 - x1) * f + nx * off, y1 + (y2 - y1) * f + ny * off)
+        }
+        lineTo(x2, y2)
+    }
+    drawPath(path, LIGHTNING_GLOW.copy(alpha = 0.35f * fade), style = Stroke(t * 0.16f, cap = StrokeCap.Round))
+    drawPath(path, LIGHTNING_GLOW.copy(alpha = 0.8f * fade), style = Stroke(t * 0.06f, cap = StrokeCap.Round))
+    drawPath(path, Color.White.copy(alpha = fade), style = Stroke(t * 0.022f, cap = StrokeCap.Round))
+}
+
+private val LIGHTNING_GLOW = Color(0xFF9FE7FF)
 
 // ---------------------------------------------------------------- weather
 
