@@ -186,6 +186,21 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
         )
     }
 
+    // Shockwaves from skills spread along the ground.
+    for (w in g.waves) {
+        val k = (w.age / w.life).coerceIn(0f, 1f)
+        val ease = 1f - (1f - k) * (1f - k)
+        val rx = w.radius * t * (0.25f + 0.75f * ease)
+        val c = Offset(cam.sx(w.x), cam.sy(w.y))
+        val fade = 1f - k
+        drawOval(
+            Brush.radialGradient(listOf(Color.Transparent, w.color.copy(alpha = 0.22f * fade)), c, rx),
+            Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f),
+        )
+        drawOval(w.color.copy(alpha = 0.75f * fade), Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f), style = Stroke(t * 0.09f * fade + 1f))
+        drawOval(Color.White.copy(alpha = 0.5f * fade), Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f), style = Stroke(t * 0.025f * fade + 1f))
+    }
+
     // Billboards sorted by depth.
     val bbs = ArrayList<Billboard>(g.enemies.size + d.props.size + 2)
     bbs += PlayerBB(g.player.y)

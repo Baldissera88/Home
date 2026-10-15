@@ -149,6 +149,11 @@ enum class Skill(val label: String, val icon: String, val mana: Float, val coold
     CHAIN("Kædelyn", "⚡", 16f, 0.7f, Color(0xFF9FE7FF), { l -> "Et lyn springer mellem op til ${2 + l} fjender. ${110 + (l - 1) * 30}% skade." }),
 }
 
+/** An expanding shockwave ring on the ground. */
+class Wave(val x: Float, val y: Float, val radius: Float, val color: Color, val life: Float) {
+    var age = 0f
+}
+
 /** A jagged lightning segment that fades out quickly. */
 class Bolt(val x1: Float, val y1: Float, val x2: Float, val y2: Float, val seed: Int) {
     var age = 0f

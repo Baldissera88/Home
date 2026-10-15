@@ -95,6 +95,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     val corpses = mutableListOf<Corpse>()
     val ghosts = mutableListOf<Ghost>()
     val bolts = mutableListOf<Bolt>()
+    val waves = mutableListOf<Wave>()
     /** Smoothed camera centre in world tiles. */
     var camX = 0f
         private set
@@ -481,6 +482,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         }
         corpses.removeAll { it.age += dt; it.age > 1.2f }
         bolts.removeAll { it.age += dt; it.age > 0.28f }
+        waves.removeAll { it.age += dt; it.age > it.life }
         ghosts.removeAll { it.age += dt; it.age > 0.3f }
         if (dead || victory) return
         updatePlayer(dt)
@@ -1724,10 +1726,13 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     }
 
     private fun ring(x: Float, y: Float, r: Float, color: Color, count: Int, speed: Float) {
+        waves += Wave(x, y, r + speed * 0.4f, color, 0.42f)
         repeat(count) {
             if (particles.size >= 600) return
-            val a = it / count.toFloat() * 2f * PI.toFloat()
-            particles += Particle(x + cos(a) * r, y + sin(a) * r, cos(a) * speed, sin(a) * speed, color, 0.06f, 0.45f, glow = true)
+            val a = (it + rnd.nextFloat() * 0.9f) / count.toFloat() * 2f * PI.toFloat()
+            val s = speed * (0.6f + rnd.nextFloat() * 0.6f)
+            particles += Particle(x + cos(a) * r, y + sin(a) * r, cos(a) * s, sin(a) * s, color,
+                0.025f + rnd.nextFloat() * 0.035f, 0.3f + rnd.nextFloat() * 0.25f, glow = true, z = 0.1f + rnd.nextFloat() * 0.5f)
         }
     }
 
