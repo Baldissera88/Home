@@ -12,9 +12,11 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.shadows.ShadowChoreographer
 import org.robolectric.shadows.ShadowLooper
 import java.io.File
 import java.io.FileOutputStream
+import java.time.Duration
 import java.util.concurrent.TimeUnit
 
 /** Screenshots of the full screen (world + HUD + menus) through the real Compose UI. */
@@ -25,6 +27,8 @@ class UiScreenTest {
     private val outDir = File("build/screens").apply { mkdirs() }
 
     private fun shoot(name: String, overlay: Int, setup: (Game) -> Unit = {}) {
+        // Space frames like a real 60 Hz display so idling renders a handful of frames, not hundreds.
+        ShadowChoreographer.setFrameDelay(Duration.ofMillis(16))
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         val ctx = activity.applicationContext
         val sfx = Sfx(ctx)
@@ -40,7 +44,7 @@ class UiScreenTest {
                 RpgScreen(game, assets, music, sfx, settings, autoStart = overlay != -2, debugOverlay = if (overlay < 0) -1 else overlay)
             }
         }
-        repeat(6) { ShadowLooper.idleMainLooper(40, TimeUnit.MILLISECONDS) }
+        repeat(4) { ShadowLooper.idleMainLooper(20, TimeUnit.MILLISECONDS) }
         val root: View = activity.window.decorView
         val bmp = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
         root.draw(android.graphics.Canvas(bmp))
