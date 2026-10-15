@@ -35,11 +35,15 @@ DIRECTIONAL = {
     "spr_hero_staff": (lambda f: M.humanoid(f, M.HERO_STAFF), 128, 1.7, 0.86),
     "spr_bandit": (lambda f: M.humanoid(f, M.BANDIT), 128, 1.7, 0.86),
     "spr_wolf": (M.wolf, 128, 1.7, 0.8),
+    "spr_villager_f": (lambda f: M.humanoid(f, M.VILLAGER_F), 128, 1.7, 0.86),
+    "spr_villager_m": (lambda f: M.humanoid(f, M.VILLAGER_M), 128, 1.7, 0.86),
 }
 STRIPS = {
     "spr_slime": (M.slime, 96, 1.1, 0.82),
     "spr_bat": (M.bat, 96, 1.3, 0.9),
     "spr_merchant": (M.merchant, 128, 1.7, 0.86),
+    "spr_elder": (M.elder, 128, 1.7, 0.86),
+    "spr_smith": (lambda i: M.humanoid(M.FRAMES[[0, 5, 6, 7][i]], M.BLACKSMITH), 128, 1.7, 0.86),
 }
 
 
@@ -54,6 +58,8 @@ def _render_cell(job):
         return job, render(builder(a), cell, width, foot)
     if kind == "prop":
         return job, render(M.PROPS[a][1](), 128, 1.3, 0.8)
+    if kind == "village":
+        return job, render(M.VILLAGE[a][1](), 256, 4.4, 0.86)
     if kind == "world":
         return job, render(M.WORLD[a][1](), 160, 2.6, 0.88)
     if kind == "icon":
@@ -108,6 +114,8 @@ def main():
         jobs += [("icon", "icons", i, 0) for i in range(len(M.ICONS))]
     if not only or "world" in only:
         jobs += [("world", "world", i, 0) for i in range(len(M.WORLD))]
+    if not only or "village" in only:
+        jobs += [("village", "village", i, 0) for i in range(len(M.VILLAGE))]
 
     results = {}
     with Pool(os.cpu_count()) as pool:
@@ -142,6 +150,9 @@ def main():
     if not only or "world" in only:
         strip = np.concatenate([results[("world", "world", i, 0)] for i in range(len(M.WORLD))], axis=1)
         Image.fromarray(strip).save(f"{OUT}/spr_world.png", optimize=True)
+    if not only or "village" in only:
+        strip = np.concatenate([results[("village", "village", i, 0)] for i in range(len(M.VILLAGE))], axis=1)
+        Image.fromarray(strip).save(f"{OUT}/spr_village.png", optimize=True)
     print(f"done in {time.time() - start:.0f}s", flush=True)
 
 

@@ -97,6 +97,9 @@ private class PropBB(val p: Prop) : Billboard {
     override val y = p.y
 }
 private class MerchantBB(override val y: Float) : Billboard
+private class NpcBB(val n: Npc) : Billboard {
+    override val y = n.y
+}
 
 fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: TextStyles) {
     val cam = cameraFor(g)
@@ -182,6 +185,7 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
     for (e in g.enemies) if (e.y > y0 - 2 && e.y < y1 + 3) bbs += EnemyBB(e)
     for (p in d.props) if (p.y > y0 - 2 && p.y < y1 + 3) bbs += PropBB(p)
     if (d.hasMerchant) bbs += MerchantBB(g.merchantY)
+    for (n in d.npcs) if (n.y > y0 - 2 && n.y < y1 + 3) bbs += NpcBB(n)
     bbs.sortBy { it.y }
 
     // Contact shadows go under everything.
@@ -191,6 +195,7 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
             is EnemyBB -> Triple(b.e.x, b.e.y, b.e.type.radius * b.e.size * (if (b.e.type.boss) 1.4f else 1.1f))
             is PropBB -> Triple(b.p.x, b.p.y, if (b.p.type == PropType.SKULLS) 0f else 0.3f)
             is MerchantBB -> Triple(g.merchantX, g.merchantY, 0.3f)
+            is NpcBB -> Triple(b.n.x, b.n.y, 0.28f)
         }
         if (r <= 0f) continue
         val cx = cam.sx(sx)
@@ -210,12 +215,14 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
             is EnemyBB -> drawEnemy(b.e, g, cam, a, measurer, styles)
             is PropBB -> drawProp(b.p, g, cam, a)
             is MerchantBB -> drawMerchant(g, cam, a, measurer, styles)
+            is NpcBB -> drawNpc(b.n, g, cam, a, measurer, styles)
         }
     }
     for (y in y0..y1) {
         for (x in x0..x1) if (d.tile(x, y) == WALL) drawWallTile(d, x, y, cam, g.time, wallImg, topImg)
         while (bi < bbs.size && bbs[bi].y < y + 0.8f) drawBillboard(bbs[bi++])
         for (x in x0..x1) drawWorldTile(g, x, y, cam, a, measurer, styles)
+        for (b in d.buildings) if (b.y + b.h - 1 == y) drawBuilding(b, g, cam, a)
         while (bi < bbs.size && bbs[bi].y < y + 1f) drawBillboard(bbs[bi++])
     }
 
@@ -252,7 +259,11 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
         when {
             p.type == PropType.CAMPFIRE -> spill(p.x, p.y - 0.3f, t * 5f * flicker(g.time, 1f), Color(0x55FF8F00))
             p.type == PropType.SHRINE && !p.used -> spill(p.x, p.y - 0.6f, t * 1.8f, Color(0x4000E5FF))
+            p.type.light != 0L -> spill(p.x, p.y - 0.5f, t * 2.6f * flicker(g.time, p.x), Color(p.type.light))
         }
+    }
+    for (b in d.buildings) if (b.light != 0L) {
+        spill(b.x + b.w / 2f + b.lightX, b.y + b.h + b.lightY - 0.5f, t * 2.2f * flicker(g.time, b.x.toFloat()), Color(b.light))
     }
     for (pr in g.projectiles) spill(pr.x, pr.y, t * 2f, pr.color.copy(alpha = 0.3f))
     for (e in d.entrances) if (e.region == Region.HELL) spill(e.x + 0.5f, e.y + 0.2f, t * 3f * flicker(g.time, 5f), Color(0x55FF3D00))
@@ -444,6 +455,7 @@ private fun DrawScope.drawProp(p: Prop, g: Game, cam: Camera, a: Assets) {
             drawFlame(cx + t * 0.12f, cy, t * 0.38f, g.time * 1.1f, 7f)
             drawFlame(cx, cy + t * 0.02f, t * 0.55f, g.time * 0.9f, 11f)
         }
+        PropType.BRAZIER -> drawFlame(cx, cy - t * 0.66f, t * 0.32f, g.time, p.x * 3f)
         PropType.SHRINE -> if (!p.used) {
             val pulse = 0.5f + 0.5f * sin(g.time * 3f)
             val c = Offset(cx, cy - t * 0.85f)
@@ -557,6 +569,8 @@ fun DrawScope.drawLighting(g: Game) {
         }
     }
     if (d.hasMerchant) light(g.merchantX + 0.25f, g.merchantY - 0.4f, t * 3f, 0.8f)
+    for (pr in d.props) if (pr.type.light != 0L) light(pr.x, pr.y - 0.4f, t * 3.2f * flicker(g.time, pr.x), 0.85f)
+    for (b in d.buildings) if (b.light != 0L) light(b.x + b.w / 2f + b.lightX, b.y + b.h + b.lightY - 0.5f, t * 2.8f, 0.8f)
     for (l in g.loot) {
         val k = l.kind
         if (k is LootKind.Gear && k.item.rarity >= Rarity.RARE) light(l.x, l.y, t * 1.3f, 0.6f)
@@ -637,5 +651,40 @@ private fun DrawScope.drawWorldTile(g: Game, x: Int, y: Int, cam: Camera, a: Ass
             drawRoundRect(Color.Black.copy(alpha = 0.6f), Offset(lx - 6f, ly - 2f), Size(label.size.width + 12f, label.size.height + 4f), CornerRadius(6f))
             drawText(label, topLeft = Offset(lx, ly))
         }
+    }
+}
+
+private fun DrawScope.drawBuilding(b: Building, g: Game, cam: Camera, a: Assets) {
+    val t = cam.t
+    val cx = cam.sx(b.x + b.w / 2f)
+    if (cx < -t * 4 || cx > size.width + t * 4) return
+    val p = g.player
+    val behind = p.y < b.y + b.h - 0.1f && p.y > b.y - 2.6f && p.x > b.x - 0.4f && p.x < b.x + b.w + 0.4f
+    drawSprite(a.village, b.sprite, 0, cx, cam.sy((b.y + b.h).toFloat()), t, alpha = if (behind && b.w >= 2) 0.5f else 1f)
+}
+
+private fun DrawScope.drawNpc(n: Npc, g: Game, cam: Camera, a: Assets, measurer: TextMeasurer, styles: TextStyles) {
+    val t = cam.t
+    val cx = cam.sx(n.x)
+    val cy = cam.sy(n.y)
+    when (n.kind) {
+        NpcKind.SMITH -> drawSprite(a.smith, if (n.say != null) 0 else (n.anim * 5f).toInt() % 4, 0, cx, cy, t, scale = 1.3f)
+        NpcKind.ELDER -> drawSprite(a.elder, (n.anim * 1.5f).toInt() % 4, 0, cx, cy, t, scale = 1.3f)
+        NpcKind.VILLAGER_F, NpcKind.VILLAGER_M -> {
+            val sheet = if (n.kind == NpcKind.VILLAGER_F) a.villagerF else a.villagerM
+            val col = if (n.moving) 1 + (n.anim * 6f).toInt() % 4 else 0
+            drawSprite(sheet, col, dirRow(n.faceX, n.faceY), cx, cy, t, scale = 1.25f)
+        }
+    }
+    if (n.kind == NpcKind.SMITH || n.kind == NpcKind.ELDER) {
+        val label = n.label ?: measurer.measure(n.kind.title, styles.label.copy(color = GOLD)).also { n.label = it }
+        drawText(label, topLeft = Offset(cx - label.size.width / 2f, cy - t * 1.45f))
+    }
+    n.say?.let { text ->
+        val layout = measurer.measure(text, styles.label.copy(color = Color(0xFF2B1D14)), constraints = androidx.compose.ui.unit.Constraints(maxWidth = (t * 3.2f).toInt()))
+        val bx = cx - layout.size.width / 2f
+        val by = cy - t * 1.75f - layout.size.height
+        drawRoundRect(Color(0xF0F3E9D2), Offset(bx - 8f, by - 5f), Size(layout.size.width + 16f, layout.size.height + 10f), CornerRadius(10f))
+        drawText(layout, topLeft = Offset(bx, by))
     }
 }

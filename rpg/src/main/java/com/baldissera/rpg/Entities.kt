@@ -292,8 +292,18 @@ class Loot(var x: Float, var y: Float, val kind: LootKind) {
     var label: TextLayoutResult? = null
 }
 
-/** [sprite]/[brokenSprite] index the props sheet, or the world sheet when [world] is set. */
-enum class PropType(val sprite: Int, val brokenSprite: Int, val solid: Boolean, val breakable: Boolean, val world: Boolean = false) {
+/**
+ * [sprite]/[brokenSprite] index the props sheet, or the world sheet when [world] is set.
+ * [light] is the colour of light the prop gives off, if any.
+ */
+enum class PropType(
+    val sprite: Int,
+    val brokenSprite: Int,
+    val solid: Boolean,
+    val breakable: Boolean,
+    val world: Boolean = false,
+    val light: Long = 0,
+) {
     BARREL(0, 1, true, true),
     URN(2, 3, true, true),
     CHEST(4, 5, true, false),
@@ -304,6 +314,53 @@ enum class PropType(val sprite: Int, val brokenSprite: Int, val solid: Boolean, 
     GRAVESTONE(10, 10, true, false),
     PILLAR(9, 9, true, false, world = true),
     SIGN(13, 13, true, false, world = true),
+    BRAZIER(11, 11, true, false, light = 0x66FF9A3C),
+    COLUMN(12, 12, true, false),
+    SARCOPHAGUS(13, 13, true, false),
+    BOOKSHELF(14, 14, true, false),
+    WEAPON_RACK(15, 15, true, false),
+    BANNER(16, 16, true, false),
+    STALAGMITES(17, 17, true, false),
+    CRYSTALS(18, 18, true, false, light = 0x5540C4FF),
+    MUSHROOMS(19, 19, false, false, light = 0x4466E0FF),
+    OBSIDIAN(20, 20, true, false, light = 0x44FF5722),
+    BONEPILE(21, 21, false, false),
+    CAGE(22, 22, true, false),
+    TABLE(23, 23, true, false, light = 0x44FFC46B),
+    ALTAR(24, 24, true, false, light = 0x55FF1744),
+}
+
+/** A building or large fixture from the village sheet occupying a block of tiles. */
+class Building(val sprite: Int, val x: Int, val y: Int, val w: Int, val h: Int, val light: Long = 0, val lightX: Float = 0.5f, val lightY: Float = 0.5f)
+
+enum class NpcKind(val title: String) {
+    SMITH("Smeden"), ELDER("Den Ældste"), VILLAGER_F("Landsbykvinde"), VILLAGER_M("Bonde"),
+}
+
+class Npc(val kind: NpcKind, override var x: Float, override var y: Float) : Body {
+    var tx = x
+    var ty = y
+    var faceX = 0f
+    var faceY = 1f
+    var moving = false
+    var wait = 0f
+    var anim = Random.nextFloat() * 4f
+    var say: String? = null
+    var sayTime = 0f
+    var label: TextLayoutResult? = null
+}
+
+/** A kill contract from the village elder. */
+class Bounty(val type: EnemyType, val need: Int, var got: Int, val gold: Int, val rarity: Rarity) {
+    val done: Boolean get() = got >= need
+    fun toJson(): JSONObject = JSONObject().put("type", type.name).put("need", need).put("got", got).put("gold", gold).put("rarity", rarity.name)
+
+    companion object {
+        fun fromJson(o: JSONObject?): Bounty? = runCatching {
+            o!!
+            Bounty(EnemyType.valueOf(o.getString("type")), o.getInt("need"), o.getInt("got"), o.getInt("gold"), Rarity.valueOf(o.getString("rarity")))
+        }.getOrNull()
+    }
 }
 
 class Prop(val type: PropType, val x: Float, val y: Float) {

@@ -14,6 +14,8 @@ const val TREE = 3
 const val ROCK = 4
 const val WATER = 5
 const val ENTRANCE = 6
+/** Occupied by a building; not walkable, draws ground underneath. */
+const val BLOCK = 7
 
 /** Cells in the overworld ground texture strip. */
 object Ground {
@@ -84,6 +86,8 @@ class Dungeon(
     val village: Room? = null,
     val merchantX: Float = 0f,
     val merchantY: Float = 0f,
+    val buildings: List<Building> = emptyList(),
+    val npcs: MutableList<Npc> = mutableListOf(),
 ) {
     fun tile(x: Int, y: Int): Int = if (x < 0 || y < 0 || x >= w || y >= h) WALL else tiles[y * w + x]
     fun walkable(x: Int, y: Int): Boolean {
@@ -180,9 +184,78 @@ class Dungeon(
                 if (rnd.nextFloat() < 0.22f) freeSpot(r)?.let { (px, py) -> props += Prop(PropType.CHEST, px, py) }
                 if (rnd.nextFloat() < 0.12f) freeSpot(r)?.let { (px, py) -> props += Prop(PropType.SHRINE, px, py) }
             }
+            for (r in rooms) decorate(r, biome, tiles, w, props, rnd, r === start, r === exit)
 
             val variant = FloatArray(w * h) { rnd.nextFloat() }
             return Dungeon(biome, w, h, tiles, rooms, start, exit, torches, variant, props)
+        }
+
+        /**
+         * Gives a room a theme: tombs, chapels, libraries and armouries in the crypt, crystal grottos in the caves,
+         * altars and obsidian in hell. Solid pieces stay off the centre lines where corridors enter.
+         */
+        private fun decorate(r: Room, biome: Biome, tiles: IntArray, w: Int, props: MutableList<Prop>, rnd: Random, isStart: Boolean, isExit: Boolean) {
+            fun free(x: Int, y: Int, solid: Boolean): Boolean {
+                if (x < r.x || y < r.y || x >= r.x + r.w || y >= r.y + r.h) return false
+                if (tiles[y * w + x] != FLOOR) return false
+                if (solid && (x == r.cx || x == r.cx + 1 || x == r.cx - 1 || y == r.cy || y == r.cy + 1 || y == r.cy - 1)) return false
+                return props.none { abs(it.x - x - 0.5f) < 0.9f && abs(it.y - y - 0.5f) < 0.9f }
+            }
+            fun put(t: PropType, x: Int, y: Int) {
+                if (free(x, y, t.solid)) props += Prop(t, x + 0.5f, y + 0.5f)
+            }
+            val top = r.y
+            val left = r.x
+            val right = r.x + r.w - 1
+            val bottom = r.y + r.h - 1
+            fun corners(t: PropType) {
+                put(t, left + 1, top + 1); put(t, right - 1, top + 1); put(t, left + 1, bottom - 1); put(t, right - 1, bottom - 1)
+            }
+            fun alongTop(t: PropType, step: Int) {
+                var x = left + 1
+                while (x <= right - 1) { put(t, x, top); x += step }
+            }
+            when (biome) {
+                Biome.CRYPT -> when (if (isStart) 4 else if (isExit) 1 else rnd.nextInt(5)) {
+                    0 -> { // tomb
+                        var x = left + 1
+                        while (x < right) { put(PropType.SARCOPHAGUS, x, top + 1); put(PropType.SARCOPHAGUS, x, bottom - 1); x += 2 }
+                        put(PropType.TABLE, left, r.cy + 2)
+                    }
+                    1 -> { // chapel
+                        put(PropType.ALTAR, r.cx, top)
+                        put(PropType.BANNER, r.cx - 2, top); put(PropType.BANNER, r.cx + 2, top)
+                        corners(PropType.BRAZIER)
+                        var y = top + 2
+                        while (y < bottom) { put(PropType.COLUMN, left + 1, y); put(PropType.COLUMN, right - 1, y); y += 2 }
+                    }
+                    2 -> { // library
+                        alongTop(PropType.BOOKSHELF, 1)
+                        put(PropType.TABLE, r.cx + 2, r.cy + 2); put(PropType.BRAZIER, left, bottom)
+                    }
+                    3 -> { // armoury
+                        alongTop(PropType.WEAPON_RACK, 2)
+                        put(PropType.BARREL, left, bottom); put(PropType.CRATE, right, bottom); put(PropType.BANNER, left, top + 2)
+                    }
+                    else -> { corners(PropType.BRAZIER); put(PropType.BONEPILE, r.cx + 2, r.cy + 2) }
+                }
+                Biome.CAVE -> {
+                    repeat(r.w * r.h / 9) {
+                        val t = listOf(PropType.STALAGMITES, PropType.STALAGMITES, PropType.CRYSTALS, PropType.MUSHROOMS, PropType.BONEPILE).random(rnd)
+                        put(t, left + rnd.nextInt(r.w), top + rnd.nextInt(r.h))
+                    }
+                    if (rnd.nextFloat() < 0.25f) put(PropType.CAGE, right - 1, top + 1)
+                }
+                Biome.HELL -> {
+                    corners(PropType.BRAZIER)
+                    repeat(r.w * r.h / 12) {
+                        val t = listOf(PropType.OBSIDIAN, PropType.OBSIDIAN, PropType.BONEPILE, PropType.CAGE).random(rnd)
+                        put(t, left + rnd.nextInt(r.w), top + rnd.nextInt(r.h))
+                    }
+                    if (isExit || rnd.nextFloat() < 0.3f) { put(PropType.ALTAR, r.cx, top); put(PropType.BANNER, r.cx - 2, top); put(PropType.BANNER, r.cx + 2, top) }
+                }
+                Biome.OVERWORLD -> {}
+            }
         }
 
         /** Tileable smooth value noise in 0..1 over a w*h grid. */
@@ -317,13 +390,39 @@ class Dungeon(
             val props = mutableListOf(
                 Prop(PropType.CAMPFIRE, cx + 0.5f, cy + 0.5f),
                 Prop(PropType.SHRINE, vx + 2.5f, vy + vh - 2.5f),
-                Prop(PropType.GRAVESTONE, vx + 1.5f, vy + 1.5f), Prop(PropType.GRAVESTONE, vx + 3.5f, vy + 1.5f),
-                Prop(PropType.GRAVESTONE, vx + 1.5f, vy + 3.5f),
-                Prop(PropType.CRATE, vx + vw - 2.5f, vy + 1.5f), Prop(PropType.BARREL, vx + vw - 3.5f, vy + 1.5f),
-                Prop(PropType.BARREL, vx + vw - 2.5f, vy + 2.7f),
+                Prop(PropType.CRATE, vx + vw - 6.5f, vy + vh - 1.5f), Prop(PropType.BARREL, vx + vw - 5.5f, vy + vh - 1.5f),
+                Prop(PropType.BARREL, vx + vw - 1.5f, vy + 5.5f), Prop(PropType.CRATE, vx + vw - 1.5f, vy + 4.5f),
                 Prop(PropType.SIGN, vx + vw / 2 + 1.8f, vy - 2.5f),
+                Prop(PropType.GRAVESTONE, vx - 5.5f, vy - 4.5f), Prop(PropType.GRAVESTONE, vx - 3.5f, vy - 4.5f),
+                Prop(PropType.GRAVESTONE, vx - 5.5f, vy - 2.5f), Prop(PropType.SKULLS, vx - 4.5f, vy - 3f),
             )
-            props.forEach { it.used = false }
+            for (p in props) {
+                val i = idx(floorInt(p.x), floorInt(p.y))
+                tiles[i] = FLOOR
+            }
+
+            // Houses, smithy, well and market. Footprints become BLOCK tiles.
+            val buildings = listOf(
+                Building(0, vx + 1, vy + 1, 3, 2, light = 0x66FFB74D, lightX = -0.9f, lightY = 0.9f),
+                Building(1, vx + vw - 4, vy + 1, 3, 2, light = 0x66FFB74D, lightX = 0.7f, lightY = 0.9f),
+                Building(2, vx + vw - 4, vy + 8, 3, 2, light = 0x88FF6D00, lightX = -0.8f, lightY = 0.2f),
+                Building(0, vx + 1, vy + 8, 3, 2, light = 0x66FFB74D, lightX = -0.9f, lightY = 0.9f),
+                Building(3, vx + 5, vy + 4, 1, 1),
+                Building(4, vx + 10, vy + 4, 2, 1),
+                Building(5, vx + 1, vy + vh - 2, 2, 1),
+                Building(6, vx + 4, vy + 6, 1, 1, light = 0x88FFC46B, lightX = 0.25f, lightY = -1.2f),
+                Building(6, vx + 12, vy + 7, 1, 1, light = 0x88FFC46B, lightX = 0.25f, lightY = -1.2f),
+                Building(6, vx + vw / 2 - 2, vy, 1, 1, light = 0x88FFC46B, lightX = 0.25f, lightY = -1.2f),
+                Building(7, vx + vw - 2, vy + vh - 2, 1, 1),
+                Building(8, vx + 6, vy + vh - 2, 1, 1),
+            )
+            for (b in buildings) for (yy in b.y until b.y + b.h) for (xx in b.x until b.x + b.w) tiles[idx(xx, yy)] = BLOCK
+
+            val npcs = mutableListOf(
+                Npc(NpcKind.SMITH, vx + vw - 2.5f, vy + 10.6f),
+                Npc(NpcKind.ELDER, vx + 6.5f, vy + 3.6f),
+            )
+            repeat(4) { k -> npcs += Npc(if (k % 2 == 0) NpcKind.VILLAGER_F else NpcKind.VILLAGER_M, cx - 3f + k * 2f, cy + 2.5f) }
 
             // Ruins, treasure and shrines out in the wild.
             fun wildSpot(minDist: Float): Pair<Float, Float>? {
@@ -354,7 +453,7 @@ class Dungeon(
             return Dungeon(
                 Biome.OVERWORLD, w, h, tiles, listOf(village), start, exit, emptyList(), variant, props,
                 ground = ground, entrances = entrances, village = village,
-                merchantX = cx + 3.5f, merchantY = cy - 0.5f,
+                merchantX = vx + 10.5f, merchantY = vy + 5.6f, buildings = buildings, npcs = npcs,
             )
         }
     }

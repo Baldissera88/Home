@@ -60,6 +60,13 @@ private val mythicNames = mapOf(
 private val prefixes = listOf("Dragens", "Skyggernes", "Kongens", "Ulvens", "Stormens", "Blodets", "Ravnens", "Isens", "Ildens", "Jættens")
 private val suffixes = listOf("af Asgård", "af Nordlyset", "af Midgård", "fra Udgård", "af Valhal", "fra Niflheim", "af Muspelheim")
 
+private val villagerLines = listOf(
+    "Pas på ulvene ved søen!", "Godt at se dig, helt.", "Smeden kan gøre dit våben stærkere.",
+    "Den Ældste har arbejde til dig.", "Krypten er fuld af skeletter…", "Jeg hørte en trold i skoven mod sydøst.",
+    "Købmanden har nye varer.", "Om natten kommer der flere monstre.", "Har du set Helvedes port mod syd?",
+    "Min mand gik ned i hulerne og kom aldrig hjem.",
+)
+
 val QUESTS = listOf(
     "Rens Krypten" to "Besejr Knoglekongen på dybde 3 (Krypten, nordvest for landsbyen)",
     "Hulernes dronning" to "Besejr Edderkoppedronningen på dybde 6 (Hulerne, mod øst)",
@@ -90,6 +97,10 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         private set
     private var hitStop = 0f
     val stock = mutableListOf<Item>()
+    /** The elder's current offers and the accepted contract. */
+    val bountyOffers = mutableListOf<Bounty>()
+    var bounty: Bounty? = null
+        private set
     var explored = BooleanArray(dungeon.w * dungeon.h)
         private set
     var floor = 0
@@ -128,6 +139,9 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     val merchantY: Float get() = dungeon.merchantY
     val boss: Enemy? get() = enemies.firstOrNull { it.type.boss }
     val nearMerchant: Boolean get() = dungeon.hasMerchant && hypot(player.x - merchantX, player.y - merchantY) < 1.6f
+    val nearNpc: Npc? get() = dungeon.npcs.firstOrNull {
+        (it.kind == NpcKind.SMITH || it.kind == NpcKind.ELDER) && hypot(player.x - it.x, player.y - it.y) < 1.7f
+    }
     val areaTitle: String get() = when {
         inVillage -> "Landsbyen"
         inWorld -> "Landet — område ${zoneLevel(player.x, player.y)}"
@@ -181,6 +195,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             player.hp = player.maxHp
             player.mana = player.maxMana
             restock()
+            if (bountyOffers.isEmpty()) rollBounties()
             populateWorld()
             showMessage("Landsbyen — et øjebliks fred", Color(0xFFFFE0A3))
         } else {
@@ -278,6 +293,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         o.put("equipment", eq)
         o.put("inventory", JSONArray().apply { player.inventory.forEach { put(it.toJson()) } })
         o.put("skills", JSONObject().apply { player.skills.forEach { (s, l) -> put(s.name, l) } })
+        bounty?.let { o.put("bounty", it.toJson()) }
         prefs.edit().putString("save3", o.toString()).apply()
     }
 
@@ -300,6 +316,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             player.inventory.clear()
             val inv = o.optJSONArray("inventory")
             if (inv != null) for (i in 0 until inv.length()) Item.fromJson(inv.optJSONObject(i))?.let { player.inventory += it }
+            bounty = Bounty.fromJson(o.optJSONObject("bounty"))
             val sk = o.optJSONObject("skills")
             Skill.entries.forEach { s -> if (sk != null && sk.has(s.name)) player.skills[s] = sk.getInt(s.name) }
             player.hp = player.maxHp
@@ -332,6 +349,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         deepest = 0
         questStage = 0
         victory = false
+        bounty = null
+        bountyOffers.clear()
         worldSeed = System.nanoTime()
     }
 
@@ -410,6 +429,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         ghosts.removeAll { it.age += dt; it.age > 0.3f }
         if (dead || victory) return
         updatePlayer(dt)
+        updateNpcs(dt)
         updateEnemies(dt)
         updateProjectiles(dt)
         updateLoot()
@@ -467,6 +487,59 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             pushFrom(b, r, pr.x, pr.y, 0.3f)
         }
         if (dungeon.hasMerchant) pushFrom(b, r, merchantX, merchantY, 0.3f)
+        for (n in dungeon.npcs) if (n !== b) pushFrom(b, r, n.x, n.y, 0.25f)
+    }
+
+    private fun updateNpcs(dt: Float) {
+        val v = dungeon.village ?: return
+        for (n in dungeon.npcs) {
+            n.anim += dt
+            if (n.sayTime > 0f) {
+                n.sayTime -= dt
+                if (n.sayTime <= 0f) n.say = null
+            }
+            val dp = hypot(player.x - n.x, player.y - n.y).coerceAtLeast(0.01f)
+            if (n.kind == NpcKind.VILLAGER_F || n.kind == NpcKind.VILLAGER_M) {
+                if (n.wait > 0f) {
+                    n.wait -= dt
+                    n.moving = false
+                } else {
+                    val dx = n.tx - n.x
+                    val dy = n.ty - n.y
+                    val d = hypot(dx, dy)
+                    if (d < 0.2f) {
+                        n.wait = 2f + rnd.nextFloat() * 4f
+                        repeat(10) {
+                            val tx = v.x + 1 + rnd.nextFloat() * (v.w - 2)
+                            val ty = v.y + 1 + rnd.nextFloat() * (v.h - 2)
+                            if (dungeon.walkableAt(tx, ty)) {
+                                n.tx = tx
+                                n.ty = ty
+                                return@repeat
+                            }
+                        }
+                    } else {
+                        val ox = n.x
+                        val oy = n.y
+                        move(n, dx / d * 1.1f * dt, dy / d * 1.1f * dt, 0.25f)
+                        n.faceX = dx / d
+                        n.faceY = dy / d
+                        n.moving = true
+                        if (hypot(n.x - ox, n.y - oy) < 0.0005f) n.wait = 0.5f.also { n.tx = n.x; n.ty = n.y }
+                    }
+                }
+                if (dp < 2.2f && n.say == null && rnd.nextFloat() < dt * 0.4f) {
+                    n.say = villagerLines.random(rnd)
+                    n.sayTime = 3.5f
+                    n.wait = max(n.wait, 2f)
+                    n.faceX = (player.x - n.x) / dp
+                    n.faceY = (player.y - n.y) / dp
+                }
+            } else if (dp < 3f && n.say == null && rnd.nextFloat() < dt * 0.25f) {
+                n.say = if (n.kind == NpcKind.SMITH) "Brug for skarpere stål?" else if (bounty?.done == true) "Du har gjort det! Kom og hent din løn." else "Jeg har en opgave til dig, eventyrer."
+                n.sayTime = 3f
+            }
+        }
     }
 
     private fun pushFrom(b: Body, r: Float, ox: Float, oy: Float, otherR: Float) {
@@ -786,6 +859,104 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         return item
     }
 
+    // ---------------------------------------------------------------- blacksmith
+
+    fun reforgePrice(item: Item) = 40 + item.level * 15 * (item.rarity.ordinal + 1)
+    fun upgradePrice(item: Item) = 70 + item.level * 25 * (item.rarity.ordinal + 1)
+    fun canUpgrade(item: Item) = item.level < max(1, deepest) + 12
+
+    /** New random stats, same slot, rarity, level, look and name. */
+    fun reforge(item: Item): Item? {
+        val price = reforgePrice(item)
+        if (player.gold < price) return null
+        player.gold -= price
+        val fresh = makeItem(item.level, item.rarity, false, slot = item.slot, exact = true, keepIcon = item.icon, keepName = item.name)
+        replace(item, fresh)
+        sfx.equip()
+        save()
+        return fresh
+    }
+
+    /** Raises the item level by two and strengthens every stat by 15%. */
+    fun upgrade(item: Item): Item? {
+        val price = upgradePrice(item)
+        if (player.gold < price || !canUpgrade(item)) return null
+        player.gold -= price
+        fun up(v: Int) = if (v == 0) 0 else maxOf(v + 1, (v * 1.15f).roundToInt())
+        val better = Item(
+            item.slot, item.name, item.rarity, item.icon, item.level + 2,
+            up(item.damage), up(item.armor), up(item.life), up(item.crit).coerceAtMost(25), up(item.mana),
+            up(item.lifeSteal).coerceAtMost(12), up(item.speed).coerceAtMost(25), up(item.spell).coerceAtMost(120),
+            up(item.atkSpeed).coerceAtMost(35), up(item.goldFind).coerceAtMost(150), item.power,
+        )
+        replace(item, better)
+        sfx.levelUp()
+        save()
+        return better
+    }
+
+    private fun replace(old: Item, new: Item) {
+        val p = player
+        if (p.equipment[old.slot] === old) {
+            p.equipment[old.slot] = new
+            p.hp = min(p.hp, p.maxHp)
+        } else {
+            val i = p.inventory.indexOf(old)
+            if (i >= 0) p.inventory[i] = new
+        }
+    }
+
+    // ---------------------------------------------------------------- elder
+
+    private fun rollBounties() {
+        bountyOffers.clear()
+        val pool = buildList {
+            addAll(listOf(EnemyType.WOLF, EnemyType.BANDIT, EnemyType.SLIME, EnemyType.SKELETON))
+            if (questStage >= 1 || deepest >= 3) addAll(listOf(EnemyType.SPIDER, EnemyType.CULTIST, EnemyType.BRUTE))
+            if (questStage >= 2) add(EnemyType.BAT)
+        }.shuffled(rnd).take(3)
+        for (t in pool) {
+            val need = when (t) {
+                EnemyType.BRUTE -> rnd.nextInt(4, 8)
+                EnemyType.CULTIST -> rnd.nextInt(6, 11)
+                else -> rnd.nextInt(10, 21)
+            }
+            val lvl = max(1, max(deepest, player.level / 2))
+            val rarity = if (rnd.nextFloat() < 0.2f) Rarity.EPIC else Rarity.RARE
+            bountyOffers += Bounty(t, need, 0, need * (15 + lvl * 6), rarity)
+        }
+    }
+
+    fun acceptBounty(b: Bounty) {
+        if (bounty != null) return
+        bounty = b
+        bountyOffers.remove(b)
+        sfx.equip()
+        showMessage("Dusør: dræb ${b.need} ${b.type.label.lowercase()}", GOLD)
+        save()
+    }
+
+    fun abandonBounty() {
+        bounty = null
+        rollBounties()
+        save()
+    }
+
+    /** Pays out a finished contract. Returns the reward item, if any. */
+    fun claimBounty(): Item? {
+        val b = bounty ?: return null
+        if (!b.done) return null
+        player.gold += b.gold
+        val item = makeItem(max(1, deepest) + player.level / 2 + 1, b.rarity, false)
+        if (player.inventory.size < INVENTORY_SIZE) player.inventory += item else loot += Loot(player.x, player.y + 0.6f, LootKind.Gear(item))
+        bounty = null
+        rollBounties()
+        sfx.levelUp()
+        ring(player.x, player.y, 0.3f, GOLD, 40, 4f)
+        save()
+        return item
+    }
+
     fun learn(skill: Skill) {
         val p = player
         val lvl = p.skills[skill] ?: 0
@@ -925,6 +1096,13 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         burst(e.x, e.y, bloodColor(e.type), 20)
         if (bleeds(e.type)) addDecal(e.x, e.y, rnd.nextInt(4), 0.9f * e.size * (if (e.type.boss) 2f else 1f))
         if (player.has(Power.VAMPIRE)) player.hp = min(player.maxHp, player.hp + player.maxHp * 0.05f)
+        bounty?.let { b ->
+            if (b.type == e.type && !b.done) {
+                b.got++
+                if (b.done) showMessage("Dusør fuldført! Gå til Den Ældste i landsbyen", GOLD)
+                else texts += FloatText(player.x, player.y - 1.8f, "${b.got}/${b.need} ${b.type.label.lowercase()}", GOLD)
+            }
+        }
         gainXp(e.xp)
         dropLoot(e)
         if (e.type.boss) {
@@ -1000,7 +1178,10 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
      * Rolls an item. Rarity: normal 50%, magic 30%, rare 13%, epic 5%, legendary 1.7%, mythic 0.3%
      * (bosses roll much better). With [exact] the given rarity is used as is.
      */
-    fun makeItem(level: Int, minRarity: Rarity, bossDrop: Boolean, slot: Slot? = null, exact: Boolean = false): Item {
+    fun makeItem(
+        level: Int, minRarity: Rarity, bossDrop: Boolean, slot: Slot? = null, exact: Boolean = false,
+        keepIcon: Int? = null, keepName: String? = null,
+    ): Item {
         val roll = rnd.nextFloat()
         var rarity = if (exact) minRarity else when {
             roll < (if (bossDrop) 0.04f else 0.003f) -> Rarity.MYTHIC
@@ -1012,8 +1193,10 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         }
         if (rarity < minRarity) rarity = minRarity
         val s = slot ?: Slot.entries.random(rnd)
-        val (base, icon) = bases.getValue(s).random(rnd)
-        val name = when (rarity) {
+        val picked = bases.getValue(s).random(rnd)
+        val base = picked.first
+        val icon = keepIcon ?: picked.second
+        val name = keepName ?: when (rarity) {
             Rarity.MYTHIC -> mythicNames.getValue(s).random(rnd)
             Rarity.LEGENDARY -> legendaryNames.getValue(s).random(rnd)
             Rarity.EPIC -> "${prefixes.random(rnd)} ${base.lowercase()} ${suffixes.random(rnd)}"

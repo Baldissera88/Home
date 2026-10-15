@@ -150,6 +150,38 @@ class GameRenderTest {
         g.player.y = g.merchantY + 1.5f
         step(g, 5)
         render(g, a, "10_merchant")
+
+        g.time = 175f
+        g.player.x = g.dungeon.village!!.x + 5.5f
+        g.player.y = g.dungeon.village!!.y + 8.5f
+        step(g, 5)
+        render(g, a, "11_village_night")
+
+        // A themed crypt room: find a room with a sarcophagus or altar.
+        g.time = 0f
+        for (attempt in 0 until 10) {
+            g.enterFloor(2)
+            val deco = g.dungeon.props.firstOrNull { it.type == PropType.ALTAR || it.type == PropType.SARCOPHAGUS || it.type == PropType.BOOKSHELF }
+            if (deco != null) {
+                g.enemies.clear()
+                g.player.x = deco.x
+                g.player.y = deco.y + 2.5f
+                if (!g.dungeon.walkableAt(g.player.x, g.player.y)) g.player.y = deco.y + 1.5f
+                break
+            }
+        }
+        step(g, 30)
+        render(g, a, "12_crypt_room")
+
+        g.enterFloor(4)
+        val crystal = g.dungeon.props.firstOrNull { it.type == PropType.CRYSTALS || it.type == PropType.MUSHROOMS }
+        if (crystal != null) {
+            g.enemies.clear()
+            g.player.x = crystal.x + 1.2f
+            g.player.y = crystal.y + 1.5f
+        }
+        step(g, 30)
+        render(g, a, "13_cave_grotto")
     }
 
     @Test
@@ -184,6 +216,20 @@ class GameRenderTest {
             g.sellJunk()
             g.player.inventory.toList().forEach { g.sell(it) }
         }
+        // Blacksmith and elder services.
+        g.enterFloor(0)
+        val item = g.makeItem(5, Rarity.RARE, false)
+        g.player.inventory += item
+        val reforged = g.reforge(item)!!
+        check(reforged.rarity == Rarity.RARE && reforged.slot == item.slot)
+        var up = reforged
+        repeat(4) { up = g.upgrade(up) ?: up }
+        check(up.level > item.level)
+        val offer = g.bountyOffers.first()
+        g.acceptBounty(offer)
+        val b = g.bounty!!
+        b.got = b.need
+        check(g.claimBounty() != null)
         g.save()
     }
 

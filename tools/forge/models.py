@@ -980,3 +980,354 @@ def icon_scroll():
 
 ICONS += [("dagger", icon_dagger), ("spear", icon_spear), ("staff", icon_staff), ("shield", icon_shield),
           ("gloves", icon_gloves), ("hood", icon_hood), ("leather", icon_leather), ("scroll", icon_scroll)]
+
+
+# ================================================================ v4: dungeon decor, village, villagers
+
+
+def prop_brazier():
+    out = [capsule(v(0, 0.0, 0), v(0, 0.55, 0), 0.03, "darksteel")]
+    for k in range(3):
+        a = k * 2 * math.pi / 3
+        out.append(capsule(v(math.cos(a) * 0.22, 0.0, math.sin(a) * 0.22), v(0, 0.45, 0), 0.025, "darksteel"))
+    out += [cylinder(v(0, 0.6, 0), 0.22, 0.07, "darksteel", rnd=0.02), cylinder(v(0, 0.66, 0), 0.18, 0.03, "coal"),
+            torus(v(0, 0.67, 0), 0.21, 0.02, "rust")]
+    return out
+
+
+def prop_column():
+    return [box(v(0, 0.08, 0), v(0.28, 0.08, 0.28), "stone", rnd=0.02), cylinder(v(0, 0.9, 0), 0.18, 0.78, "stone", rnd=0.02),
+            box(v(0, 1.7, 0), v(0.27, 0.07, 0.27), "stone", rnd=0.02), torus(v(0, 0.2, 0), 0.19, 0.03, "stone"),
+            torus(v(0, 1.6, 0), 0.19, 0.03, "stone"), ellipsoid(v(0.1, 0.5, 0.16), v(0.08, 0.2, 0.03), "moss")]
+
+
+def prop_sarcophagus():
+    return [box(v(0, 0.22, 0), v(0.28, 0.22, 0.55), "stone", rnd=0.03), box(v(0, 0.47, 0), v(0.3, 0.05, 0.57), "darkstone", rnd=0.02),
+            ellipsoid(v(0, 0.53, -0.32), v(0.1, 0.05, 0.1), "stone"), box(v(0, 0.52, 0.05), v(0.1, 0.03, 0.28), "stone", rnd=0.02),
+            box(v(0, 0.55, 0.0), v(0.025, 0.02, 0.18), "gold"), box(v(0, 0.55, 0.0), v(0.1, 0.02, 0.025), "gold")]
+
+
+def prop_bookshelf():
+    out = [box(v(0, 0.55, 0), v(0.45, 0.55, 0.14), "darkwood", rnd=0.01), box(v(0, 0.55, 0.06), v(0.4, 0.5, 0.1), "black", op="sub")]
+    mats = ["book_red", "book_blue", "book_green", "leather", "book_red", "parchment"]
+    for row, y in enumerate([0.22, 0.55, 0.88]):
+        out.append(box(v(0, y - 0.13, 0.02), v(0.41, 0.015, 0.11), "darkwood"))
+        x = -0.38
+        k = row
+        while x < 0.36:
+            w = 0.035 + 0.02 * ((k * 7) % 3) / 2
+            h = 0.11 + 0.02 * ((k * 5) % 3)
+            out.append(box(v(x + w, y - 0.12 + h, 0.03), v(w * 0.9, h, 0.08), mats[k % len(mats)], rnd=0.005))
+            x += w * 2 + 0.006
+            k += 1
+    return out
+
+
+def prop_weapon_rack():
+    out = [box(v(0, 0.06, 0), v(0.42, 0.04, 0.12), "darkwood", rnd=0.01), box(v(0, 0.7, -0.05), v(0.42, 0.03, 0.03), "darkwood"),
+           box(v(-0.42, 0.4, -0.05), v(0.03, 0.4, 0.03), "darkwood"), box(v(0.42, 0.4, -0.05), v(0.03, 0.4, 0.03), "darkwood")]
+    out += blade(v(-0.22, 0.12, 0.0), v(0, 1, -0.1), 0.6, 0.025)
+    out += [capsule(v(0.0, 0.1, 0.0), v(0.02, 0.95, -0.07), 0.015, "wood"), capsule(v(0.02, 0.95, -0.07), v(0.02, 1.08, -0.08), 0.03, "steel", rb=0.002)]
+    out += [capsule(v(0.24, 0.1, 0.0), v(0.24, 0.78, -0.05), 0.017, "wood"), ellipsoid(v(0.3, 0.72, -0.05), v(0.08, 0.06, 0.012), "steel")]
+    return out
+
+
+def prop_banner():
+    return [capsule(v(0, 0, 0), v(0, 1.35, 0), 0.025, "darkwood"), capsule(v(-0.25, 1.3, 0), v(0.25, 1.3, 0), 0.02, "darkwood"),
+            box(v(0, 0.95, 0.01), v(0.23, 0.35, 0.01), "cloth_red", rnd=0.005), box(v(0, 0.6, 0.01), v(0.23, 0.04, 0.01), "cloth_red", rot=rot_z(0.0)),
+            octa(v(0, 1.0, 0.03), 0.09, "gold"), sphere(v(0, 1.38, 0), 0.04, "gold"),
+            box(v(0, 0.04, 0), v(0.18, 0.04, 0.18), "darkstone", rnd=0.01)]
+
+
+def prop_stalagmites():
+    out = []
+    for k, (x, z, h, r) in enumerate([(0, 0, 0.9, 0.16), (0.22, 0.1, 0.55, 0.11), (-0.2, 0.08, 0.6, 0.12), (0.08, -0.18, 0.45, 0.1)]):
+        out.append(capsule(v(x, 0, z), v(x * 1.1, h, z), r, "stone" if k % 2 else "darkstone", rb=0.01, op="smooth", k=0.05))
+    return out
+
+
+def prop_crystals():
+    out = [ellipsoid(v(0, 0.06, 0), v(0.3, 0.08, 0.25), "darkstone")]
+    for k, (x, z, h, a) in enumerate([(0, 0, 0.75, 0.0), (0.16, 0.08, 0.45, 0.4), (-0.15, 0.05, 0.5, -0.4), (0.05, -0.15, 0.4, 0.2)]):
+        d = norm(v(math.sin(a), 1, 0.1 * k))
+        out.append(capsule(v(x, 0.05, z), v(x, 0.05, z) + d * h, 0.07, "crystal", rb=0.005))
+    return out
+
+
+def prop_mushrooms():
+    out = []
+    for k, (x, z, h, r) in enumerate([(0, 0, 0.32, 0.14), (0.2, 0.12, 0.22, 0.1), (-0.17, 0.1, 0.18, 0.09), (0.08, -0.16, 0.14, 0.07)]):
+        out += [capsule(v(x, 0, z), v(x, h, z), 0.03, "cloth_white"), ellipsoid(v(x, h, z), v(r, r * 0.45, r), "mushroom")]
+    return out
+
+
+def prop_obsidian():
+    out = []
+    for k, (x, z, h, lean) in enumerate([(0, 0, 0.85, 0.1), (0.2, 0.1, 0.5, 0.35), (-0.22, 0.05, 0.6, -0.3), (0.05, -0.18, 0.4, 0.2)]):
+        out.append(capsule(v(x, 0, z), v(x + lean * 0.3, h, z), 0.09, "demon_dark", rb=0.005))
+    out.append(ellipsoid(v(0, 0.02, 0), v(0.35, 0.03, 0.3), "coal"))
+    return out
+
+
+def prop_bonepile():
+    out = [ellipsoid(v(0, 0.06, 0), v(0.38, 0.08, 0.3), "bone_dark")]
+    for k in range(9):
+        a = k * 0.7
+        x, z = math.cos(a) * 0.22 * (k % 3) / 2, math.sin(a) * 0.18 * (k % 3) / 2
+        out.append(capsule(v(x - 0.12, 0.1 + 0.03 * (k % 2), z), v(x + 0.12, 0.12, z + 0.05), 0.02, "bone", rot=None))
+    for (x, z) in [(0.0, 0.05), (0.15, -0.08), (-0.14, 0.0)]:
+        c = v(x, 0.17, z)
+        out += [sphere(c, 0.065, "bone"), sphere(c + v(0.022, 0, 0.05), 0.018, "black", op="sub"), sphere(c + v(-0.022, 0, 0.05), 0.018, "black", op="sub")]
+    return out
+
+
+def prop_cage():
+    out = [cylinder(v(0, 0.04, 0), 0.32, 0.04, "darksteel"), cylinder(v(0, 1.0, 0), 0.32, 0.03, "darksteel"),
+           capsule(v(0, 1.0, 0), v(0, 1.3, 0), 0.015, "darksteel")]
+    for k in range(10):
+        a = k * 2 * math.pi / 10
+        out.append(capsule(v(math.cos(a) * 0.3, 0.04, math.sin(a) * 0.3), v(math.cos(a) * 0.3, 1.0, math.sin(a) * 0.3), 0.012, "rust"))
+    out += [sphere(v(0.05, 0.25, -0.05), 0.07, "bone"), capsule(v(0, 0.08, 0), v(0.05, 0.2, -0.05), 0.03, "bone_dark"),
+            capsule(v(-0.1, 0.06, 0.05), v(0.12, 0.06, 0.1), 0.015, "bone")]
+    return out
+
+
+def prop_table():
+    out = [box(v(0, 0.42, 0), v(0.45, 0.03, 0.28), "wood", rnd=0.01)]
+    for x in (-0.38, 0.38):
+        for z in (-0.22, 0.22):
+            out.append(box(v(x, 0.2, z), v(0.03, 0.2, 0.03), "darkwood"))
+    for (x, z, h) in [(-0.2, 0.05, 0.12), (0.15, -0.08, 0.18), (0.28, 0.1, 0.09)]:
+        out += [cylinder(v(x, 0.45 + h / 2, z), 0.025, h / 2, "cloth_white"), sphere(v(x, 0.47 + h, z), 0.018, "candle")]
+    out += [box(v(-0.05, 0.47, 0.1), v(0.12, 0.02, 0.09), "parchment", rot=rot_y(0.3)), sphere(v(0.1, 0.5, 0.12), 0.05, "glass_red")]
+    return out
+
+
+def prop_altar():
+    out = [box(v(0, 0.06, 0), v(0.5, 0.06, 0.35), "darkstone", rnd=0.02), box(v(0, 0.35, 0), v(0.4, 0.25, 0.25), "stone", rnd=0.02),
+           box(v(0, 0.62, 0), v(0.44, 0.03, 0.29), "darkstone", rnd=0.01), ellipsoid(v(0, 0.64, 0.05), v(0.2, 0.01, 0.12), "blood"),
+           octa(v(0, 0.8, -0.1), 0.08, "crystal_red", rot=rot_y(0.5))]
+    for x in (-0.35, 0.35):
+        out += [cylinder(v(x, 0.72, 0.18), 0.03, 0.08, "cloth_white"), sphere(v(x, 0.82, 0.18), 0.02, "candle")]
+    return out
+
+
+PROPS += [
+    ("brazier", prop_brazier), ("column", prop_column), ("sarcophagus", prop_sarcophagus), ("bookshelf", prop_bookshelf),
+    ("weapon_rack", prop_weapon_rack), ("banner", prop_banner), ("stalagmites", prop_stalagmites), ("crystals", prop_crystals),
+    ("mushrooms", prop_mushrooms), ("obsidian", prop_obsidian), ("bonepile", prop_bonepile), ("cage", prop_cage),
+    ("table", prop_table), ("altar", prop_altar),
+]
+
+
+# ---------------------------------------------------------------- village buildings (footprint centred on x, front at +z)
+
+
+def _gable_roof(width, depth, base_y, rise, mat, overhang=0.15):
+    half_w = width / 2 + overhang
+    slope = math.atan2(rise, depth / 2)
+    length = math.hypot(rise, depth / 2) + overhang
+    out = []
+    for side in (1, -1):
+        c = v(0, base_y + rise / 2, side * depth / 4)
+        out.append(box(c, v(half_w, 0.06, length / 2), mat, rot=rot_x(side * slope), rnd=0.02))
+    out.append(capsule(v(-half_w, base_y + rise + 0.02, 0), v(half_w, base_y + rise + 0.02, 0), 0.07, mat))
+    return out
+
+
+def house_timber():
+    out = [box(v(0, 0.1, 0), v(1.45, 0.1, 0.95), "darkstone", rnd=0.03), box(v(0, 0.75, 0), v(1.38, 0.62, 0.88), "plaster", rnd=0.01)]
+    for x in (-1.38, -0.45, 0.45, 1.38):
+        out.append(box(v(x, 0.75, 0.89), v(0.06, 0.62, 0.03), "darkwood"))
+    out += [box(v(0, 1.33, 0.89), v(1.42, 0.06, 0.035), "darkwood"), box(v(0, 0.75, 0.89), v(1.42, 0.05, 0.03), "darkwood"),
+            box(v(-0.9, 1.05, 0.9), v(0.03, 0.4, 0.02), "darkwood", rot=rot_z(0.6))]
+    for x in (-1.38, 1.38):
+        out.append(box(v(x, 1.35, 0), v(0.03, 0.7, 0.7), "plaster", rot=rot_x(math.pi / 4)))
+    out += _gable_roof(2.8, 1.8, 1.35, 0.95, "thatch", 0.25)
+    out += [box(v(0.75, 0.48, 0.9), v(0.24, 0.42, 0.04), "darkwood", rnd=0.01), sphere(v(0.58, 0.48, 0.95), 0.03, "gold"),
+            box(v(-0.85, 0.95, 0.9), v(0.26, 0.2, 0.03), "lantern"), box(v(-0.85, 0.95, 0.93), v(0.27, 0.025, 0.02), "darkwood"),
+            box(v(-0.85, 0.95, 0.93), v(0.025, 0.21, 0.02), "darkwood"), box(v(0.8, 2.25, -0.35), v(0.16, 0.42, 0.16), "stone", rnd=0.02),
+            box(v(-0.3, 0.2, 1.05), v(0.25, 0.12, 0.08), "leaf", rnd=0.05)]
+    return out
+
+
+def house_stone():
+    out = [box(v(0, 0.55, 0), v(1.4, 0.55, 0.9), "stone", rnd=0.02), box(v(0, 1.35, 0), v(1.35, 0.3, 0.86), "wood", rnd=0.01)]
+    for k in range(7):
+        out.append(box(v(-1.2 + k * 0.4, 1.35, 0.87), v(0.03, 0.3, 0.02), "darkwood"))
+    for x in (-1.36, 1.36):
+        out.append(box(v(x, 1.65, 0), v(0.03, 0.62, 0.62), "wood", rot=rot_x(math.pi / 4)))
+    out += _gable_roof(2.8, 1.8, 1.65, 0.8, "slate", 0.22)
+    out += [box(v(-0.6, 0.5, 0.91), v(0.26, 0.45, 0.04), "darkwood", rnd=0.01), box(v(-0.6, 0.98, 0.91), v(0.3, 0.06, 0.05), "stone"),
+            box(v(0.65, 0.6, 0.91), v(0.22, 0.2, 0.03), "lantern"), box(v(0.65, 0.6, 0.94), v(0.24, 0.025, 0.02), "darkwood"),
+            box(v(0.1, 1.4, 0.88), v(0.2, 0.15, 0.03), "lantern"), cylinder(v(1.2, 0.25, 1.05), 0.16, 0.25, "wood", rnd=0.02)]
+    return out
+
+
+def smithy():
+    out = [box(v(0, 0.06, 0), v(1.45, 0.06, 0.95), "darkstone", rnd=0.02), box(v(0, 0.85, -0.85), v(1.4, 0.8, 0.08), "stone", rnd=0.02)]
+    for x in (-1.35, 1.35):
+        out.append(box(v(x, 0.85, 0.75), v(0.08, 0.8, 0.08), "darkwood"))
+    out.append(box(v(0, 1.75, 0.0), v(1.6, 0.06, 1.05), "slate", rot=rot_x(0.25), rnd=0.02))
+    out += [box(v(-0.8, 0.45, -0.55), v(0.45, 0.42, 0.3), "stone", rnd=0.03), box(v(-0.8, 0.55, -0.24), v(0.25, 0.2, 0.05), "coal"),
+            box(v(-0.8, 1.5, -0.6), v(0.18, 0.7, 0.18), "stone", rnd=0.02),
+            box(v(0.35, 0.3, 0.2), v(0.12, 0.3, 0.12), "darkwood", rnd=0.01), box(v(0.35, 0.65, 0.2), v(0.25, 0.06, 0.1), "darksteel", rnd=0.01),
+            capsule(v(0.6, 0.65, 0.2), v(0.75, 0.68, 0.2), 0.05, "darksteel", rb=0.01),
+            cylinder(v(1.05, 0.3, 0.45), 0.2, 0.3, "wood", rnd=0.02), cylinder(v(1.05, 0.58, 0.45), 0.17, 0.02, "glass")]
+    out += blade(v(0.6, 1.2, -0.75), v(0, -1, 0.05), 0.5, 0.025)
+    out += blade(v(0.9, 1.2, -0.75), v(0, -1, 0.05), 0.45, 0.03, mat="darksteel")
+    return out
+
+
+def well():
+    return [cylinder(v(0, 0.3, 0), 0.45, 0.3, "stone", rnd=0.03), cylinder(v(0, 0.35, 0), 0.34, 0.3, "black", op="sub"),
+            cylinder(v(0, 0.2, 0), 0.34, 0.01, "glass"), box(v(-0.42, 0.85, 0), v(0.05, 0.55, 0.05), "darkwood"),
+            box(v(0.42, 0.85, 0), v(0.05, 0.55, 0.05), "darkwood"), capsule(v(-0.42, 1.1, 0), v(0.42, 1.1, 0), 0.04, "wood"),
+            box(v(0, 1.45, 0), v(0.55, 0.04, 0.4), "thatch", rot=rot_x(0.0), rnd=0.02), cylinder(v(0.05, 0.85, 0), 0.08, 0.08, "wood")]
+
+
+def market_stall():
+    out = [box(v(0, 0.4, 0), v(0.9, 0.05, 0.4), "wood", rnd=0.01)]
+    for x in (-0.85, 0.85):
+        for z in (-0.35, 0.35):
+            out.append(box(v(x, 0.65 if z < 0 else 0.55, z), v(0.04, 0.65 if z < 0 else 0.55, 0.04), "darkwood"))
+    for k in range(6):
+        out.append(box(v(-0.8 + k * 0.32, 1.25, 0.05), v(0.16, 0.03, 0.55), "cloth_red" if k % 2 == 0 else "cloth_white", rot=rot_x(0.25), rnd=0.01))
+    for k, (x, z, m) in enumerate([(-0.6, 0.1, "ruby"), (-0.45, 0.15, "ruby"), (-0.52, -0.05, "ruby"), (0.0, 0.1, "book_green"),
+                                    (0.1, 0.0, "book_green"), (0.5, 0.05, "gold")]):
+        out.append(sphere(v(x, 0.5, z), 0.07, m))
+    out += [box(v(0.35, 0.55, -0.1), v(0.15, 0.1, 0.12), "parchment", rnd=0.01), box(v(-0.9, 0.2, 0.55), v(0.18, 0.18, 0.18), "wood", rnd=0.01)]
+    return out
+
+
+def hay_cart():
+    return [box(v(0, 0.55, 0), v(0.75, 0.08, 0.45), "wood", rnd=0.01), box(v(0, 0.75, 0.42), v(0.75, 0.15, 0.03), "darkwood"),
+            box(v(0, 0.75, -0.42), v(0.75, 0.15, 0.03), "darkwood"), ellipsoid(v(0, 0.85, 0), v(0.7, 0.32, 0.42), "thatch"),
+            torus(v(-0.4, 0.32, 0.5), 0.3, 0.04, "darkwood", rot=rot_x(math.pi / 2)), torus(v(0.4, 0.32, 0.5), 0.3, 0.04, "darkwood", rot=rot_x(math.pi / 2)),
+            capsule(v(0.75, 0.55, 0.1), v(1.3, 0.3, 0.1), 0.03, "wood"), capsule(v(0.75, 0.55, -0.1), v(1.3, 0.3, -0.1), 0.03, "wood")]
+
+
+def lamp_post():
+    return [box(v(0, 0.05, 0), v(0.15, 0.05, 0.15), "darkstone"), capsule(v(0, 0, 0), v(0, 1.5, 0), 0.035, "darksteel"),
+            capsule(v(0, 1.5, 0), v(0.25, 1.5, 0), 0.025, "darksteel"), cylinder(v(0.25, 1.35, 0), 0.07, 0.09, "lantern"),
+            cylinder(v(0.25, 1.46, 0), 0.09, 0.02, "darksteel")]
+
+
+def haystack():
+    return [ellipsoid(v(0, 0.35, 0), v(0.55, 0.4, 0.5), "thatch"), ellipsoid(v(0.3, 0.2, 0.25), v(0.25, 0.2, 0.22), "thatch"),
+            capsule(v(-0.2, 0.5, 0.4), v(0.4, 0.95, -0.1), 0.02, "wood")]
+
+
+def dummy():
+    return [capsule(v(0, 0, 0), v(0, 1.2, 0), 0.04, "wood"), capsule(v(-0.35, 0.95, 0), v(0.35, 0.95, 0), 0.035, "wood"),
+            ellipsoid(v(0, 0.85, 0), v(0.2, 0.3, 0.16), "parchment"), sphere(v(0, 1.3, 0), 0.13, "parchment"),
+            box(v(0, 0.85, 0.15), v(0.08, 0.08, 0.01), "cloth_red", rot=rot_z(0.78)), box(v(0, 0.05, 0), v(0.2, 0.05, 0.2), "darkwood")]
+
+
+def tent():
+    out = []
+    for side in (1, -1):
+        out.append(box(v(0, 0.75, side * 0.48), v(1.0, 0.04, 0.72), "cloth_green" if side > 0 else "cloth_white", rot=rot_x(side * 1.0), rnd=0.02))
+    out += [capsule(v(-1.0, 0, 0), v(-1.0, 1.35, 0), 0.04, "wood"), capsule(v(1.0, 0, 0), v(1.0, 1.35, 0), 0.04, "wood"),
+            capsule(v(-1.05, 1.33, 0), v(1.05, 1.33, 0), 0.04, "wood"), box(v(0, 0.55, 0.62), v(0.3, 0.5, 0.02), "black"),
+            box(v(-0.6, 0.18, 1.0), v(0.18, 0.18, 0.18), "wood", rnd=0.01), cylinder(v(0.65, 0.22, 1.0), 0.16, 0.22, "wood", rnd=0.02),
+            octa(v(0, 1.45, 0), 0.08, "gold")]
+    return out
+
+
+VILLAGE = [
+    ("house_timber", house_timber), ("house_stone", house_stone), ("smithy", smithy), ("well", well),
+    ("stall", market_stall), ("cart", hay_cart), ("lamp", lamp_post), ("haystack", haystack), ("dummy", dummy), ("tent", tent),
+]
+
+
+# ---------------------------------------------------------------- villagers
+
+
+def _apron(T, s, swing):
+    return [box(T(v(0, 0.52, 0.12) * s), v(0.13, 0.22, 0.015) * s, "leather", rnd=0.01),
+            cylinder(T(v(0, 0.5, 0) * s), 0.16 * s, 0.025 * s, "darkleather", rnd=0.01)]
+
+
+def _smith_head(c, s, tw, swing):
+    return [sphere(c, 0.105 * s, "skin"), ellipsoid(c + v(0, -0.08, 0.06) * s, v(0.08, 0.1, 0.05) * s, "beard_brown"),
+            sphere(c + v(0.035, 0.01, 0.09) * s, 0.012 * s, "black"), sphere(c + v(-0.035, 0.01, 0.09) * s, 0.012 * s, "black"),
+            sphere(c + v(0, -0.01, 0.105) * s, 0.02 * s, "skin")]
+
+
+def _hammer(hand, weapon, fore, s, frame):
+    d = norm(weapon)
+    f = frame_from(d, (0, 0, 1))
+    head = hand + d * 0.32 * s
+    return [capsule(hand - d * 0.05 * s, head, 0.018 * s, "wood"), box(head, v(0.09, 0.045, 0.045) * s, "darksteel", rot=f, rnd=0.01)]
+
+
+BLACKSMITH = dict(
+    torso="cloth_white", torso_r=(0.18, 0.21, 0.13), width=1.1, thigh="darkleather", shin="leather", boot="darkleather",
+    upper_arm="skin", forearm="skin", hand="skin", arm_r=0.055, fore_r=0.05, neck="skin",
+    torso_extra=_apron, head=_smith_head, right=_hammer, left=None,
+)
+
+
+def _dress(T, s, swing):
+    return [capsule(T(v(0, 0.55, 0) * s), T(v(swing * 0.03, 0.06, 0) * s), 0.15 * s, "cloth_red", rb=0.26 * s),
+            cylinder(T(v(0, 0.56, 0) * s), 0.155 * s, 0.02 * s, "leather"),
+            box(T(v(0, 0.4, 0.17) * s), v(0.1, 0.16, 0.012) * s, "cloth_white", rnd=0.01)]
+
+
+def _woman_head(c, s, tw, swing):
+    return [sphere(c, 0.1 * s, "skin"), sphere(c + v(0, 0.035, -0.02) * s, 0.105 * s, "cloth_white"),
+            sphere(c + v(0, 0.0, 0.05) * s, 0.085 * s, "skin"),
+            capsule(c + v(0, -0.02, -0.08) * s, c + v(0, -0.15, -0.1) * s, 0.04 * s, "beard_brown", rb=0.02 * s),
+            sphere(c + v(0.032, 0.01, 0.09) * s, 0.011 * s, "black"), sphere(c + v(-0.032, 0.01, 0.09) * s, 0.011 * s, "black")]
+
+
+def _basket(hand, weapon, fore, s, frame):
+    c = hand + v(0, -0.08, 0.02) * s
+    return [cylinder(c, 0.09 * s, 0.05 * s, "wood", rnd=0.01), torus(c + v(0, 0.06, 0) * s, 0.08 * s, 0.01 * s, "darkwood", rot=rot_z(math.pi / 2)),
+            sphere(c + v(0.02, 0.05, 0) * s, 0.035 * s, "ruby"), sphere(c + v(-0.03, 0.05, 0.02) * s, 0.03 * s, "book_green")]
+
+
+VILLAGER_F = dict(
+    torso="cloth_red", torso_r=(0.15, 0.19, 0.11), thigh="skin", shin="skin", boot="darkleather", thigh_r=0.05, shin_r=0.045,
+    upper_arm="cloth_white", forearm="skin", hand="skin", arm_r=0.045, fore_r=0.04, neck="skin",
+    torso_extra=_dress, head=_woman_head, right=None, left=_basket,
+)
+
+
+def _tunic(T, s, swing):
+    return [box(T(v(0, 0.42, 0.06) * s), v(0.15, 0.1, 0.08) * s, "cloth_green", rot=rot_x(0.1 * swing), rnd=0.03),
+            cylinder(T(v(0, 0.5, 0) * s), 0.16 * s, 0.025 * s, "leather")]
+
+
+def _man_head(c, s, tw, swing):
+    return [sphere(c, 0.1 * s, "skin"), cylinder(c + v(0, 0.06, 0) * s, 0.105 * s, 0.04 * s, "leather", rnd=0.02),
+            capsule(c + v(0, 0.09, -0.02) * s, c + v(0, 0.12, -0.12) * s, 0.04 * s, "leather", rb=0.01 * s),
+            ellipsoid(c + v(0, -0.07, 0.05) * s, v(0.07, 0.06, 0.04) * s, "beard_brown"),
+            sphere(c + v(0.032, 0.01, 0.09) * s, 0.011 * s, "black"), sphere(c + v(-0.032, 0.01, 0.09) * s, 0.011 * s, "black")]
+
+
+VILLAGER_M = dict(
+    torso="cloth_green", torso_r=(0.16, 0.2, 0.12), thigh="darkleather", shin="leather", boot="darkleather",
+    upper_arm="cloth_green", forearm="skin", hand="skin", neck="skin",
+    torso_extra=_tunic, head=_man_head, right=None, left=None,
+)
+
+
+def elder(i):
+    sway = math.sin(i * math.pi / 2) * 0.02
+    staff_top = v(0.26, 1.22 + sway, 0.12)
+    return [
+        capsule(v(0, 0.75, 0), v(0, 0.05, 0), 0.14, "cloth_white", rb=0.27),
+        cylinder(v(0, 0.52, 0), 0.165, 0.02, "gold", rnd=0.005),
+        sphere(v(0, 0.88, 0.02), 0.1, "skin"),
+        ellipsoid(v(0, 0.72, 0.09), v(0.08, 0.17, 0.05), "beard"),
+        sphere(v(0, 0.93, -0.02), 0.1, "beard"),
+        sphere(v(0.035, 0.9, 0.09), 0.012, "black"), sphere(v(-0.035, 0.9, 0.09), 0.012, "black"),
+        capsule(v(0.15, 0.75, 0), v(0.25, 0.62, 0.12), 0.05, "cloth_white", rb=0.06),
+        sphere(v(0.26, 0.6, 0.13), 0.035, "skin"),
+        capsule(v(0.26, 0.0, 0.12), staff_top, 0.02, "darkwood"),
+        octa(staff_top + v(0, 0.06, 0), 0.06, "rune_blue", rot=rot_y(0.4)),
+        capsule(v(-0.15, 0.75, 0), v(-0.12, 0.45, 0.12), 0.05, "cloth_white", rb=0.06),
+        box(v(0, 0.6, 0.16), v(0.03, 0.15, 0.01), "cloth_blue"),
+    ]
