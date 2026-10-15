@@ -17,6 +17,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Build debug APKs
         run: ./gradlew assembleDebug
+      - name: RPG tests (screenshots + headless simulation)
+        id: rpgtests
+        continue-on-error: true
+        run: ./gradlew :rpg:testDebugUnitTest
       - uses: actions/upload-artifact@v4
         with:
           name: victors-bricks-apk
@@ -29,3 +33,14 @@ jobs:
         with:
           name: skyggernes-dyb-apk
           path: rpg/build/outputs/apk/debug/*.apk
+      - name: Print RPG screenshots
+        if: always()
+        run: |
+          for f in rpg/build/screens/*.jpg; do
+            [ -f "$f" ] || continue
+            echo "@@IMG $(basename "$f")"
+            base64 -w 0 "$f" | fold -w 3000
+            echo
+            echo "@@END"
+          done
+          echo "@@TESTS ${{ steps.rpgtests.outcome }}"

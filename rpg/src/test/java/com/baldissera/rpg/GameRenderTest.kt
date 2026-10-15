@@ -1,0 +1,204 @@
+package com.baldissera.rpg
+
+import android.content.Context
+import android.graphics.Bitmap
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Canvas
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.createFontFamilyResolver
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.sp
+import androidx.test.core.app.ApplicationProvider
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import java.io.File
+import java.io.FileOutputStream
+import kotlin.math.hypot
+import kotlin.random.Random
+
+/**
+ * Renders a set of scenes to JPEG files (printed into the CI log so they can be inspected)
+ * and plays the game headlessly across many floors to catch crashes.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+class GameRenderTest {
+    private val ctx: Context = ApplicationProvider.getApplicationContext()
+    private val outDir = File("build/screens").apply { mkdirs() }
+
+    private fun newGame(): Game {
+        val prefs = ctx.getSharedPreferences("test${System.nanoTime()}", Context.MODE_PRIVATE)
+        return Game(Sfx(ctx), prefs).also { it.newGame() }
+    }
+
+    private fun step(g: Game, frames: Int) = repeat(frames) { g.update(1f / 60f) }
+
+    private fun render(g: Game, a: Assets, name: String, w: Int = 720, h: Int = 1280) {
+        val image = ImageBitmap(w, h)
+        val canvas = Canvas(image)
+        val density = Density(2f)
+        val measurer = TextMeasurer(createFontFamilyResolver(ctx), density, LayoutDirection.Ltr)
+        val styles = TextStyles(
+            small = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold),
+            big = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Black),
+            label = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+        )
+        val scope = CanvasDrawScope()
+        val size = Size(w.toFloat(), h.toFloat())
+        scope.draw(density, LayoutDirection.Ltr, canvas, size) { drawWorld(g, a, measurer, styles) }
+        canvas.saveLayer(Rect(0f, 0f, w.toFloat(), h.toFloat()), Paint())
+        scope.draw(density, LayoutDirection.Ltr, canvas, size) { drawLighting(g) }
+        canvas.restore()
+        val small = Bitmap.createScaledBitmap(image.asAndroidBitmap(), w * 3 / 4, h * 3 / 4, true)
+        FileOutputStream(File(outDir, "$name.jpg")).use { small.compress(Bitmap.CompressFormat.JPEG, 70, it) }
+    }
+
+    /** Puts the hero a couple of tiles from [e], on a walkable tile. */
+    private fun approach(g: Game, e: Enemy) {
+        for ((dx, dy) in listOf(0f to 2.2f, -2.2f to 0f, 2.2f to 0f, 0f to -2.2f, 1.5f to 1.5f)) {
+            if (g.dungeon.walkableAt(e.x + dx, e.y + dy)) {
+                g.player.x = e.x + dx
+                g.player.y = e.y + dy
+                return
+            }
+        }
+    }
+
+    private fun nearest(g: Game, pred: (Enemy) -> Boolean) =
+        g.enemies.filter(pred).minByOrNull { hypot(it.x - g.player.x, it.y - g.player.y) }
+
+    @Test
+    fun screenshots() {
+        val a = Assets(ctx.resources)
+        val g = newGame()
+
+        step(g, 20)
+        render(g, a, "01_village_day")
+
+        nearest(g) { it.type == EnemyType.WOLF || it.type == EnemyType.BANDIT }?.let { approach(g, it) }
+        step(g, 50)
+        g.attackHeld = true
+        step(g, 20)
+        g.attackHeld = false
+        render(g, a, "02_world_fight_day")
+
+        g.time = 180f
+        val crypt = g.dungeon.entrances.first { it.region == Region.CRYPT }
+        g.player.x = crypt.x + 0.5f
+        g.player.y = crypt.y + 3.5f
+        step(g, 10)
+        render(g, a, "03_world_night_crypt")
+
+        g.enterFloor(1)
+        nearest(g) { !it.type.boss }?.let { approach(g, it) }
+        step(g, 45)
+        g.cast(Skill.FIREBALL)
+        step(g, 8)
+        render(g, a, "04_crypt_fight")
+
+        g.enterFloor(1)
+        val p = g.player
+        val rarities = Rarity.entries
+        for ((i, r) in rarities.withIndex()) {
+            val angle = i / rarities.size.toFloat() * 6.28f
+            val lx = p.x + kotlin.math.cos(angle) * 1.6f
+            val ly = p.y + kotlin.math.sin(angle) * 1.2f
+            g.loot += Loot(lx, ly, LootKind.Gear(g.makeItem(5, r, false, exact = true)))
+        }
+        g.loot += Loot(p.x + 0.4f, p.y + 0.9f, LootKind.Gold(120))
+        g.loot += Loot(p.x - 0.5f, p.y + 0.9f, LootKind.Potion)
+        step(g, 5)
+        render(g, a, "05_loot_rarities")
+
+        g.enterFloor(3)
+        g.boss?.let { approach(g, it) }
+        step(g, 60)
+        render(g, a, "06_skeleton_king")
+
+        g.enterFloor(5)
+        nearest(g) { true }?.let { approach(g, it) }
+        step(g, 40)
+        render(g, a, "07_caves")
+
+        g.enterFloor(8)
+        nearest(g) { true }?.let { approach(g, it) }
+        step(g, 40)
+        g.cast(Skill.WHIRL)
+        step(g, 6)
+        render(g, a, "08_hell")
+
+        g.enterFloor(9)
+        g.boss?.let { approach(g, it) }
+        step(g, 90)
+        render(g, a, "09_demon_lord")
+
+        g.enterFloor(0)
+        g.time = 0f
+        g.player.x = g.merchantX - 1.5f
+        g.player.y = g.merchantY + 1.5f
+        step(g, 5)
+        render(g, a, "10_merchant")
+    }
+
+    @Test
+    fun simulateManyFloors() {
+        val g = newGame()
+        val r = Random(7)
+        g.player.level = 25
+        g.player.skills[Skill.NOVA] = 3
+        for (floor in listOf(0, 1, 2, 3, 4, 6, 7, 9, 10, 12)) {
+            g.enterFloor(floor)
+            repeat(1800) { i ->
+                if (i % 30 == 0) {
+                    g.joyX = r.nextFloat() * 2f - 1f
+                    g.joyY = r.nextFloat() * 2f - 1f
+                }
+                g.attackHeld = i % 90 < 50
+                if (i % 120 == 0) g.cast(Skill.FIREBALL)
+                if (i % 200 == 0) g.cast(Skill.WHIRL)
+                if (i % 400 == 0) g.cast(Skill.NOVA)
+                if (i % 500 == 0) g.drinkPotion()
+                if (i == 900 && floor > 0) g.townPortal()
+                if (g.dead) g.respawn()
+                if (g.victory) g.victory = false
+                g.update(1f / 30f)
+            }
+        }
+        repeat(3000) { g.makeItem(r.nextInt(1, 20), Rarity.entries.random(r), r.nextBoolean()) }
+        g.player.gold = 1_000_000
+        repeat(20) {
+            for (s in Slot.entries) g.gamble(s)?.let { if (g.isUpgrade(it)) g.equip(it) }
+            g.sortInventory()
+            g.sellJunk()
+            g.player.inventory.toList().forEach { g.sell(it) }
+        }
+        g.save()
+    }
+
+    @Test
+    fun worldsGenerate() {
+        repeat(40) { seed ->
+            val d = Dungeon.overworld(seed * 7919L)
+            check(d.walkable(d.start.cx, d.start.cy)) { "village start blocked for seed $seed" }
+            for (e in d.entrances) check(d.tile(e.x, e.y) == ENTRANCE)
+        }
+        val r = Random(3)
+        for (b in listOf(Biome.CRYPT, Biome.CAVE, Biome.HELL)) repeat(40) {
+            val d = Dungeon.generate(r, b)
+            check(d.walkable(d.start.cx, d.start.cy))
+            check(d.tile(d.exit.cx, d.exit.cy) == STAIRS)
+        }
+    }
+}

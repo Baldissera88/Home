@@ -92,7 +92,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         private set
     var victory = false
     var time = 0f
-        private set
+        internal set
     var shake = 0f
         private set
     var shakeX = 0f
