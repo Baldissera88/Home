@@ -29,7 +29,10 @@ class UiScreenTest {
     private fun shoot(name: String, overlay: Int, setup: (Game) -> Unit = {}) {
         // Space frames like a real 60 Hz display so idling renders a handful of frames, not hundreds.
         ShadowChoreographer.setFrameDelay(Duration.ofMillis(16))
+        val t0 = System.currentTimeMillis()
+        fun log(step: String) = println("[ui $name] $step after ${System.currentTimeMillis() - t0} ms")
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        log("activity ready")
         val ctx = activity.applicationContext
         val sfx = Sfx(ctx)
         val prefs = ctx.getSharedPreferences("ui${System.nanoTime()}", Context.MODE_PRIVATE)
@@ -44,12 +47,17 @@ class UiScreenTest {
                 RpgScreen(game, assets, music, sfx, settings, autoStart = overlay != -2, debugOverlay = if (overlay < 0) -1 else overlay)
             }
         }
-        repeat(4) { ShadowLooper.idleMainLooper(20, TimeUnit.MILLISECONDS) }
+        log("content set")
+        repeat(4) {
+            ShadowLooper.idleMainLooper(20, TimeUnit.MILLISECONDS)
+            log("idle ${it + 1}")
+        }
         val root: View = activity.window.decorView
         val bmp = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
         root.draw(android.graphics.Canvas(bmp))
         val small = Bitmap.createScaledBitmap(bmp, root.width * 3 / 4, root.height * 3 / 4, true)
         FileOutputStream(File(outDir, "$name.jpg")).use { small.compress(Bitmap.CompressFormat.JPEG, 72, it) }
+        log("saved")
     }
 
     private fun loadUp(g: Game) {

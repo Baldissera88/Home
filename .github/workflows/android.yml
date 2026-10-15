@@ -22,11 +22,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Build debug APKs
         run: ./gradlew assembleDebug
-      - name: RPG tests (screenshots + headless simulation)
+      - name: RPG tests (world screenshots + headless simulation)
         id: rpgtests
         continue-on-error: true
-        timeout-minutes: 20
-        run: ./gradlew :rpg:testDebugUnitTest
+        timeout-minutes: 10
+        run: ./gradlew :rpg:testDebugUnitTest --tests 'com.baldissera.rpg.GameRenderTest'
       - uses: actions/upload-artifact@v4
         with:
           name: victors-bricks-apk
@@ -39,6 +39,11 @@ jobs:
         with:
           name: skyggernes-dyb-apk
           path: rpg/build/outputs/apk/debug/*.apk
+      - name: RPG UI screenshots
+        id: uitests
+        continue-on-error: true
+        timeout-minutes: 8
+        run: ./gradlew :rpg:testDebugUnitTest --tests 'com.baldissera.rpg.UiScreenTest'
       - name: Publish RPG screenshots to the branch
         if: always() && github.event_name == 'push'
         run: |
@@ -46,7 +51,7 @@ jobs:
             mkdir -p rpg/screens
             rm -f rpg/screens/*.jpg
             cp rpg/build/screens/*.jpg rpg/screens/
-            echo "tests: ${{ steps.rpgtests.outcome }} @ ${GITHUB_SHA::7}" > rpg/screens/STATUS.txt
+            echo "world tests: ${{ steps.rpgtests.outcome }}, ui: ${{ steps.uitests.outcome }} @ ${GITHUB_SHA::7}" > rpg/screens/STATUS.txt
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add rpg/screens
