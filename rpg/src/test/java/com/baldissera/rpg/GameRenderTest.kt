@@ -199,6 +199,19 @@ class GameRenderTest {
         g.player.y = g.dungeon.village!!.y + 15.5f
         step(g, 5)
         render(g, a, "14_world_rain")
+
+        // A champion with affixes, its shield up and an eruption about to go off.
+        g.rain = 0f
+        g.enterFloor(6)
+        g.enemies.clear()
+        val champ = Enemy(EnemyType.BRUTE, g.player.x + 1.8f, g.player.y - 0.4f, 6, elite = true,
+            affixes = listOf(Affix.BURNING, Affix.SHIELDED, Affix.FROST), title = "Grumtand")
+        g.enemies += champ
+        step(g, 20)
+        champ.shield = 1.5f
+        champ.burnCd = 0.35f
+        g.player.chill = 1f
+        render(g, a, "15_champion")
     }
 
     @Test
@@ -209,6 +222,7 @@ class GameRenderTest {
         g.player.skills[Skill.NOVA] = 3
         for (floor in listOf(0, 1, 2, 3, 4, 6, 7, 9, 10, 12)) {
             g.enterFloor(floor)
+            g.enemies += Enemy(EnemyType.BANDIT, g.player.x + 3f, g.player.y, floor + 1, elite = true, affixes = Affix.entries, title = "Test")
             repeat(1800) { i ->
                 if (i % 30 == 0) {
                     g.joyX = r.nextFloat() * 2f - 1f

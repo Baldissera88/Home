@@ -194,6 +194,8 @@ class Player : Body {
     var dodgeX = 0f
     var dodgeY = 0f
     var stepTimer = 0f
+    /** Seconds left of the slow from a frost champion's hit. */
+    var chill = 0f
 
     private fun sum(f: (Item) -> Int) = equipment.values.sumOf(f)
     fun has(p: Power) = equipment.values.any { it.power == p }
@@ -210,7 +212,7 @@ class Player : Body {
     val spellBonus: Int get() = sum { it.spell } + weaponKind.spellBonus
     val attackSpeed: Int get() = sum { it.atkSpeed }
     val goldFind: Int get() = sum { it.goldFind } + (if (has(Power.GREED)) 100 else 0)
-    val speed: Float get() = 3.4f * (1f + sum { it.speed } / 100f) * (if (buff == Buff.SWIFT) 1.35f else 1f)
+    val speed: Float get() = 3.4f * (1f + sum { it.speed } / 100f) * (if (buff == Buff.SWIFT) 1.35f else 1f) * (if (chill > 0f) 0.6f else 1f)
     val xpToNext: Int get() = 40 + level * level * 22
 }
 
@@ -246,8 +248,28 @@ enum class EnemyType(
     SHADOW_KING("Skyggekongen", 1300, 34, 1.7f, 0.75f, 900, 1.7f, 0.55f, 1.3f, 10f, boss = true),
 }
 
-class Enemy(val type: EnemyType, override var x: Float, override var y: Float, val level: Int, val elite: Boolean = false) : Body {
+/** Champion modifiers, Diablo style: every elite rolls one or more. */
+enum class Affix(val label: String, val color: Color) {
+    FAST("Lynhurtig", Color(0xFF9CCC65)),
+    BURNING("Brændende", Color(0xFFFF7043)),
+    FROST("Isnende", Color(0xFF80D8FF)),
+    VAMPIRIC("Vampyrisk", Color(0xFFFF1744)),
+    SHIELDED("Skjoldet", Color(0xFFFFD54F)),
+    TELEPORT("Teleporterende", Color(0xFFB388FF)),
+}
+
+class Enemy(
+    val type: EnemyType,
+    override var x: Float,
+    override var y: Float,
+    val level: Int,
+    val elite: Boolean = false,
+    val affixes: List<Affix> = emptyList(),
+    val title: String? = null,
+) : Body {
     private val scale = (1f + 0.3f * (level - 1)) * (if (elite) 3f else 1f)
+    val speed = type.speed * (if (Affix.FAST in affixes) 1.45f else 1f)
+    val attackCooldown = type.cooldown * (if (Affix.FAST in affixes) 0.65f else 1f)
     val maxHp = type.hp * scale
     var hp = maxHp
     val dmg = type.dmg * (1f + 0.17f * (level - 1)) * (if (elite) 1.5f else 1f)
@@ -268,7 +290,15 @@ class Enemy(val type: EnemyType, override var x: Float, override var y: Float, v
     var summon = 7f
     val phase = Random.nextFloat() * 6.28f
     var label: TextLayoutResult? = null
-    val name: String get() = if (elite) "Champion ${type.label.lowercase()}" else type.label
+    var affixLabel: TextLayoutResult? = null
+    /** Seconds left of a shielded champion's invulnerability, and time until the next one. */
+    var shield = 0f
+    var shieldCd = 3f + Random.nextFloat() * 3f
+    var blinkCd = 4f + Random.nextFloat() * 2f
+    /** Burning champions erupt in flames when this reaches zero (the last 0.8 s are telegraphed). */
+    var burnCd = 3f + Random.nextFloat() * 2f
+    val name: String get() = title ?: if (elite) "Champion ${type.label.lowercase()}" else type.label
+    val affixText: String get() = affixes.joinToString(" · ") { it.label }
 }
 
 class Projectile(

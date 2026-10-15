@@ -25,6 +25,7 @@ jobs:
       - name: RPG tests (screenshots + headless simulation)
         id: rpgtests
         continue-on-error: true
+        timeout-minutes: 20
         run: ./gradlew :rpg:testDebugUnitTest
       - uses: actions/upload-artifact@v4
         with:

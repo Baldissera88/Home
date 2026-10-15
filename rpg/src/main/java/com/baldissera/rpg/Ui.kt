@@ -222,9 +222,17 @@ private fun Hud(game: Game, assets: Assets, onOpen: (Overlay) -> Unit) {
                 if (!game.inVillage) MenuButton("🏕️", false) { game.townPortal() }
             }
             Spacer(Modifier.weight(1f))
-            game.boss?.takeIf { it.aggro }?.let { boss ->
+            game.target?.let { boss ->
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 6.dp)) {
-                    Text(boss.type.label, color = Color(0xFFFF5252), fontSize = 15.sp, style = serifBold)
+                    Text(boss.name, color = if (boss.type.boss) Color(0xFFFF5252) else Color(0xFF82B1FF), fontSize = 15.sp, style = serifBold)
+                    if (boss.affixes.isNotEmpty()) {
+                        Row {
+                            boss.affixes.forEachIndexed { i, a ->
+                                if (i > 0) Text(" · ", color = parchment.copy(alpha = 0.5f), fontSize = 11.sp)
+                                Text(a.label, color = a.color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
                     Box(Modifier.width(160.dp).height(12.dp).background(Color(0xAA000000), RoundedCornerShape(3.dp)).border(1.dp, bronze, RoundedCornerShape(3.dp))) {
                         Box(
                             Modifier.fillMaxWidth((boss.hp / boss.maxHp).coerceIn(0f, 1f)).height(12.dp)

@@ -398,6 +398,7 @@ private fun DrawScope.drawPlayer(g: Game, cam: Camera, a: Assets) {
     }
     val sheet = a.hero(p.weaponKind)
     drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE)
+    if (p.chill > 0f) drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE, alpha = min(0.55f, p.chill), filter = frozenTint)
     if (p.hurt > 0f) drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE, alpha = p.hurt * 2f, filter = redFlash)
 }
 
@@ -417,8 +418,19 @@ private fun DrawScope.drawEnemy(e: Enemy, g: Game, cam: Camera, a: Assets, measu
             drawOval(Color.Red.copy(alpha = 0.35f + 0.4f * k), Offset(cx - reach * k, cy - reach * k * 0.6f), Size(reach * k * 2, reach * k * 1.2f), style = Stroke(t * 0.04f))
         }
     }
+    if (Affix.BURNING in e.affixes && e.aggro && e.burnCd < 0.8f) {
+        // Telegraph the coming eruption so the hero can dodge out of it.
+        val k = 1f - (e.burnCd / 0.8f).coerceIn(0f, 1f)
+        val rx = BURN_RADIUS * t
+        drawOval(Color(0xFFFF6D00).copy(alpha = 0.1f + 0.2f * k), Offset(cx - rx * k, cy - rx * k * 0.6f), Size(rx * k * 2, rx * k * 1.2f))
+        drawOval(Color(0xFFFFAB40).copy(alpha = 0.7f), Offset(cx - rx, cy - rx * 0.6f), Size(rx * 2, rx * 1.2f), style = Stroke(t * 0.035f))
+    }
     if (e.elite || e.type.boss) {
-        val color = if (e.type.boss) Color(0x66FF1744) else Color(0x664FC3F7)
+        val color = when {
+            e.type.boss -> Color(0x66FF1744)
+            e.affixes.isNotEmpty() -> e.affixes[((e.anim * 0.5f).toInt()) % e.affixes.size].color.copy(alpha = 0.4f)
+            else -> Color(0x664FC3F7)
+        }
         val pulse = 0.85f + 0.15f * sin(e.anim * 3f)
         val r = t * (if (e.type.boss) 1.6f else 0.7f) * pulse
         drawOval(Brush.radialGradient(listOf(color, Color.Transparent), Offset(cx, cy), r), Offset(cx - r, cy - r * 0.6f), Size(r * 2, r * 1.2f))
@@ -445,11 +457,25 @@ private fun DrawScope.drawEnemy(e: Enemy, g: Game, cam: Camera, a: Assets, measu
     drawSprite(sheet, col, row, cx, cy - (if (ghostly) t * 0.08f * sin(e.anim * 3f + e.phase) else 0f), t, scale = scale,
         alpha = if (ghostly) 0.72f else 1f, filter = filter)
     if (e.flash > 0f) drawSprite(sheet, col, row, cx, cy, t, scale = scale, alpha = e.flash / 0.12f * 0.75f, filter = whiteFlash)
+    if (e.shield > 0f) {
+        val r = t * 0.75f * e.size
+        val body = Offset(cx, cy - r * 0.8f)
+        val a0 = (e.shield / 0.3f).coerceIn(0f, 1f) * (0.75f + 0.25f * sin(e.anim * 9f))
+        drawCircle(Brush.radialGradient(listOf(Color.Transparent, Affix.SHIELDED.color.copy(alpha = 0.35f * a0)), body, r), r, body)
+        drawCircle(Affix.SHIELDED.color.copy(alpha = 0.8f * a0), r, body, style = Stroke(t * 0.03f))
+    }
 
     val headY = cy - sheet.worldW * t * scale * (sheet.foot - 0.25f)
     if (e.elite) {
         val label = e.label ?: measurer.measure(e.name, styles.label.copy(color = Color(0xFF82B1FF))).also { e.label = it }
-        drawText(label, topLeft = Offset(cx - label.size.width / 2f, headY - label.size.height - t * 0.15f))
+        var top = headY - label.size.height - t * 0.12f
+        if (e.affixes.isNotEmpty()) {
+            val affix = e.affixLabel ?: measurer.measure(e.affixText, styles.label.copy(color = Color(0xFFB0BEC5), fontSize = styles.label.fontSize * 0.85f))
+                .also { e.affixLabel = it }
+            drawText(affix, topLeft = Offset(cx - affix.size.width / 2f, top))
+            top -= affix.size.height
+        }
+        drawText(label, topLeft = Offset(cx - label.size.width / 2f, top))
     }
     if (e.hp < e.maxHp && !e.type.boss) {
         val w = t * 0.8f

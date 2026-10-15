@@ -21,6 +21,10 @@ private val FIRE = Color(0xFFFF7A1A)
 private val FROST = Color(0xFF80DEEA)
 private val LIGHTNING = Color(0xFF9FE7FF)
 const val INVENTORY_SIZE = 24
+/** Reach of a burning champion's eruption, in tiles. */
+const val BURN_RADIUS = 2.3f
+private val CHAMPION_FIRST = listOf("Grum", "Blod", "Aske", "Rust", "Skygge", "Rå", "Frost", "Galde", "Mørke", "Ben")
+private val CHAMPION_LAST = listOf("tand", "klo", "brand", "hjerte", "kløver", "æder", "skjold", "øje", "hug", "vrede")
 
 /** Base items per slot: name and icon (which also decides the weapon type). */
 private val bases = mapOf(
@@ -147,6 +151,9 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     val merchantX: Float get() = dungeon.merchantX
     val merchantY: Float get() = dungeon.merchantY
     val boss: Enemy? get() = enemies.firstOrNull { it.type.boss }
+    /** The boss or the closest champion currently fighting the hero, for the health bar at the top. */
+    val target: Enemy? get() = boss?.takeIf { it.aggro }
+        ?: enemies.filter { it.elite && it.aggro && dist(it) < 9f }.minByOrNull { dist(it) }
     val nearMerchant: Boolean get() = dungeon.hasMerchant && hypot(player.x - merchantX, player.y - merchantY) < 1.6f
     val nearNpc: Npc? get() = dungeon.npcs.firstOrNull {
         (it.kind == NpcKind.SMITH || it.kind == NpcKind.ELDER) && hypot(player.x - it.x, player.y - it.y) < 1.7f
@@ -233,7 +240,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                     val ex = room.x + 0.5f + rnd.nextInt(room.w)
                     val ey = room.y + 0.5f + rnd.nextInt(room.h)
                     if (dungeon.walkableAt(ex, ey)) {
-                        enemies += Enemy(pool.random(rnd), ex, ey, floor, elite = floor >= 2 && rnd.nextFloat() < 0.07f)
+                        enemies += spawn(pool.random(rnd), ex, ey, floor, elite = floor >= 2 && rnd.nextFloat() < 0.07f)
                     }
                 }
             }
@@ -276,7 +283,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             repeat(count) {
                 val ex = x + 0.5f + (rnd.nextFloat() - 0.5f) * 2f
                 val ey = y + 0.5f + (rnd.nextFloat() - 0.5f) * 2f
-                if (d.walkableAt(ex, ey)) enemies += Enemy(type, ex, ey, lvl, elite = rnd.nextFloat() < 0.06f)
+                if (d.walkableAt(ex, ey)) enemies += spawn(type, ex, ey, lvl, elite = lvl >= 2 && rnd.nextFloat() < 0.06f)
             }
             groups++
         }
@@ -289,6 +296,19 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 break
             }
         }
+    }
+
+    /** Creates a monster; champions get a name and one to three affixes depending on the level. */
+    private fun spawn(type: EnemyType, x: Float, y: Float, lvl: Int, elite: Boolean): Enemy {
+        if (!elite) return Enemy(type, x, y, lvl)
+        val count = when {
+            lvl >= 9 -> 3
+            lvl >= 5 -> 2
+            else -> 1
+        }
+        val affixes = Affix.entries.shuffled(rnd).take(count)
+        val title = CHAMPION_FIRST.random(rnd) + CHAMPION_LAST.random(rnd)
+        return Enemy(type, x, y, lvl, elite = true, affixes = affixes, title = title)
     }
 
     private fun spawnPool(): List<EnemyType> = when (dungeon.biome) {
@@ -601,6 +621,10 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         p.cast = max(0f, p.cast - dt)
         p.hurt = max(0f, p.hurt - dt)
         p.dodgeCd = max(0f, p.dodgeCd - dt)
+        if (p.chill > 0f) {
+            p.chill -= dt
+            if (rnd.nextFloat() < dt * 12f) particles += Particle(p.x + jitter(), p.y, 0f, -0.4f, Color(0xFFB3E5FC), 0.05f, 0.6f, z = 0.6f)
+        }
         p.sinceHurt += dt
         for (e in p.cooldowns.entries) e.setValue(max(0f, e.value - dt))
         if (p.buffTime > 0f) {
@@ -1081,6 +1105,15 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     private fun bleeds(t: EnemyType) = t != EnemyType.SKELETON && t != EnemyType.SKELETON_KING && t != EnemyType.SLIME && t != EnemyType.GHOST
 
     private fun damageEnemy(e: Enemy, base: Float, knock: Float) {
+        if (e.shield > 0f) {
+            e.aggro = true
+            if (e.flash <= 0f) {
+                texts += FloatText(e.x, e.y - 1f, "Immun", Affix.SHIELDED.color)
+                burst(e.x, e.y - 0.4f, Affix.SHIELDED.color, 5, glow = true)
+                e.flash = 0.12f
+            }
+            return
+        }
         val crit = rnd.nextInt(100) < player.critChance
         val dmg = base * (0.85f + rnd.nextFloat() * 0.3f) * (if (crit) 2f else 1f)
         e.hp -= dmg
@@ -1101,11 +1134,12 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         }
     }
 
-    private fun hurtPlayer(raw: Float) {
+    private fun hurtPlayer(raw: Float, from: Enemy? = null) {
         if (player.dodge > 0f) {
             texts += FloatText(player.x, player.y - 1.2f, "Undveg!", Color(0xFFB0BEC5))
             return
         }
+        if (from != null) championHit(from, raw)
         var dmg = raw * 100f / (100f + player.armorValue * 4f)
         if (player.buff == Buff.WARD) dmg *= 0.6f
         player.hp -= dmg
@@ -1212,9 +1246,14 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             e.type == EnemyType.BRUTE -> 0.4f
             else -> 0.16f
         }
-        repeat(if (boss) 3 else 1) {
+        // Champions with more affixes are tougher and pay better.
+        repeat(if (boss) 3 else if (e.affixes.size >= 2) 2 else 1) {
             if (rnd.nextFloat() < gearChance) {
-                val min = if (boss || e.elite) Rarity.MAGIC else Rarity.COMMON
+                val min = when {
+                    e.affixes.size >= 3 -> Rarity.RARE
+                    boss || e.elite -> Rarity.MAGIC
+                    else -> Rarity.COMMON
+                }
                 dropGear(e.x + jitter(), e.y + jitter(), makeItem(lvl + player.level / 2, min, boss))
             }
         }
@@ -1391,20 +1430,21 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                         // Wolves leap at their prey.
                         e.kx += e.faceX * 9f
                         e.ky += e.faceY * 9f
-                        if (d <= e.type.range + 1.2f) hurtPlayer(e.dmg)
+                        if (d <= e.type.range + 1.2f) hurtPlayer(e.dmg, e)
                     } else if (d <= e.type.range * e.size + 0.5f) {
-                        hurtPlayer(e.dmg)
+                        hurtPlayer(e.dmg, e)
                     }
-                    e.cooldown = e.type.cooldown
+                    e.cooldown = e.attackCooldown
                 }
                 continue
             }
 
             if (e.type.boss) bossAbilities(e, dt, spawned)
+            if (e.affixes.isNotEmpty() && championAbilities(e, d, dt)) continue
 
             // Goblins run away when they are losing.
             if (e.type == EnemyType.GOBLIN && e.hp < e.maxHp * 0.4f && d < 6f) {
-                move(e, -dx / d * e.type.speed * dt, -dy / d * e.type.speed * dt, e.type.radius)
+                move(e, -dx / d * e.speed * dt, -dy / d * e.speed * dt, e.type.radius)
                 e.faceX = -dx / d
                 e.faceY = -dy / d
                 e.moving = true
@@ -1418,7 +1458,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 }
                 val dir = if (d < 3f) -1f else if (d > 5f) 1f else 0f
                 if (dir != 0f) {
-                    move(e, dx / d * e.type.speed * dt * dir, dy / d * e.type.speed * dt * dir, e.type.radius)
+                    move(e, dx / d * e.speed * dt * dir, dy / d * e.speed * dt * dir, e.type.radius)
                     e.moving = true
                 }
                 continue
@@ -1438,7 +1478,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                     mx += px * wob * 0.8f
                     my += py * wob * 0.8f
                 }
-                move(e, mx * e.type.speed * dt, my * e.type.speed * dt, e.type.radius)
+                move(e, mx * e.speed * dt, my * e.speed * dt, e.type.radius)
                 e.moving = true
             }
         }
@@ -1461,6 +1501,71 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 }
             }
         }
+    }
+
+    /** What a champion's affixes do on a hit against the hero. */
+    private fun championHit(e: Enemy, raw: Float) {
+        if (Affix.FROST in e.affixes) {
+            if (player.chill <= 0f) sfx.frost()
+            player.chill = 2.2f
+            burst(player.x, player.y - 0.5f, Affix.FROST.color, 10, glow = true)
+        }
+        if (Affix.VAMPIRIC in e.affixes) {
+            e.hp = min(e.maxHp, e.hp + raw * 2f)
+            texts += FloatText(e.x, e.y - 1.3f, "+${(raw * 2f).roundToInt()}", Affix.VAMPIRIC.color)
+            for (i in 0 until 6) {
+                particles += Particle(player.x, player.y - 0.5f, (e.x - player.x) * 2f + jitter(), (e.y - player.y) * 2f + jitter(),
+                    Affix.VAMPIRIC.color, 0.07f, 0.5f, glow = true, z = 0.5f)
+            }
+        }
+    }
+
+    /** Timed champion abilities. Returns true when the monster used its turn. */
+    private fun championAbilities(e: Enemy, d: Float, dt: Float): Boolean {
+        if (Affix.SHIELDED in e.affixes) {
+            if (e.shield > 0f) {
+                e.shield -= dt
+            } else {
+                e.shieldCd -= dt
+                if (e.shieldCd <= 0f) {
+                    e.shield = 2.5f
+                    e.shieldCd = 7f + rnd.nextFloat() * 3f
+                    ring(e.x, e.y, 0.2f, Affix.SHIELDED.color, 20, 2.5f)
+                }
+            }
+        }
+        if (Affix.BURNING in e.affixes && d < 7f) {
+            e.burnCd -= dt
+            if (e.burnCd <= 0f) {
+                e.burnCd = 3.5f + rnd.nextFloat() * 1.5f
+                ring(e.x, e.y, 0.3f, Affix.BURNING.color, 40, 5f)
+                burst(e.x, e.y, Color(0xFFFFAB40), 16, glow = true)
+                sfx.explode()
+                addDecal(e.x, e.y, 4, 1.6f)
+                if (d < BURN_RADIUS) hurtPlayer(e.dmg * 0.7f)
+            }
+        }
+        if (Affix.TELEPORT in e.affixes && d > 2.5f && d < 10f) {
+            e.blinkCd -= dt
+            if (e.blinkCd <= 0f) {
+                e.blinkCd = 5f + rnd.nextFloat() * 3f
+                for (k in 0 until 8) {
+                    val ang = rnd.nextFloat() * 6.283f
+                    val nx = player.x + cos(ang) * 1.4f
+                    val ny = player.y + sin(ang) * 1.4f
+                    if (dungeon.walkableAt(nx, ny) && !blocked(nx, ny, e.type.radius)) {
+                        burst(e.x, e.y - 0.4f, Affix.TELEPORT.color, 14, glow = true)
+                        e.x = nx
+                        e.y = ny
+                        burst(e.x, e.y - 0.4f, Affix.TELEPORT.color, 14, glow = true)
+                        sfx.portal()
+                        e.cooldown = min(e.cooldown, 0.3f)
+                        return true
+                    }
+                }
+            }
+        }
+        return false
     }
 
     private fun bossAbilities(e: Enemy, dt: Float, spawned: MutableList<Enemy>) {
