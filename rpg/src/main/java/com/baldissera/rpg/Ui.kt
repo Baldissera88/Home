@@ -67,7 +67,7 @@ private val parchment = Color(0xFFE8D9B5)
 private val textShadow = Shadow(Color.Black, Offset(2f, 2f), 4f)
 private val serifBold = TextStyle(fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, shadow = textShadow)
 
-private enum class Overlay { NONE, INVENTORY, SKILLS, QUESTS, SHOP }
+private enum class Overlay { NONE, INVENTORY, SKILLS, QUESTS, SHOP, MAP }
 
 @Composable
 fun RpgScreen(game: Game, assets: Assets) {
@@ -150,6 +150,7 @@ fun RpgScreen(game: Game, assets: Assets) {
             overlay == Overlay.SKILLS -> SkillsScreen(game, hudTick, onClose = { overlay = Overlay.NONE })
             overlay == Overlay.QUESTS -> QuestScreen(game, onClose = { overlay = Overlay.NONE })
             overlay == Overlay.SHOP -> ShopScreen(game, assets, hudTick, onClose = { overlay = Overlay.NONE })
+            overlay == Overlay.MAP -> MapScreen(game, onClose = { overlay = Overlay.NONE })
         }
     }
 }
@@ -205,7 +206,7 @@ private fun Hud(game: Game, assets: Assets, onOpen: (Overlay) -> Unit) {
                 }
                 Spacer(Modifier.weight(1f))
             }
-            Minimap(game)
+            Box(Modifier.clickable { onOpen(Overlay.MAP) }) { Minimap(game) }
         }
     }
 }
@@ -296,6 +297,12 @@ private fun Minimap(game: Game) {
 private fun Controls(game: Game, modifier: Modifier) {
     Box(modifier.fillMaxWidth().systemBarsPadding().padding(14.dp).height(210.dp)) {
         Joystick(game, Modifier.align(Alignment.BottomStart))
+        val dodgeReady = game.player.dodgeCd <= 0f
+        ActionButton(
+            "💨", Color(0xFF90A4AE), 54.dp,
+            Modifier.align(Alignment.BottomStart).offset(x = 104.dp, y = (-142).dp).graphicsLayer { alpha = if (dodgeReady) 1f else 0.45f },
+            onPress = { game.dodge() },
+        )
         Box(Modifier.align(Alignment.BottomEnd).size(236.dp, 210.dp)) {
             val attackC = Offset(236f - 48f, 210f - 48f)
             ActionButton(
@@ -805,6 +812,59 @@ private fun VictoryScreen(game: Game, onContinue: () -> Unit) {
             Text("Niveau ${game.player.level} · ${game.player.gold} guld", color = GOLD, fontSize = 15.sp)
             Text("Dybet fortsætter dog… og monstrene bliver kun stærkere.", color = Color.Gray, fontSize = 13.sp, textAlign = TextAlign.Center)
             GothicButton("Fortsæt eventyret", onContinue)
+        }
+    }
+}
+
+@Composable
+private fun MapScreen(game: Game, onClose: () -> Unit) {
+    Box(Modifier.fillMaxSize().background(Color(0xE6000000)).systemBarsPadding().clickable(onClick = onClose), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(game.areaTitle, color = GOLD, fontSize = 22.sp, style = serifBold)
+            Canvas(
+                Modifier.size(340.dp).background(Color(0xFF14100D), RoundedCornerShape(8.dp)).border(2.dp, bronze, RoundedCornerShape(8.dp)).padding(6.dp)
+            ) {
+                val d = game.dungeon
+                val cell = size.width / max(d.w, d.h)
+                for (y in 0 until d.h) for (x in 0 until d.w) {
+                    val i = y * d.w + x
+                    if (!game.explored[i]) continue
+                    val color = when (d.tiles[i]) {
+                        WALL -> if (game.inWorld) Color(0xFF8D6E63) else Color(0xFF3A332D)
+                        STAIRS, ENTRANCE -> Color(0xFF4FC3F7)
+                        TREE -> Color(0xFF2E5E1E)
+                        ROCK -> Color(0xFF7A7570)
+                        WATER -> Color(0xFF2B6C8F)
+                        else -> if (game.inWorld) Color(0xFF5E7A3A) else Color(0xFF7A6E64)
+                    }
+                    drawRect(color, Offset(x * cell, y * cell), Size(cell + 0.6f, cell + 0.6f))
+                }
+                for (e in d.entrances) {
+                    drawCircle(if (e.region == Region.HELL) Color(0xFFFF3D00) else Color(0xFF4FC3F7), cell * 2.2f, Offset((e.x + 0.5f) * cell, (e.y + 0.5f) * cell))
+                }
+                for (pr in d.props) {
+                    val i = floorInt(pr.y) * d.w + floorInt(pr.x)
+                    if (i !in game.explored.indices || !game.explored[i]) continue
+                    when {
+                        pr.type == PropType.CHEST && !pr.used -> drawCircle(GOLD, cell * 1.2f, Offset(pr.x * cell, pr.y * cell))
+                        pr.type == PropType.SHRINE && !pr.used -> drawCircle(Color(0xFF00E5FF), cell * 1.2f, Offset(pr.x * cell, pr.y * cell))
+                        else -> {}
+                    }
+                }
+                if (!game.inWorld && game.explored[d.exit.cy * d.w + d.exit.cx]) {
+                    drawCircle(Color(0xFF4FC3F7), cell * 1.8f, Offset((d.exit.cx + 0.5f) * cell, (d.exit.cy + 0.5f) * cell))
+                }
+                for (e in game.enemies) {
+                    val i = floorInt(e.y) * d.w + floorInt(e.x)
+                    if (i in game.explored.indices && game.explored[i] && (e.type.boss || e.elite)) {
+                        drawCircle(if (e.type.boss) Color(0xFFFF1744) else Color(0xFF64B5F6), cell * 1.8f, Offset(e.x * cell, e.y * cell))
+                    }
+                }
+                drawCircle(Color.White, cell * 2.2f, Offset(game.player.x * cell, game.player.y * cell))
+                drawCircle(GOLD, cell * 1.5f, Offset(game.player.x * cell, game.player.y * cell))
+            }
+            Text("● dig   ● indgang/trappe   ● kiste   ● helligdom   ● boss", color = parchment.copy(alpha = 0.7f), fontSize = 12.sp)
+            Text("Tryk for at lukke", color = Color.Gray, fontSize = 12.sp)
         }
     }
 }

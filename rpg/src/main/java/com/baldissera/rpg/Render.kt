@@ -28,10 +28,10 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /** Tiles visible across the screen width. */
-private const val TILES_ACROSS = 8.5f
+private const val TILES_ACROSS = 7f
 private const val WALL_HEIGHT = 0.75f
 /** Characters are drawn a little larger than their model scale so they read well on a phone. */
-private const val CHAR_SCALE = 1.15f
+private const val CHAR_SCALE = 1.3f
 
 class Camera(val ox: Float, val oy: Float, val t: Float) {
     fun sx(x: Float) = x * t - ox
@@ -42,7 +42,7 @@ class Camera(val ox: Float, val oy: Float, val t: Float) {
 
 fun DrawScope.cameraFor(g: Game): Camera {
     val t = size.width / TILES_ACROSS
-    return Camera((g.player.x + g.shakeX) * t - size.width / 2f, (g.player.y + g.shakeY) * t - size.height * 0.48f, t)
+    return Camera((g.camX + g.shakeX) * t - size.width / 2f, (g.camY + g.shakeY) * t - size.height * 0.48f, t)
 }
 
 class TextStyles(val small: TextStyle, val big: TextStyle, val label: TextStyle)
@@ -59,6 +59,8 @@ private val shadowTint = ColorFilter.tint(Color(0xFF8E7CC3), BlendMode.Modulate)
 private val trollTint = ColorFilter.tint(Color(0xFFA5D6A7), BlendMode.Modulate)
 private val whiteFlash = ColorFilter.tint(Color.White, BlendMode.SrcAtop)
 private val redFlash = ColorFilter.tint(Color(0xFFFF1744), BlendMode.SrcAtop)
+private val corpseTint = ColorFilter.tint(Color(0xFF5A4A44), BlendMode.Modulate)
+private val ghostTint = ColorFilter.tint(Color(0xFF90CAF9), BlendMode.SrcAtop)
 
 /** Row in a directional sheet for a facing vector (x right, y down/south). */
 fun dirRow(fx: Float, fy: Float): Int {
@@ -69,15 +71,15 @@ fun dirRow(fx: Float, fy: Float): Int {
 
 fun DrawScope.drawSprite(
     s: SpriteSheet, col: Int, row: Int, x: Float, y: Float, t: Float,
-    scale: Float = 1f, alpha: Float = 1f, filter: ColorFilter? = null,
+    scale: Float = 1f, alpha: Float = 1f, filter: ColorFilter? = null, squash: Float = 1f,
 ) {
     val w = s.worldW * t * scale
     val left = (x - w / 2f).roundToInt()
-    val top = (y - s.foot * w).roundToInt()
-    val size = w.roundToInt()
+    val h = w * squash
+    val top = (y - s.foot * h).roundToInt()
     drawImage(
         s.image, IntOffset(col * s.cell, row * s.cell), IntSize(s.cell, s.cell),
-        IntOffset(left, top), IntSize(size, size), alpha = alpha, colorFilter = filter, filterQuality = FilterQuality.Medium,
+        IntOffset(left, top), IntSize(w.roundToInt(), h.roundToInt()), alpha = alpha, colorFilter = filter, filterQuality = FilterQuality.Medium,
     )
 }
 
@@ -131,8 +133,8 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
         if (ground != null) {
             drawImage(a.ground, IntOffset(ground[i] * 128, 0), IntSize(128, 128), IntOffset(l, tp), sz, filterQuality = FilterQuality.Medium)
         } else {
-            val variant = (d.variant[i] * 4).toInt().coerceIn(0, 3)
-            drawImage(floorImg, IntOffset(variant * 128, 0), IntSize(128, 128), IntOffset(l, tp), sz, filterQuality = FilterQuality.Medium)
+            // Dungeon floors are one large texture covering 4x4 tiles, sampled by position.
+            drawImage(floorImg, IntOffset((x and 3) * 128, (y and 3) * 128), IntSize(128, 128), IntOffset(l, tp), sz, filterQuality = FilterQuality.Medium)
         }
         if (tile == TREE || tile == ROCK) {
             drawOval(Color.Black.copy(alpha = 0.35f), Offset(l + t * 0.08f, tp + t * 0.5f), Size(t * 0.84f, t * 0.42f))
@@ -161,6 +163,17 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
         rotate(dc.rotation, Offset(cx, cy)) {
             drawImage(a.decals, IntOffset(dc.kind * 128, 0), IntSize(128, 128), IntOffset(cx.roundToInt() - s / 2, cy.roundToInt() - s / 2), IntSize(s, s))
         }
+    }
+
+    // Fallen enemies collapse and fade.
+    for (c in g.corpses) {
+        val (sheet, scale0, directional) = a.enemySprite(c.type)
+        val k = c.age / 1.2f
+        drawSprite(
+            sheet, 0, if (directional) dirRow(c.faceX, c.faceY) else 0, cam.sx(c.x), cam.sy(c.y), t,
+            scale = scale0 * c.size * CHAR_SCALE, alpha = (1f - k).coerceIn(0f, 1f) * 0.85f, filter = corpseTint,
+            squash = (1f - k * 0.7f).coerceAtLeast(0.2f),
+        )
     }
 
     // Billboards sorted by depth.
@@ -356,6 +369,9 @@ private fun DrawScope.drawPlayer(g: Game, cam: Camera, a: Assets) {
         )
     }
 
+    for (gh in g.ghosts) {
+        drawSprite(a.hero(gh.kind), 1, gh.row, cam.sx(gh.x), cam.sy(gh.y), t, scale = CHAR_SCALE, alpha = (1f - gh.age / 0.3f) * 0.35f, filter = ghostTint)
+    }
     val sheet = a.hero(p.weaponKind)
     drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE)
     if (p.hurt > 0f) drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE, alpha = p.hurt * 2f, filter = redFlash)
@@ -529,7 +545,7 @@ fun DrawScope.drawLighting(g: Game) {
     }
 
     val p = g.player
-    light(p.x, p.y - 0.3f, t * (if (g.inWorld) 7f else 5.6f) * flicker(g.time, 0.3f), 1f)
+    light(p.x, p.y - 0.3f, t * (if (g.inWorld) 7f else 6.2f) * flicker(g.time, 0.3f), 1f)
     for (e in d.entrances) light(e.x + 0.5f, e.y + 0.3f, t * (if (e.region == Region.HELL) 3.4f else 1.6f), 0.8f)
     for (i in d.torches) light(i % d.w + 0.5f, i / d.w + 1f - WALL_HEIGHT * 0.4f, t * 3.6f * flicker(g.time, i.toFloat()), 0.95f)
     for (pr in g.projectiles) light(pr.x, pr.y, t * 2.4f, 0.85f)
@@ -554,12 +570,24 @@ fun DrawScope.drawLighting(g: Game) {
             radius = size.maxDimension * 0.75f,
         )
     )
+    val hpFrac = p.hp / p.maxHp
+    if (hpFrac < 0.3f && !g.dead) {
+        // Heartbeat warning when close to death.
+        val beat = (0.5f + 0.5f * sin(g.time * 7f)) * (0.3f - hpFrac) / 0.3f
+        drawRect(
+            Brush.radialGradient(
+                listOf(Color.Transparent, Color(0xFF8B0000).copy(alpha = 0.55f * beat)),
+                center = Offset(size.width / 2f, size.height / 2f),
+                radius = size.maxDimension * 0.65f,
+            )
+        )
+    }
     if (p.hurt > 0f) {
         drawRect(
             Brush.radialGradient(
-                listOf(Color.Transparent, Color(0xFFB71C1C).copy(alpha = p.hurt * 1.6f)),
+                listOf(Color.Transparent, Color.Transparent, Color(0xFFB71C1C).copy(alpha = p.hurt * 0.9f)),
                 center = Offset(size.width / 2f, size.height / 2f),
-                radius = size.maxDimension * 0.7f,
+                radius = size.maxDimension * 0.75f,
             )
         )
     }

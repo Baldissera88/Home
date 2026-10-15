@@ -32,9 +32,9 @@ enum class Biome(
     val torchChance: Float,
 ) {
     OVERWORLD("Landet", "camp", Color(0xFF040A1C), 0.7f, 0f),
-    CRYPT("Krypten", "crypt", Color.Black, 0.94f, 0.08f),
-    CAVE("Hulerne", "cave", Color(0xFF020302), 0.93f, 0.05f),
-    HELL("Helvede", "hell", Color(0xFF1C0400), 0.86f, 0.06f),
+    CRYPT("Krypten", "crypt", Color(0xFF020104), 0.88f, 0.12f),
+    CAVE("Hulerne", "cave", Color(0xFF010303), 0.88f, 0.08f),
+    HELL("Helvede", "hell", Color(0xFF1C0400), 0.8f, 0.08f),
     ;
 
     companion object {

@@ -372,3 +372,126 @@ def world_ground():
     cells = [ground_grass(700 + i) for i in range(4)] + [ground_dirt(710), ground_dirt(711), ground_sand(720),
                                                            ground_grass(730, flowers=60)]
     return np.concatenate(cells, axis=1)
+
+
+# ---------------------------------------------------------------- v4: large-period dungeon floors (4x4 tiles)
+
+def jitter_voronoi(size, cells, seed):
+    """Tileable F1/F2/cell-id using one jittered point per grid cell (fast for big textures)."""
+    r = np.random.default_rng(seed)
+    pts = r.random((cells, cells, 2))
+    cs = size / cells
+    yy, xx = np.mgrid[0:size, 0:size].astype(float)
+    gx = (xx // cs).astype(int)
+    gy = (yy // cs).astype(int)
+    best1 = np.full((size, size), 1e9)
+    best2 = np.full((size, size), 1e9)
+    bid = np.zeros((size, size), dtype=int)
+    for oy in (-1, 0, 1):
+        for ox in (-1, 0, 1):
+            cx = gx + ox
+            cy = gy + oy
+            px = ((cx % cells) + pts[cy % cells, cx % cells, 0]) * cs + (cx - cx % cells) * cs
+            py = ((cy % cells) + pts[cy % cells, cx % cells, 1]) * cs + (cy - cy % cells) * cs
+            d = np.hypot(xx - px, yy - py)
+            cid = (cy % cells) * cells + (cx % cells)
+            closer = d < best1
+            best2 = np.where(closer, best1, np.minimum(best2, d))
+            bid = np.where(closer, cid, bid)
+            best1 = np.where(closer, d, best1)
+    return best1 / size, best2 / size, bid
+
+
+def floor_crypt_big(seed, size=512):
+    """Irregular ashlar flagstones that span tile borders, so no grid is visible."""
+    r = np.random.default_rng(seed)
+    n = fbm(size, size, 8, 5, seed)
+    fine = fbm(size, size, 48, 3, seed + 5)
+    height = np.zeros((size, size))
+    albedo = np.zeros((size, size, 3))
+    edge_all = np.zeros((size, size))
+    yy, xx = np.mgrid[0:size, 0:size]
+    y = 0
+    sid = 0
+    while y < size:
+        h = int(r.integers(56, 104))
+        if size - (y + h) < 56:
+            h = size - y
+        widths = []
+        while sum(widths) < size:
+            widths.append(int(r.integers(72, 184)))
+        widths[-1] -= sum(widths) - size
+        if widths[-1] < 30 and len(widths) > 1:
+            widths[-2] += widths[-1]
+            widths.pop()
+        cum = np.concatenate([[0], np.cumsum(widths)])
+        off = int(r.integers(0, size))
+        rows = slice(y, y + h)
+        u = (xx[rows] - off) % size
+        idx = np.searchsorted(cum, u, side="right") - 1
+        lx = u - cum[idx]
+        w = np.array(widths)[idx]
+        ly = yy[rows] - y
+        e = np.minimum(np.minimum(lx, w - 1 - lx), np.minimum(ly, h - 1 - ly)).astype(float)
+        tint = r.uniform(0.86, 1.1, len(widths))[idx]
+        warm = r.uniform(-0.015, 0.015, len(widths))[idx]
+        tilt_x = r.uniform(-0.5, 0.5, len(widths))[idx]
+        tilt_y = r.uniform(-0.5, 0.5, len(widths))[idx]
+        bev = np.clip(e / 6.0, 0, 1)
+        height[rows] = bev * 0.85 + (tilt_x * (lx / w - 0.5) + tilt_y * (ly / h - 0.5)) * 0.18
+        base = np.stack([0.37 + warm, 0.34 + warm * 0.5, 0.31 - warm], axis=-1)
+        albedo[rows] = base * tint[..., None]
+        edge_all[rows] = e
+        y += h
+        sid += 1
+    height += n * 0.3 + fine * 0.1
+    albedo *= (0.75 + 0.5 * n)[..., None]
+    albedo = mix(albedo, np.array([0.2, 0.18, 0.15]), np.clip((fine - 0.55) * 3, 0, 0.55))
+    grout = edge_all < 2
+    albedo[grout] = [0.11, 0.1, 0.09]
+    height[grout] = 0
+    crack = np.zeros((size, size))
+    for _ in range(14):
+        x, y = r.uniform(0, size), r.uniform(0, size)
+        ang = r.uniform(0, 2 * math.pi)
+        for _ in range(r.integers(14, 40)):
+            ang += r.normal(0, 0.45)
+            x = (x + math.cos(ang) * 2) % size
+            y = (y + math.sin(ang) * 2) % size
+            crack[int(y), int(x)] = 1
+    height -= crack * 0.6
+    albedo[crack > 0] *= 0.35
+    ao = np.clip(0.5 + np.clip(edge_all / 8.0, 0, 1) * 0.5, 0, 1)
+    return shade(height, albedo, 5.0, 0.45, ao)
+
+
+def floor_cave_big(seed, size=512):
+    f1, f2, cell = jitter_voronoi(size, 14, seed)
+    n = fbm(size, size, 8, 5, seed + 3)
+    edge = np.clip((f2 - f1) * 60, 0, 1)
+    r = np.random.default_rng(seed)
+    tint = r.uniform(0.75, 1.2, 14 * 14)[cell]
+    height = edge ** 0.6 * 0.7 + n * 0.5
+    albedo = np.array([0.36, 0.27, 0.18]) * (0.7 + 0.5 * n)[..., None] * tint[..., None]
+    dirt = fbm(size, size, 6, 4, seed + 9)
+    albedo = mix(albedo, np.array([0.22, 0.17, 0.11]), np.clip((dirt - 0.5) * 2.5, 0, 0.8) * (1 - edge * 0.5))
+    moss = fbm(size, size, 10, 4, seed + 21)
+    albedo = mix(albedo, np.array([0.17, 0.27, 0.10]), np.clip((moss - 0.62) * 4, 0, 0.7))
+    return shade(height, albedo, 6.0, 0.45, 0.6 + 0.4 * edge)
+
+
+def floor_hell_big(seed, size=512):
+    f1, f2, cell = jitter_voronoi(size, 11, seed)
+    n = fbm(size, size, 8, 5, seed + 7)
+    gap = f2 - f1
+    edge = np.clip(gap * 64, 0, 1)
+    height = edge ** 0.5 * 0.8 + n * 0.3
+    albedo = np.array([0.17, 0.10, 0.10]) * (0.6 + 0.6 * n)[..., None]
+    lit = shade(height, albedo, 6.0, 0.45, 0.5 + 0.5 * edge)
+    lava = np.clip(1 - gap * 120, 0, 1) ** 1.5
+    glow = mix(np.array([0.9, 0.18, 0.02]), np.array([1.0, 0.75, 0.25]), lava)
+    return np.clip(lit * (1 - lava[..., None]) + glow * lava[..., None] * (0.7 + 0.5 * n[..., None]), 0, 1)
+
+
+BIG_FLOORS = {"crypt": floor_crypt_big, "cave": floor_cave_big, "hell": floor_hell_big}
+DARK_TOPS = {"crypt": [0.15, 0.14, 0.13], "cave": [0.16, 0.12, 0.09], "hell": [0.13, 0.06, 0.05]}

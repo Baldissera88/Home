@@ -189,6 +189,11 @@ class Player : Body {
     var buff: Buff? = null
     var buffTime = 0f
     var phoenixUsed = false
+    var dodge = 0f
+    var dodgeCd = 0f
+    var dodgeX = 0f
+    var dodgeY = 0f
+    var stepTimer = 0f
 
     private fun sum(f: (Item) -> Int) = equipment.values.sumOf(f)
     fun has(p: Power) = equipment.values.any { it.power == p }
@@ -282,7 +287,7 @@ sealed interface LootKind {
     data class Gear(val item: Item) : LootKind
 }
 
-class Loot(val x: Float, val y: Float, val kind: LootKind) {
+class Loot(var x: Float, var y: Float, val kind: LootKind) {
     val phase = Random.nextFloat() * 6.28f
     var label: TextLayoutResult? = null
 }
@@ -306,6 +311,16 @@ class Prop(val type: PropType, val x: Float, val y: Float) {
 }
 
 class Decal(val x: Float, val y: Float, val kind: Int, val rotation: Float, val scale: Float)
+
+/** A slain enemy collapsing and fading out. */
+class Corpse(val type: EnemyType, val x: Float, val y: Float, val faceX: Float, val faceY: Float, val size: Float) {
+    var age = 0f
+}
+
+/** Afterimage left behind by a dodge roll. */
+class Ghost(val x: Float, val y: Float, val row: Int, val kind: WeaponKind) {
+    var age = 0f
+}
 
 class FloatText(var x: Float, var y: Float, val text: String, val color: Color, val big: Boolean = false) {
     var age = 0f

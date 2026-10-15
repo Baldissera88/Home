@@ -66,11 +66,15 @@ def _render_cell(job):
 
 def textures():
     for biome, (floor, wall, top) in T.BIOMES.items():
-        floors = np.concatenate([floor(100 + i) for i in range(4)], axis=1)
+        if biome in T.BIG_FLOORS:
+            floors = T.BIG_FLOORS[biome](100)
+        else:
+            floors = np.concatenate([floor(100 + i) for i in range(4)], axis=1)
         Image.fromarray(T.to_img(floors)).save(f"{OUT}/tex_{biome}_floor.png", optimize=True)
         walls = np.concatenate([wall(200 + i) for i in range(2)], axis=1)
         Image.fromarray(T.to_img(walls)).save(f"{OUT}/tex_{biome}_wall.png", optimize=True)
-        Image.fromarray(T.to_img(top(300))).save(f"{OUT}/tex_{biome}_top.png", optimize=True)
+        tex_top = T.top_generic(300, T.DARK_TOPS[biome]) if biome in T.DARK_TOPS else top(300)
+        Image.fromarray(T.to_img(tex_top)).save(f"{OUT}/tex_{biome}_top.png", optimize=True)
         print("textures", biome, flush=True)
     Image.fromarray(T.to_img(T.world_ground())).save(f"{OUT}/tex_world_ground.png", optimize=True)
     waters = np.concatenate([T.water(600, f) for f in range(2)], axis=1)

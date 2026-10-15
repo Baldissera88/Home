@@ -81,6 +81,14 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     val texts = mutableListOf<FloatText>()
     val particles = mutableListOf<Particle>()
     val decals = ArrayDeque<Decal>()
+    val corpses = mutableListOf<Corpse>()
+    val ghosts = mutableListOf<Ghost>()
+    /** Smoothed camera centre in world tiles. */
+    var camX = 0f
+        private set
+    var camY = 0f
+        private set
+    private var hitStop = 0f
     val stock = mutableListOf<Item>()
     var explored = BooleanArray(dungeon.w * dungeon.h)
         private set
@@ -161,9 +169,12 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         texts.clear()
         particles.clear()
         decals.clear()
+        corpses.clear()
+        ghosts.clear()
         player.phoenixUsed = false
         player.x = dungeon.start.cx + 0.5f
         player.y = dungeon.start.cy + 0.5f
+        snapCamera()
         player.hp = player.hp.coerceIn(1f, player.maxHp)
 
         if (floor == 0) {
@@ -340,10 +351,16 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         if (inWorld) {
             player.x = dungeon.start.cx + 0.5f
             player.y = dungeon.start.cy + 0.5f
+            snapCamera()
             burst(player.x, player.y, Color(0xFF64B5F6), 40, glow = true)
         } else {
             enterFloor(0)
         }
+    }
+
+    private fun snapCamera() {
+        camX = player.x
+        camY = player.y
     }
 
     private fun enterRegion(e: Entrance) {
@@ -379,15 +396,58 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         shakeX = if (shake > 0f) (rnd.nextFloat() - 0.5f) * shake * 0.3f else 0f
         shakeY = if (shake > 0f) (rnd.nextFloat() - 0.5f) * shake * 0.3f else 0f
         levelFlash = max(0f, levelFlash - dt)
+        if (hitStop > 0f) {
+            // A brief freeze on heavy hits makes them land harder.
+            hitStop -= dt
+            updateParticles(dt * 0.25f)
+            return
+        }
         updateParticles(dt)
         updateTexts(dt)
         ambientParticles()
+        updateCamera(dt)
+        corpses.removeAll { it.age += dt; it.age > 1.2f }
+        ghosts.removeAll { it.age += dt; it.age > 0.3f }
         if (dead || victory) return
         updatePlayer(dt)
         updateEnemies(dt)
         updateProjectiles(dt)
         updateLoot()
         reveal()
+    }
+
+    private fun updateCamera(dt: Float) {
+        val p = player
+        val lead = if (p.moving) 0.9f else 0.3f
+        val tx = p.x + p.faceX * lead
+        val ty = p.y + p.faceY * lead
+        val k = min(1f, dt * 5f)
+        camX += (tx - camX) * k
+        camY += (ty - camY) * k
+        if (abs(camX - p.x) > 6f || abs(camY - p.y) > 6f) snapCamera()
+    }
+
+    fun dodge() {
+        val p = player
+        if (dead || p.dodgeCd > 0f || p.dodge > 0f) return
+        var dx = joyX
+        var dy = joyY
+        val len = hypot(dx, dy)
+        if (len < 0.2f) {
+            dx = p.faceX
+            dy = p.faceY
+        } else {
+            dx /= len
+            dy /= len
+        }
+        p.dodgeX = dx
+        p.dodgeY = dy
+        p.faceX = dx
+        p.faceY = dy
+        p.dodge = 0.26f
+        p.dodgeCd = 1.0f
+        sfx.swing()
+        burst(p.x, p.y, if (inWorld) Color(0xFF8D7B5E) else Color(0xFF6D625A), 10)
     }
 
     private fun blocked(x: Float, y: Float, r: Float) =
@@ -424,6 +484,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         p.whirl = max(0f, p.whirl - dt)
         p.cast = max(0f, p.cast - dt)
         p.hurt = max(0f, p.hurt - dt)
+        p.dodgeCd = max(0f, p.dodgeCd - dt)
         p.sinceHurt += dt
         for (e in p.cooldowns.entries) e.setValue(max(0f, e.value - dt))
         if (p.buffTime > 0f) {
@@ -435,7 +496,13 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
         val len = hypot(joyX, joyY)
         p.moving = len > 0.15f
-        if (p.moving) {
+        if (p.dodge > 0f) {
+            p.dodge -= dt
+            move(p, p.dodgeX * 9f * dt, p.dodgeY * 9f * dt, 0.28f)
+            ghosts += Ghost(p.x, p.y, dirRow(p.faceX, p.faceY), p.weaponKind)
+            p.moving = true
+            p.walk += dt * 20f
+        } else if (p.moving) {
             val speed = p.speed * min(1f, len)
             val nx = joyX / len
             val ny = joyY / len
@@ -445,6 +512,12 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             }
             move(p, nx * speed * dt, ny * speed * dt, 0.28f)
             p.walk += dt * speed * 2.2f
+            p.stepTimer -= dt
+            if (p.stepTimer <= 0f) {
+                p.stepTimer = 0.28f
+                val dust = if (inWorld) Color(0x998D7B5E) else Color(0x776D625A)
+                particles += Particle(p.x, p.y + 0.1f, (rnd.nextFloat() - 0.5f) * 0.6f, -0.2f, dust, 0.05f, 0.5f, z = 0.05f)
+            }
         }
         pushOutOfProps(p, 0.28f)
 
@@ -805,10 +878,17 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         e.ky += dy / d * k
         texts += FloatText(e.x, e.y - 1f, dmg.roundToInt().toString(), if (crit) GOLD else Color.White, big = crit)
         burst(e.x, e.y, bloodColor(e.type), 7)
-        if (crit) shake = max(shake, 0.3f)
+        if (crit) {
+            shake = max(shake, 0.3f)
+            hitStop = max(hitStop, 0.04f)
+        }
     }
 
     private fun hurtPlayer(raw: Float) {
+        if (player.dodge > 0f) {
+            texts += FloatText(player.x, player.y - 1.2f, "Undveg!", Color(0xFFB0BEC5))
+            return
+        }
         var dmg = raw * 100f / (100f + player.armorValue * 4f)
         if (player.buff == Buff.WARD) dmg *= 0.6f
         player.hp -= dmg
@@ -840,6 +920,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     private fun kill(e: Enemy) {
         sfx.kill()
+        corpses += Corpse(e.type, e.x, e.y, e.faceX, e.faceY, e.size)
+        hitStop = max(hitStop, if (e.type.boss) 0.35f else 0.05f)
         burst(e.x, e.y, bloodColor(e.type), 20)
         if (bleeds(e.type)) addDecal(e.x, e.y, rnd.nextInt(4), 0.9f * e.size * (if (e.type.boss) 2f else 1f))
         if (player.has(Power.VAMPIRE)) player.hp = min(player.maxHp, player.hp + player.maxHp * 0.05f)
@@ -1069,6 +1151,11 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                         projectiles += Projectile(e.x, e.y, e.faceX * 6f, e.faceY * 6f, e.dmg, hostile = true,
                             color = Color(0xFFD500F9), life = 2.5f, radius = 0.16f)
                         sfx.fireball()
+                    } else if (e.type == EnemyType.WOLF && d < 3f) {
+                        // Wolves leap at their prey.
+                        e.kx += e.faceX * 9f
+                        e.ky += e.faceY * 9f
+                        if (d <= e.type.range + 1.2f) hurtPlayer(e.dmg)
                     } else if (d <= e.type.range * e.size + 0.5f) {
                         hurtPlayer(e.dmg)
                     }
@@ -1218,7 +1305,14 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         val iter = loot.iterator()
         while (iter.hasNext()) {
             val l = iter.next()
-            if (hypot(l.x - player.x, l.y - player.y) < 0.6f && collect(l.kind)) iter.remove()
+            val d = hypot(l.x - player.x, l.y - player.y)
+            // Gold and potions are pulled towards the hero.
+            if (l.kind !is LootKind.Gear && d < 2.4f && d > 0.05f) {
+                val pull = min(d, (2.6f - d) * 0.12f + 0.04f)
+                l.x += (player.x - l.x) / d * pull
+                l.y += (player.y - l.y) / d * pull
+            }
+            if (d < 0.6f && collect(l.kind)) iter.remove()
         }
     }
 
