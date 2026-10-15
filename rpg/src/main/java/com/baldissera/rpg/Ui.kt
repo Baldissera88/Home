@@ -67,10 +67,10 @@ private val parchment = Color(0xFFE8D9B5)
 private val textShadow = Shadow(Color.Black, Offset(2f, 2f), 4f)
 private val serifBold = TextStyle(fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, shadow = textShadow)
 
-private enum class Overlay { NONE, INVENTORY, SKILLS, QUESTS, SHOP, MAP, SMITH, ELDER }
+private enum class Overlay { NONE, INVENTORY, SKILLS, QUESTS, SHOP, MAP, SMITH, ELDER, SETTINGS }
 
 @Composable
-fun RpgScreen(game: Game, assets: Assets) {
+fun RpgScreen(game: Game, assets: Assets, music: Music, sfx: Sfx, settings: android.content.SharedPreferences) {
     var frame by remember { mutableLongStateOf(0L) }
     var hudTick by remember { mutableIntStateOf(0) }
     var started by remember { mutableStateOf(false) }
@@ -84,6 +84,8 @@ fun RpgScreen(game: Game, assets: Assets) {
                 val dt = ((now - last) / 1_000_000_000f).coerceAtMost(0.05f)
                 last = now
                 if (started && overlay == Overlay.NONE) game.update(dt)
+                if (started) music.play(game.musicTrack)
+                music.tick(dt)
                 frame++
                 if (++n % 5 == 0) hudTick++
             }
@@ -155,6 +157,7 @@ fun RpgScreen(game: Game, assets: Assets) {
             overlay == Overlay.MAP -> MapScreen(game, onClose = { overlay = Overlay.NONE })
             overlay == Overlay.SMITH -> SmithScreen(game, assets, hudTick, onClose = { overlay = Overlay.NONE })
             overlay == Overlay.ELDER -> ElderScreen(game, hudTick, onClose = { overlay = Overlay.NONE })
+            overlay == Overlay.SETTINGS -> SettingsScreen(music, sfx, settings, onClose = { overlay = Overlay.NONE })
         }
     }
 }
@@ -201,6 +204,7 @@ private fun Hud(game: Game, assets: Assets, onOpen: (Overlay) -> Unit) {
                 MenuButton("🎒", p.inventory.any { game.isUpgrade(it) }) { onOpen(Overlay.INVENTORY) }
                 MenuButton("✨", p.skillPoints > 0) { onOpen(Overlay.SKILLS) }
                 MenuButton("📜", false) { onOpen(Overlay.QUESTS) }
+                MenuButton("⚙️", false) { onOpen(Overlay.SETTINGS) }
                 if (!game.inVillage) MenuButton("🏕️", false) { game.townPortal() }
             }
             Spacer(Modifier.weight(1f))
@@ -968,5 +972,24 @@ private fun ElderScreen(game: Game, tick: Int, onClose: () -> Unit) {
             Text("Du fik:", color = parchment, fontSize = 13.sp)
             ItemDetail(item, game.player.equipment[item.slot])
         }
+    }
+}
+
+@Composable
+private fun SettingsScreen(music: Music, sfx: Sfx, settings: android.content.SharedPreferences, onClose: () -> Unit) {
+    var musicOn by remember { mutableStateOf(music.enabled) }
+    var sfxOn by remember { mutableStateOf(sfx.enabled) }
+    DarkPanel("Indstillinger", onClose) {
+        GothicButton(if (musicOn) "🎵 Musik: til" else "🎵 Musik: fra", {
+            musicOn = !musicOn
+            music.enabled = musicOn
+            settings.edit().putBoolean("music", musicOn).apply()
+        })
+        GothicButton(if (sfxOn) "🔊 Lydeffekter: til" else "🔇 Lydeffekter: fra", {
+            sfxOn = !sfxOn
+            sfx.enabled = sfxOn
+            settings.edit().putBoolean("sfx", sfxOn).apply()
+        })
+        Text("Spillet gemmes automatisk.", color = Color.Gray, fontSize = 12.sp)
     }
 }

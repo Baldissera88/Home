@@ -18,11 +18,16 @@ class Sfx(context: Context) {
     private val ids = mutableMapOf<String, Int>()
     private var ambientId = 0
     private var ambientStream = 0
+    var enabled = true
+        set(value) {
+            field = value
+            if (ambientStream != 0) pool.setVolume(ambientStream, if (value) 0.22f else 0f, if (value) 0.22f else 0f)
+        }
 
     init {
         pool.setOnLoadCompleteListener { p, sampleId, status ->
             if (status == 0 && sampleId == ambientId && ambientStream == 0) {
-                ambientStream = p.play(sampleId, 0.4f, 0.4f, 0, -1, 1f)
+                ambientStream = p.play(sampleId, 0.22f, 0.22f, 0, -1, 1f)
             }
         }
         val sounds = listOf(
@@ -36,6 +41,7 @@ class Sfx(context: Context) {
     }
 
     private fun play(name: String, volume: Float = 1f, varyPitch: Boolean = true) {
+        if (!enabled) return
         val id = ids[name] ?: return
         val rate = if (varyPitch) 0.9f + Random.nextFloat() * 0.2f else 1f
         pool.play(id, volume, volume, 1, 0, rate)

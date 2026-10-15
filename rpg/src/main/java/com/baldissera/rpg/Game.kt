@@ -148,6 +148,16 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         else -> "${dungeon.biome.title} — dybde $floor"
     }
     val potionPrice: Int get() = 20 + max(1, deepest) * 6
+
+    /** Which music fits the current situation. */
+    val musicTrack: Int get() = when {
+        boss?.aggro == true -> R.raw.mus_boss
+        inVillage -> R.raw.mus_village
+        inWorld -> R.raw.mus_world
+        dungeon.biome == Biome.CAVE -> R.raw.mus_cave
+        dungeon.biome == Biome.HELL -> R.raw.mus_hell
+        else -> R.raw.mus_crypt
+    }
     fun gamblePrice(): Int = 60 + max(1, deepest) * 30
 
     /** 0 = midnight, 1 = noon. A full day lasts six minutes. */

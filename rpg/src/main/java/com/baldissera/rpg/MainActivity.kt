@@ -16,6 +16,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var sfx: Sfx
     private lateinit var game: Game
     private lateinit var assets: Assets
+    private lateinit var music: Music
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -27,10 +28,14 @@ class MainActivity : ComponentActivity() {
         }
         sfx = Sfx(this)
         assets = Assets(resources)
+        music = Music(this)
+        val settings = getSharedPreferences("settings", Context.MODE_PRIVATE)
+        music.enabled = settings.getBoolean("music", true)
+        sfx.enabled = settings.getBoolean("sfx", true)
         game = Game(sfx, getSharedPreferences("hero", Context.MODE_PRIVATE))
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                RpgScreen(game, assets)
+                RpgScreen(game, assets, music, sfx, settings)
             }
         }
     }
@@ -39,15 +44,18 @@ class MainActivity : ComponentActivity() {
         super.onPause()
         game.save()
         sfx.pause()
+        music.pause()
     }
 
     override fun onResume() {
         super.onResume()
         sfx.resume()
+        music.resume()
     }
 
     override fun onDestroy() {
         sfx.release()
+        music.release()
         super.onDestroy()
     }
 }
