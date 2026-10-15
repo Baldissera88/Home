@@ -576,3 +576,67 @@ def ground_edges(size=128):
     shore_r = 15 + _periodic_wave(size, 17, 1.5)[np.clip((np.arctan2(yy, xx) / (math.pi / 2) * (size - 1)).astype(int), 0, size - 1)]
     shore_corner = shore_piece(np.hypot(xx, yy) - shore_r)
     return np.concatenate([grass_edge, grass_corner, shore_edge, shore_corner], axis=1)
+
+
+def floor_cave_natural(seed, size=512):
+    """Uneven bedrock split into large slabs by partial cracks, gravel drifts, pebbles, moss and puddles (tileable)."""
+    r = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:size, 0:size].astype(float)
+    big = fbm(size, size, 3, 5, seed + 1)
+    mid = fbm(size, size, 10, 4, seed + 2)
+    fine = fbm(size, size, 48, 3, seed + 3)
+    height = big * 0.6 + mid * 0.35 + fine * 0.12
+    # Large slabs: voronoi borders, only partly cracked open, wobbled by noise.
+    f1, f2, cell = jitter_voronoi(size, 5, seed + 4)
+    wob = (fbm(size, size, 16, 3, seed + 5) - 0.5) * 0.012
+    border = np.clip(1 - np.abs(f2 - f1 + wob) * size / 2.2, 0, 1)
+    # Domain-warp the borders and slab ids so the cracks wander instead of running straight.
+    wx = ((fbm(size, size, 8, 3, seed + 11) - 0.5) * 22).astype(int)
+    wy = ((fbm(size, size, 8, 3, seed + 12) - 0.5) * 22).astype(int)
+    iy = (yy.astype(int) + wy) % size
+    ix = (xx.astype(int) + wx) % size
+    border = border[iy, ix]
+    cell = cell[iy, ix]
+    crackmask = np.clip((fbm(size, size, 4, 3, seed + 6) - 0.4) * 3.5, 0, 1)
+    crack = border * crackmask
+    slab = r.uniform(-0.06, 0.06, 25)[cell]
+    height += slab - crack * 0.3
+    rock = np.array([0.36, 0.31, 0.25])
+    rock2 = np.array([0.46, 0.39, 0.30])
+    albedo = mix(rock, rock2, np.clip(mid * 1.4 - 0.2, 0, 1))
+    albedo *= (0.85 + 0.3 * fine + slab * 2)[..., None]
+    # Gravel drifts in the low parts.
+    gravel = np.clip((0.5 - big) * 4, 0, 1)
+    grit = (fbm(size, size, 96, 2, seed + 7) > 0.55) * 0.12
+    albedo = mix(albedo, np.array([0.30, 0.25, 0.19]) * (1 + grit)[..., None], gravel * 0.7)
+    height += gravel * grit * 0.3
+    # Pebbles, mostly in the gravel.
+    for _ in range(140):
+        cx, cy = r.uniform(0, size, 2)
+        if gravel[int(cy), int(cx)] < 0.2 and r.random() < 0.7:
+            continue
+        rad = r.uniform(1.2, 4.0) * (1.8 if r.random() < 0.08 else 1)
+        dx = (xx - cx + size / 2) % size - size / 2
+        dy = (yy - cy + size / 2) % size - size / 2
+        d = np.hypot(dx * r.uniform(0.7, 1.3), dy)
+        m = np.clip(1 - d / rad, 0, 1)
+        if not m.any():
+            continue
+        height += np.sqrt(m) * 0.2
+        tone = albedo[int(cy), int(cx)] * r.uniform(1.0, 1.35)
+        albedo = mix(albedo, tone, np.clip(m * 3, 0, 1) * 0.8)
+    # Moss in damp spots.
+    moss = fbm(size, size, 8, 4, seed + 8)
+    albedo = mix(albedo, np.array([0.18, 0.26, 0.11]), np.clip((moss - 0.64) * 4, 0, 0.7) * (1 - gravel * 0.5))
+    albedo *= (1 - crack * 0.7)[..., None]
+    lit = shade(height, albedo, 7.0, 0.45, 1 - crack * 0.5)
+    # Shallow puddles: smooth, slightly darker, cool sheen and a damp rim.
+    pud = np.clip((0.3 - big) * 10, 0, 1) * np.clip((fbm(size, size, 5, 3, seed + 9) - 0.42) * 5, 0, 1)
+    sheen = np.clip(fbm(size, size, 4, 2, seed + 10) - 0.45, 0, 1)[..., None]
+    water = lit * 0.62 + np.array([0.05, 0.07, 0.09]) + sheen * np.array([0.22, 0.26, 0.3])
+    damp = np.clip(np.clip((0.36 - big) * 10, 0, 1) - pud, 0, 1)[..., None]
+    lit = lit * (1 - damp * 0.25)
+    return np.clip(mix(lit, water, pud), 0, 1)
+
+
+BIG_FLOORS["cave"] = floor_cave_natural
