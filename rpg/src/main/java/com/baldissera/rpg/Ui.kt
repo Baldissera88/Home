@@ -70,11 +70,14 @@ private val serifBold = TextStyle(fontFamily = FontFamily.Serif, fontWeight = Fo
 private enum class Overlay { NONE, INVENTORY, SKILLS, QUESTS, SHOP, MAP, SMITH, ELDER, SETTINGS }
 
 @Composable
-fun RpgScreen(game: Game, assets: Assets, music: Music, sfx: Sfx, settings: android.content.SharedPreferences) {
+fun RpgScreen(
+    game: Game, assets: Assets, music: Music, sfx: Sfx, settings: android.content.SharedPreferences,
+    autoStart: Boolean = false, debugOverlay: Int = -1,
+) {
     var frame by remember { mutableLongStateOf(0L) }
     var hudTick by remember { mutableIntStateOf(0) }
-    var started by remember { mutableStateOf(false) }
-    var overlay by remember { mutableStateOf(Overlay.NONE) }
+    var started by remember { mutableStateOf(autoStart) }
+    var overlay by remember { mutableStateOf(if (debugOverlay >= 0) Overlay.entries[debugOverlay] else Overlay.NONE) }
 
     LaunchedEffect(Unit) {
         var last = withFrameNanos { it }

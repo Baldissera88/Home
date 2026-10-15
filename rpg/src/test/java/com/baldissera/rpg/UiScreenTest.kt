@@ -1,0 +1,67 @@
+package com.baldissera.rpg
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.view.View
+import androidx.activity.compose.setContent
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import org.robolectric.shadows.ShadowLooper
+import java.io.File
+import java.io.FileOutputStream
+import java.util.concurrent.TimeUnit
+
+/** Screenshots of the full screen (world + HUD + menus) through the real Compose UI. */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], qualifiers = "w360dp-h780dp-xhdpi")
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+class UiScreenTest {
+    private val outDir = File("build/screens").apply { mkdirs() }
+
+    private fun shoot(name: String, overlay: Int, setup: (Game) -> Unit = {}) {
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        val ctx = activity.applicationContext
+        val sfx = Sfx(ctx)
+        val prefs = ctx.getSharedPreferences("ui${System.nanoTime()}", Context.MODE_PRIVATE)
+        val game = Game(sfx, prefs).also { it.newGame() }
+        val assets = Assets(ctx.resources)
+        val settings = ctx.getSharedPreferences("settings-test", Context.MODE_PRIVATE)
+        val music = Music(ctx).also { it.enabled = false }
+        setup(game)
+        repeat(20) { game.update(1f / 60f) }
+        activity.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                RpgScreen(game, assets, music, sfx, settings, autoStart = overlay != -2, debugOverlay = if (overlay < 0) -1 else overlay)
+            }
+        }
+        repeat(6) { ShadowLooper.idleMainLooper(40, TimeUnit.MILLISECONDS) }
+        val root: View = activity.window.decorView
+        val bmp = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+        root.draw(android.graphics.Canvas(bmp))
+        val small = Bitmap.createScaledBitmap(bmp, root.width * 3 / 4, root.height * 3 / 4, true)
+        FileOutputStream(File(outDir, "$name.jpg")).use { small.compress(Bitmap.CompressFormat.JPEG, 72, it) }
+    }
+
+    private fun loadUp(g: Game) {
+        g.player.level = 9
+        g.player.gold = 4321
+        g.player.skillPoints = 2
+        repeat(10) { g.player.inventory += g.makeItem(8, Rarity.entries.random(), false) }
+        for (s in Slot.entries) g.player.equipment[s] = g.makeItem(7, Rarity.entries.random(), false, slot = s)
+    }
+
+    @Test fun title() = shoot("u0_title", -2)
+    @Test fun hud() = shoot("u1_hud", -1)
+    @Test fun inventory() = shoot("u2_inventory", 1, ::loadUp)
+    @Test fun skills() = shoot("u3_skills", 2, ::loadUp)
+    @Test fun shop() = shoot("u4_shop", 4, ::loadUp)
+    @Test fun smith() = shoot("u5_smith", 6, ::loadUp)
+    @Test fun elder() = shoot("u6_elder", 7, ::loadUp)
+    @Test fun map() = shoot("u7_map", 5) { g -> g.player.x += 10f; repeat(200) { g.update(1f / 30f) } }
+}

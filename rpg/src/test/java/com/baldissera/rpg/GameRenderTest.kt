@@ -127,11 +127,13 @@ class GameRenderTest {
         step(g, 60)
         render(g, a, "06_skeleton_king")
 
+        if (g.dead) g.respawn()
         g.enterFloor(5)
         nearest(g) { true }?.let { approach(g, it) }
         step(g, 40)
         render(g, a, "07_caves")
 
+        if (g.dead) g.respawn()
         g.enterFloor(8)
         nearest(g) { true }?.let { approach(g, it) }
         step(g, 40)
@@ -139,11 +141,16 @@ class GameRenderTest {
         step(g, 6)
         render(g, a, "08_hell")
 
+        if (g.dead) g.respawn()
+        g.player.level = 20
+        g.player.hp = g.player.maxHp
         g.enterFloor(9)
         g.boss?.let { approach(g, it) }
         step(g, 90)
         render(g, a, "09_demon_lord")
 
+        if (g.dead) g.respawn()
+        g.player.hp = g.player.maxHp
         g.enterFloor(0)
         g.time = 0f
         g.player.x = g.merchantX - 1.5f
@@ -159,6 +166,7 @@ class GameRenderTest {
 
         // A themed crypt room: find a room with a sarcophagus or altar.
         g.time = 0f
+        if (g.dead) g.respawn()
         for (attempt in 0 until 10) {
             g.enterFloor(2)
             val deco = g.dungeon.props.firstOrNull { it.type == PropType.ALTAR || it.type == PropType.SARCOPHAGUS || it.type == PropType.BOOKSHELF }
