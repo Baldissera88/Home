@@ -21,6 +21,7 @@ private val FIRE = Color(0xFFFF7A1A)
 private val FROST = Color(0xFF80DEEA)
 private val LIGHTNING = Color(0xFF9FE7FF)
 const val INVENTORY_SIZE = 24
+const val STASH_SIZE = 40
 /** Reach of a burning champion's eruption, in tiles. */
 const val BURN_RADIUS = 2.3f
 private val CHAMPION_FIRST = listOf("Grum", "Blod", "Aske", "Rust", "Skygge", "Rå", "Frost", "Galde", "Mørke", "Ben")
@@ -157,6 +158,25 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     val target: Enemy? get() = boss?.takeIf { it.aggro }
         ?: enemies.filter { it.elite && it.aggro && dist(it) < 9f }.minByOrNull { dist(it) }
     val nearMerchant: Boolean get() = dungeon.hasMerchant && hypot(player.x - merchantX, player.y - merchantY) < 1.6f
+    /** Items kept in the stash chest in the village. */
+    val stash = mutableListOf<Item>()
+    val nearStash: Boolean get() = inWorld && dungeon.props.any { it.type == PropType.STASH && hypot(player.x - it.x, player.y - it.y) < 1.5f }
+
+    fun toStash(item: Item): Boolean {
+        if (stash.size >= STASH_SIZE || !player.inventory.remove(item)) return false
+        stash += item
+        sfx.equip()
+        save()
+        return true
+    }
+
+    fun fromStash(item: Item): Boolean {
+        if (player.inventory.size >= INVENTORY_SIZE || !stash.remove(item)) return false
+        player.inventory += item
+        sfx.equip()
+        save()
+        return true
+    }
     val nearNpc: Npc? get() = dungeon.npcs.firstOrNull {
         (it.kind == NpcKind.SMITH || it.kind == NpcKind.ELDER) && hypot(player.x - it.x, player.y - it.y) < 1.7f
     }
@@ -342,6 +362,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         player.equipment.forEach { (slot, item) -> eq.put(slot.name, item.toJson()) }
         o.put("equipment", eq)
         o.put("inventory", JSONArray().apply { player.inventory.forEach { put(it.toJson()) } })
+        o.put("stash", JSONArray().apply { stash.forEach { put(it.toJson()) } })
         o.put("skills", JSONObject().apply { player.skills.forEach { (s, l) -> put(s.name, l) } })
         bounty?.let { o.put("bounty", it.toJson()) }
         prefs.edit().putString("save3", o.toString()).apply()
@@ -366,6 +387,9 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             player.inventory.clear()
             val inv = o.optJSONArray("inventory")
             if (inv != null) for (i in 0 until inv.length()) Item.fromJson(inv.optJSONObject(i))?.let { player.inventory += it }
+            stash.clear()
+            val st = o.optJSONArray("stash")
+            if (st != null) for (i in 0 until st.length()) Item.fromJson(st.optJSONObject(i))?.let { stash += it }
             bounty = Bounty.fromJson(o.optJSONObject("bounty"))
             val sk = o.optJSONObject("skills")
             Skill.entries.forEach { s -> if (sk != null && sk.has(s.name)) player.skills[s] = sk.getInt(s.name) }
@@ -390,6 +414,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         player.skillPoints = 0
         player.equipment.clear()
         player.inventory.clear()
+        stash.clear()
         player.skills.clear()
         player.skills.putAll(mapOf(Skill.FIREBALL to 1, Skill.WHIRL to 1, Skill.NOVA to 0, Skill.CHAIN to 0))
         player.equipment[Slot.WEAPON] = Item(Slot.WEAPON, "Rustent sværd", Rarity.COMMON, Icons.SWORD, 1, damage = 2)

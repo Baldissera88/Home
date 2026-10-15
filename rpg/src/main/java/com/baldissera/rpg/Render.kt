@@ -438,7 +438,7 @@ private fun DrawScope.drawPlayer(g: Game, cam: Camera, a: Assets) {
     val sheet = a.hero(p.weaponKind)
     drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE)
     if (p.chill > 0f) drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE, alpha = min(0.55f, p.chill), filter = frozenTint)
-    if (p.hurt > 0f) drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE, alpha = p.hurt * 2f, filter = redFlash)
+    if (p.hurt > 0f) drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE, alpha = p.hurt * 1.1f, filter = redFlash)
 }
 
 private fun DrawScope.drawEnemy(e: Enemy, g: Game, cam: Camera, a: Assets, measurer: TextMeasurer, styles: TextStyles) {
@@ -537,6 +537,12 @@ private fun DrawScope.drawProp(p: Prop, g: Game, cam: Camera, a: Assets) {
             drawFlame(cx, cy + t * 0.02f, t * 0.55f, g.time * 0.9f, 11f)
         }
         PropType.BRAZIER -> drawFlame(cx, cy - t * 0.66f, t * 0.32f, g.time, p.x * 3f)
+        PropType.STASH -> {
+            // A warm glint on the lock marks the hero's own chest.
+            val pulse = 0.5f + 0.5f * sin(g.time * 2.5f)
+            val c = Offset(cx, cy - t * 0.38f)
+            drawCircle(Brush.radialGradient(listOf(Color(0x99FFD54F), Color.Transparent), c, t * (0.22f + 0.08f * pulse)), t * (0.22f + 0.08f * pulse), c)
+        }
         PropType.SHRINE -> if (!p.used) {
             val pulse = 0.5f + 0.5f * sin(g.time * 3f)
             val c = Offset(cx, cy - t * 0.85f)

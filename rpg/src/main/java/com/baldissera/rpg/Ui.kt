@@ -67,7 +67,7 @@ private val parchment = Color(0xFFE8D9B5)
 private val textShadow = Shadow(Color.Black, Offset(2f, 2f), 4f)
 private val serifBold = TextStyle(fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, shadow = textShadow)
 
-private enum class Overlay { NONE, INVENTORY, SKILLS, QUESTS, SHOP, MAP, SMITH, ELDER, SETTINGS }
+private enum class Overlay { NONE, INVENTORY, SKILLS, QUESTS, SHOP, MAP, SMITH, ELDER, SETTINGS, STASH }
 
 @Composable
 fun RpgScreen(
@@ -122,6 +122,7 @@ fun RpgScreen(
                 val npc = game.nearNpc
                 when {
                     game.nearMerchant -> GothicButton("💰 Handl med købmanden", { overlay = Overlay.SHOP }, Modifier.align(Alignment.Center).offset(y = 90.dp))
+                    game.nearStash -> GothicButton("🗝 Åbn din kiste", { overlay = Overlay.STASH }, Modifier.align(Alignment.Center).offset(y = 90.dp))
                     npc?.kind == NpcKind.SMITH -> GothicButton("⚒ Tal med smeden", { overlay = Overlay.SMITH }, Modifier.align(Alignment.Center).offset(y = 90.dp))
                     npc?.kind == NpcKind.ELDER -> GothicButton("📜 Tal med Den Ældste", { overlay = Overlay.ELDER }, Modifier.align(Alignment.Center).offset(y = 90.dp))
                 }
@@ -170,6 +171,7 @@ fun RpgScreen(
             overlay == Overlay.SHOP -> ShopScreen(game, assets, hudTick, onClose = { overlay = Overlay.NONE })
             overlay == Overlay.MAP -> MapScreen(game, onClose = { overlay = Overlay.NONE })
             overlay == Overlay.SMITH -> SmithScreen(game, assets, hudTick, onClose = { overlay = Overlay.NONE })
+            overlay == Overlay.STASH -> StashScreen(game, assets, onClose = { overlay = Overlay.NONE })
             overlay == Overlay.ELDER -> ElderScreen(game, hudTick, onClose = { overlay = Overlay.NONE })
             overlay == Overlay.SETTINGS -> SettingsScreen(music, sfx, settings, onClose = { overlay = Overlay.NONE })
         }
@@ -704,6 +706,50 @@ private fun QuestScreen(game: Game, onClose: () -> Unit) {
             }
         }
         Text("Dybeste: ${game.deepest}", color = parchment.copy(alpha = 0.6f), fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun StashGrid(game: Game, assets: Assets, title: String, items: List<Item>, capacity: Int, selected: Item?, onSelect: (Item?) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("$title  ${items.size}/$capacity", color = GOLD, fontSize = 14.sp, style = serifBold)
+        for (row in 0 until (capacity + 7) / 8) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                for (c in 0 until 8) {
+                    val item = items.getOrNull(row * 8 + c)
+                    ItemIcon(item, assets, 36.dp, selected = item != null && item === selected,
+                        upgrade = item != null && game.isUpgrade(item)) { onSelect(item) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StashScreen(game: Game, assets: Assets, onClose: () -> Unit) {
+    val p = game.player
+    var selected by remember { mutableStateOf<Item?>(null) }
+    var refresh by remember { mutableIntStateOf(0) }
+    refresh.let { }
+    DarkPanel("Din kiste", onClose) {
+        Text("Det du lægger her, er i sikkerhed.", color = parchment.copy(alpha = 0.8f), fontSize = 13.sp, fontFamily = FontFamily.Serif)
+        StashGrid(game, assets, "🗝 Kisten", game.stash, STASH_SIZE, selected) { selected = it }
+        StashGrid(game, assets, "🎒 Tasken", p.inventory, INVENTORY_SIZE, selected) { selected = it }
+        selected?.let { item ->
+            val inStash = item in game.stash
+            ItemDetail(item, p.equipment[item.slot])
+            if (inStash) {
+                GothicButton("Tag med", {
+                    if (game.fromStash(item)) selected = null
+                    refresh++
+                }, enabled = p.inventory.size < INVENTORY_SIZE)
+            } else if (item in p.inventory) {
+                GothicButton("Læg i kisten", {
+                    if (game.toStash(item)) selected = null
+                    refresh++
+                }, enabled = game.stash.size < STASH_SIZE)
+            }
+        }
     }
 }
 

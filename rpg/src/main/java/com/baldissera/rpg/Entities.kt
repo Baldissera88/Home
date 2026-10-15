@@ -378,6 +378,8 @@ enum class PropType(
     CAGE(22, 22, true, false),
     TABLE(23, 23, true, false, light = 0x44FFC46B),
     ALTAR(24, 24, true, false, light = 0x55FF1744),
+    /** The hero's own chest in the village: items put here are kept safe. */
+    STASH(4, 4, true, false, light = 0x33FFD54F),
 }
 
 /** A building or large fixture from the village sheet occupying a block of tiles. */

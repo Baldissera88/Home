@@ -393,6 +393,7 @@ class Dungeon(
                 Prop(PropType.CRATE, vx + vw - 6.5f, vy + vh - 1.5f), Prop(PropType.BARREL, vx + vw - 5.5f, vy + vh - 1.5f),
                 Prop(PropType.BARREL, vx + vw - 1.5f, vy + 5.5f), Prop(PropType.CRATE, vx + vw - 1.5f, vy + 4.5f),
                 Prop(PropType.SIGN, vx + vw / 2 + 1.8f, vy - 2.5f),
+                Prop(PropType.STASH, vx + 4.5f, vy + 2.6f),
                 Prop(PropType.GRAVESTONE, vx - 5.5f, vy - 4.5f), Prop(PropType.GRAVESTONE, vx - 3.5f, vy - 4.5f),
                 Prop(PropType.GRAVESTONE, vx - 5.5f, vy - 2.5f), Prop(PropType.SKULLS, vx - 4.5f, vy - 3f),
             )
