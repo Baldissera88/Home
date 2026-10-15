@@ -362,9 +362,9 @@ def water(seed, frame, size=128):
     phase = frame * math.pi
     waves = np.sin((xx + yy * 0.5) / size * 2 * math.pi * 3 + n * 6 + phase) * 0.5 + 0.5
     waves2 = np.sin((xx * 0.3 - yy) / size * 2 * math.pi * 4 + n * 4 - phase) * 0.5 + 0.5
-    base = mix(np.array([0.05, 0.16, 0.22]), np.array([0.10, 0.30, 0.38]), n)
-    spec = np.clip((waves * waves2 - 0.72) * 6, 0, 1)
-    col = base + spec[..., None] * np.array([0.5, 0.6, 0.6])
+    base = mix(np.array([0.04, 0.14, 0.19]), np.array([0.09, 0.27, 0.33]), n * 0.7 + waves * 0.3)
+    spec = np.clip((waves * waves2 - 0.6) * 2.5, 0, 1) ** 2
+    col = base + spec[..., None] * np.array([0.22, 0.3, 0.32])
     return np.clip(col, 0, 1)
 
 
