@@ -57,6 +57,7 @@ private val frozenTint = ColorFilter.tint(Color(0xFF9FD8FF), BlendMode.Modulate)
 private val queenTint = ColorFilter.tint(Color(0xFFC9A0FF), BlendMode.Modulate)
 private val shadowTint = ColorFilter.tint(Color(0xFF8E7CC3), BlendMode.Modulate)
 private val trollTint = ColorFilter.tint(Color(0xFFA5D6A7), BlendMode.Modulate)
+private val ghostEnemyTint = ColorFilter.tint(Color(0xFFB3E5FC), BlendMode.Modulate)
 private val whiteFlash = ColorFilter.tint(Color.White, BlendMode.SrcAtop)
 private val redFlash = ColorFilter.tint(Color(0xFFFF1744), BlendMode.SrcAtop)
 private val corpseTint = ColorFilter.tint(Color(0xFF5A4A44), BlendMode.Modulate)
@@ -203,7 +204,11 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
         drawOval(Color.Black.copy(alpha = 0.45f), Offset(cx - r * t, cy - r * t * 0.4f), Size(r * t * 2f, r * t * 0.8f))
     }
 
-    for (l in g.loot) drawLoot(l, cam, g.time, a, measurer, styles)
+    for (l in g.loot) {
+        val dx = l.x - g.player.x
+        val dy = l.y - g.player.y
+        drawLoot(l, cam, g.time, a, measurer, styles, dx * dx + dy * dy < 6.25f)
+    }
 
     // Rows: walls hide what stands behind them.
     var bi = 0
@@ -425,9 +430,12 @@ private fun DrawScope.drawEnemy(e: Enemy, g: Game, cam: Camera, a: Assets, measu
         e.type == EnemyType.SPIDER_QUEEN -> queenTint
         e.type == EnemyType.SHADOW_KING -> shadowTint
         e.type == EnemyType.TROLL -> trollTint
+        e.type == EnemyType.GHOST -> ghostEnemyTint
         else -> null
     }
-    drawSprite(sheet, col, row, cx, cy, t, scale = scale, filter = filter)
+    val ghostly = e.type == EnemyType.GHOST
+    drawSprite(sheet, col, row, cx, cy - (if (ghostly) t * 0.08f * sin(e.anim * 3f + e.phase) else 0f), t, scale = scale,
+        alpha = if (ghostly) 0.72f else 1f, filter = filter)
     if (e.flash > 0f) drawSprite(sheet, col, row, cx, cy, t, scale = scale, alpha = e.flash / 0.12f * 0.75f, filter = whiteFlash)
 
     val headY = cy - sheet.worldW * t * scale * (sheet.foot - 0.25f)
@@ -476,7 +484,7 @@ private fun DrawScope.drawMerchant(g: Game, cam: Camera, a: Assets, measurer: Te
     drawText(label, topLeft = Offset(cx - label.size.width / 2f, cy - t * 1.35f))
 }
 
-private fun DrawScope.drawLoot(l: Loot, cam: Camera, time: Float, a: Assets, measurer: TextMeasurer, styles: TextStyles) {
+private fun DrawScope.drawLoot(l: Loot, cam: Camera, time: Float, a: Assets, measurer: TextMeasurer, styles: TextStyles, near: Boolean) {
     val t = cam.t
     val bob = sin(time * 3f + l.phase) * t * 0.04f
     val cx = cam.sx(l.x)
@@ -515,6 +523,7 @@ private fun DrawScope.drawLoot(l: Loot, cam: Camera, time: Float, a: Assets, mea
             }
             drawCircle(Brush.radialGradient(listOf(rc.copy(alpha = 0.45f), Color.Transparent), Offset(cx, cy - t * 0.15f), t * 0.5f), t * 0.5f, Offset(cx, cy - t * 0.15f))
             drawIcon(a, item.icon, cx, cy - t * 0.25f + bob, t * 0.62f)
+            if (item.rarity == Rarity.COMMON && !near) return
             val label = l.label ?: measurer.measure(item.name, styles.label).also { l.label = it }
             val lx = cx - label.size.width / 2f
             val ly = cy - t * 0.72f - label.size.height

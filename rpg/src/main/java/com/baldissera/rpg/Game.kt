@@ -249,7 +249,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             val type = when {
                 nearCrypt -> EnemyType.SKELETON
                 nearWater -> EnemyType.SLIME
-                nearTrees && rnd.nextBoolean() -> EnemyType.WOLF
+                nearTrees && rnd.nextFloat() < 0.4f -> EnemyType.WOLF
+                nearTrees && rnd.nextBoolean() -> EnemyType.GOBLIN
                 nearTrees -> EnemyType.SPIDER
                 lvl >= 3 && rnd.nextFloat() < 0.3f -> EnemyType.BRUTE
                 else -> EnemyType.BANDIT
@@ -276,11 +277,11 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     private fun spawnPool(): List<EnemyType> = when (dungeon.biome) {
         Biome.CRYPT -> buildList {
             addAll(listOf(EnemyType.SLIME, EnemyType.BAT, EnemyType.SKELETON, EnemyType.SKELETON))
-            if (floor >= 2) add(EnemyType.CULTIST)
+            if (floor >= 2) { add(EnemyType.CULTIST); add(EnemyType.GHOST); add(EnemyType.GHOST) }
             if (floor >= 3) add(EnemyType.BRUTE)
         }
         Biome.CAVE -> listOf(EnemyType.SPIDER, EnemyType.SPIDER, EnemyType.BAT, EnemyType.SLIME, EnemyType.BRUTE, EnemyType.WOLF)
-        Biome.HELL -> listOf(EnemyType.CULTIST, EnemyType.CULTIST, EnemyType.BRUTE, EnemyType.SKELETON, EnemyType.SPIDER, EnemyType.BAT)
+        Biome.HELL -> listOf(EnemyType.CULTIST, EnemyType.IMP, EnemyType.IMP, EnemyType.BRUTE, EnemyType.SKELETON, EnemyType.GHOST, EnemyType.BAT)
         Biome.OVERWORLD -> listOf(EnemyType.BANDIT)
     }
 
@@ -921,9 +922,10 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     private fun rollBounties() {
         bountyOffers.clear()
         val pool = buildList {
-            addAll(listOf(EnemyType.WOLF, EnemyType.BANDIT, EnemyType.SLIME, EnemyType.SKELETON))
+            addAll(listOf(EnemyType.WOLF, EnemyType.BANDIT, EnemyType.SLIME, EnemyType.SKELETON, EnemyType.GOBLIN))
             if (questStage >= 1 || deepest >= 3) addAll(listOf(EnemyType.SPIDER, EnemyType.CULTIST, EnemyType.BRUTE))
-            if (questStage >= 2) add(EnemyType.BAT)
+            if (questStage >= 1) add(EnemyType.GHOST)
+            if (questStage >= 2) { add(EnemyType.BAT); add(EnemyType.IMP) }
         }.shuffled(rnd).take(3)
         for (t in pool) {
             val need = when (t) {
@@ -1038,11 +1040,13 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         EnemyType.SKELETON, EnemyType.SKELETON_KING -> Color(0xFFE0D8C3)
         EnemyType.BAT -> Color(0xFF7B1FA2)
         EnemyType.SPIDER, EnemyType.SPIDER_QUEEN -> Color(0xFF9CCC65)
-        EnemyType.CULTIST, EnemyType.BRUTE, EnemyType.WOLF, EnemyType.BANDIT, EnemyType.TROLL -> Color(0xFF8E1B1B)
+        EnemyType.CULTIST, EnemyType.BRUTE, EnemyType.WOLF, EnemyType.BANDIT, EnemyType.TROLL, EnemyType.GOBLIN -> Color(0xFF8E1B1B)
+        EnemyType.GHOST -> Color(0xFFB3E5FC)
+        EnemyType.IMP -> Color(0xFFFF6E40)
         EnemyType.DEMON_LORD, EnemyType.SHADOW_KING -> Color(0xFFFF5722)
     }
 
-    private fun bleeds(t: EnemyType) = t != EnemyType.SKELETON && t != EnemyType.SKELETON_KING && t != EnemyType.SLIME
+    private fun bleeds(t: EnemyType) = t != EnemyType.SKELETON && t != EnemyType.SKELETON_KING && t != EnemyType.SLIME && t != EnemyType.GHOST
 
     private fun damageEnemy(e: Enemy, base: Float, knock: Float) {
         val crit = rnd.nextInt(100) < player.critChance
@@ -1342,7 +1346,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 if (e.windup <= 0f) {
                     if (e.type.ranged) {
                         projectiles += Projectile(e.x, e.y, e.faceX * 6f, e.faceY * 6f, e.dmg, hostile = true,
-                            color = Color(0xFFD500F9), life = 2.5f, radius = 0.16f)
+                            color = if (e.type == EnemyType.IMP) Color(0xFFFF6D00) else Color(0xFFD500F9), life = 2.5f, radius = 0.16f)
                         sfx.fireball()
                     } else if (e.type == EnemyType.WOLF && d < 3f) {
                         // Wolves leap at their prey.
@@ -1358,6 +1362,15 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             }
 
             if (e.type.boss) bossAbilities(e, dt, spawned)
+
+            // Goblins run away when they are losing.
+            if (e.type == EnemyType.GOBLIN && e.hp < e.maxHp * 0.4f && d < 6f) {
+                move(e, -dx / d * e.type.speed * dt, -dy / d * e.type.speed * dt, e.type.radius)
+                e.faceX = -dx / d
+                e.faceY = -dy / d
+                e.moving = true
+                continue
+            }
 
             if (e.type.ranged) {
                 if (d < 7f && e.cooldown <= 0f) {

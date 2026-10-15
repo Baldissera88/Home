@@ -37,6 +37,9 @@ DIRECTIONAL = {
     "spr_wolf": (M.wolf, 128, 1.7, 0.8),
     "spr_villager_f": (lambda f: M.humanoid(f, M.VILLAGER_F), 128, 1.7, 0.86),
     "spr_villager_m": (lambda f: M.humanoid(f, M.VILLAGER_M), 128, 1.7, 0.86),
+    "spr_ghost": (M.ghost, 128, 1.7, 0.86),
+    "spr_imp": (M.imp, 96, 1.2, 0.86),
+    "spr_goblin": (lambda f: M.humanoid(f, M.GOBLIN), 96, 1.3, 0.86),
 }
 STRIPS = {
     "spr_slime": (M.slime, 96, 1.1, 0.82),

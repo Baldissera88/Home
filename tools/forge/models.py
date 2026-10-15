@@ -1331,3 +1331,90 @@ def elder(i):
         capsule(v(-0.15, 0.75, 0), v(-0.12, 0.45, 0.12), 0.05, "cloth_white", rb=0.06),
         box(v(0, 0.6, 0.16), v(0.03, 0.15, 0.01), "cloth_blue"),
     ]
+
+
+# ================================================================ v5: more monsters
+
+
+def ghost(frame):
+    kind, i = frame
+    swing, lift = _walk(frame)
+    hover = 0.25 + 0.04 * math.sin((i + (4 if kind == "atk" else 0)) * math.pi / 2)
+    reach = [0.0, 0.3, 0.15][i] if kind == "atk" else 0.0
+    out = [
+        capsule(v(0, 0.95 + hover, 0), v(swing * 0.05, 0.12 + hover, -0.06), 0.13, "cloth_white", rb=0.24),
+        sphere(v(0, 1.05 + hover, 0.0), 0.13, "cloth_white"),
+        sphere(v(0, 1.03 + hover, 0.07), 0.095, "black", op="sub"),
+        sphere(v(0.035, 1.04 + hover, 0.06), 0.017, "rune_blue"),
+        sphere(v(-0.035, 1.04 + hover, 0.06), 0.017, "rune_blue"),
+    ]
+    for k in range(6):
+        a = k * math.pi / 3 + swing * 0.3
+        out.append(capsule(v(math.cos(a) * 0.2, 0.18 + hover, math.sin(a) * 0.2), v(math.cos(a) * 0.24, 0.0 + hover * 0.6, math.sin(a) * 0.24),
+                           0.05, "cloth_white", rb=0.01))
+    for side in (1, -1):
+        sh = v(0.15 * side, 0.85 + hover, 0)
+        hand = sh + v(0.08 * side, -0.25 + reach, 0.12 + reach * 1.2)
+        out += [capsule(sh, hand, 0.05, "cloth_white", rb=0.035), capsule(hand, hand + v(0.02 * side, -0.02, 0.08), 0.015, "bone_dark", rb=0.004)]
+    return out
+
+
+def imp(frame):
+    kind, i = frame
+    swing, lift = _walk(frame)
+    s = 0.62
+    b = -0.02 * (1 - lift)
+    throw = [0.2, 1.0, 0.5][i] if kind == "atk" else 0.0
+    out = [
+        ellipsoid(v(0, 0.62 + b, 0) * s, v(0.18, 0.2, 0.15) * s, "demon"),
+        ellipsoid(v(0, 0.42 + b, 0.02) * s, v(0.14, 0.12, 0.12) * s, "demon_dark"),
+        sphere(v(0, 0.92 + b, 0.04) * s, 0.15 * s, "demon"),
+        sphere(v(0.05, 0.95 + b, 0.17) * s, 0.025 * s, "eye_yellow"),
+        sphere(v(-0.05, 0.95 + b, 0.17) * s, 0.025 * s, "eye_yellow"),
+        box(v(0, 0.85 + b, 0.15) * s, v(0.06, 0.015, 0.02) * s, "black"),
+        capsule(v(0, 0.45, -0.12) * s, v(0.1 * swing, 0.3, -0.45) * s, 0.03 * s, "demon_dark", rb=0.01 * s),
+        octa(v(0.1 * swing, 0.3, -0.48) * s, 0.05 * s, "demon_dark"),
+    ]
+    for side in (1, -1):
+        h0 = v(0.08 * side, 1.02 + b, 0.02) * s
+        out.append(capsule(h0, h0 + v(0.08 * side, 0.14, -0.05) * s, 0.03 * s, "horn", rb=0.005 * s))
+        root = v(0.1 * side, 0.7 + b, -0.12) * s
+        tip = root + v(0.35 * side, 0.25 + 0.1 * swing, -0.15) * s
+        out += [capsule(root, tip, 0.02 * s, "demon_dark"), ellipsoid((root + tip) / 2 + v(0, -0.06, 0) * s, v(0.16, 0.01, 0.1) * s, "bat_wing",
+                                                                     rot=rot_z(0.6 * side))]
+        a = swing * 0.5 * side
+        hip = v(0.08 * side, 0.4 + b, 0) * s
+        foot = hip + v(0, -0.38 * math.cos(a), 0.38 * math.sin(a)) * s
+        foot[1] = max(foot[1], 0.02)
+        out.append(capsule(hip, foot, 0.04 * s, "demon_dark"))
+    hand_r = v(0.2, 0.62 + 0.4 * throw, 0.1 + 0.15 * throw) * s
+    out += [capsule(v(0.16, 0.72, 0) * s, hand_r, 0.035 * s, "demon"), capsule(v(-0.16, 0.72, 0) * s, v(-0.22, 0.48, 0.06) * s, 0.035 * s, "demon")]
+    if kind == "atk":
+        out.append(sphere(hand_r + v(0, 0.06, 0.02) * s, 0.06 * s, "coal"))
+    return out
+
+
+def _goblin_head(c, s, tw, swing):
+    return [
+        sphere(c, 0.12 * s, "orc"),
+        capsule(c + v(0, 0.0, 0.1) * s, c + v(0, -0.04, 0.17) * s, 0.03 * s, "orc_dark", rb=0.015 * s),
+        capsule(c + v(0.1, 0.02, 0) * s, c + v(0.24, 0.07, -0.04) * s, 0.04 * s, "orc", rb=0.006 * s),
+        capsule(c + v(-0.1, 0.02, 0) * s, c + v(-0.24, 0.07, -0.04) * s, 0.04 * s, "orc", rb=0.006 * s),
+        sphere(c + v(0.045, 0.03, 0.1) * s, 0.02 * s, "eye_yellow"),
+        sphere(c + v(-0.045, 0.03, 0.1) * s, 0.02 * s, "eye_yellow"),
+        box(c + v(0, -0.06, 0.1) * s, v(0.05, 0.01, 0.01) * s, "black"),
+        cylinder(c + v(0, 0.09, 0) * s, 0.09 * s, 0.03 * s, "darkleather", rnd=0.02),
+    ]
+
+
+def _goblin_vest(T, s, swing):
+    return [box(T(v(0, 0.6, 0.06) * s), v(0.15, 0.17, 0.06) * s, "darkleather", rnd=0.04),
+            cylinder(T(v(0, 0.47, 0) * s), 0.15 * s, 0.03 * s, "leather"),
+            ellipsoid(T(v(-0.12, 0.45, -0.1) * s), v(0.08, 0.1, 0.06) * s, "parchment")]
+
+
+GOBLIN = dict(
+    scale=0.74, torso="orc", torso_r=(0.15, 0.18, 0.11), thigh="orc_dark", shin="orc", boot=None,
+    upper_arm="orc", forearm="orc", hand="orc_dark", neck="orc", head_y=0.9,
+    torso_extra=_goblin_vest, head=_goblin_head, right=_dagger, left=None,
+)
