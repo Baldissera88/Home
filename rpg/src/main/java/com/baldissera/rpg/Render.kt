@@ -136,10 +136,12 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
                     Offset(l.toFloat(), tp.toFloat()), Size(sz.width.toFloat(), t * 0.3f),
                 )
             }
+            if (ground != null) drawEdges(a, x, y, l, tp, sz, 2) { cx, cy -> d.tile(cx, cy) != WATER }
             continue
         }
         if (ground != null) {
             drawImage(a.ground, IntOffset(ground[i] * 128, 0), IntSize(128, 128), IntOffset(l, tp), sz, filterQuality = FilterQuality.Medium)
+            if (!grassy(d, x, y)) drawEdges(a, x, y, l, tp, sz, 0) { cx, cy -> grassy(d, cx, cy) }
         } else {
             // Dungeon floors are one large texture covering 4x4 tiles, sampled by position.
             drawImage(floorImg, IntOffset((x and 3) * 128, (y and 3) * 128), IntSize(128, 128), IntOffset(l, tp), sz, filterQuality = FilterQuality.Medium)
@@ -735,6 +737,41 @@ private fun DrawScope.drawNpc(n: Npc, g: Game, cam: Camera, a: Assets, measurer:
         val by = cy - t * 1.75f - layout.size.height
         drawRoundRect(Color(0xF0F3E9D2), Offset(bx - 8f, by - 5f), Size(layout.size.width + 16f, layout.size.height + 10f), CornerRadius(10f))
         drawText(layout, topLeft = Offset(bx, by))
+    }
+}
+
+// ---------------------------------------------------------------- ground transitions
+
+private val EDGE_DX = intArrayOf(0, 1, 0, -1)
+private val EDGE_DY = intArrayOf(-1, 0, 1, 0)
+private val CORNER_DX = intArrayOf(-1, 1, 1, -1)
+private val CORNER_DY = intArrayOf(-1, -1, 1, 1)
+
+/** Whether an overworld cell is covered in grass (paths and sand get soft grass borders from these). */
+private fun grassy(d: Dungeon, x: Int, y: Int): Boolean {
+    val gr = d.ground ?: return false
+    if (x < 0 || y < 0 || x >= d.w || y >= d.h) return true
+    if (d.tile(x, y) == WATER) return false
+    val v = gr[y * d.w + x]
+    return v < Ground.DIRT || v == Ground.FLOWERS
+}
+
+/**
+ * Overlays soft, irregular borders on a cell from the neighbours that [other] selects:
+ * edge pieces for side neighbours and rounded corner pieces for diagonal ones.
+ * [piece] picks the strip in tex_ground_edges (0 = grass, 2 = shore); pieces are authored for the top/top-left.
+ */
+private inline fun DrawScope.drawEdges(a: Assets, x: Int, y: Int, l: Int, tp: Int, sz: IntSize, piece: Int, other: (Int, Int) -> Boolean) {
+    val pivot = Offset(l + sz.width / 2f, tp + sz.height / 2f)
+    for (k in 0..3) {
+        val side = other(x + EDGE_DX[k], y + EDGE_DY[k])
+        val corner = !side && other(x + CORNER_DX[k], y + CORNER_DY[k]) &&
+            !other(x + CORNER_DX[k], y) && !other(x, y + CORNER_DY[k])
+        if (!side && !corner) continue
+        val src = IntOffset((piece + if (side) 0 else 1) * 128, 0)
+        rotate(k * 90f, pivot) {
+            drawImage(a.groundEdges, src, IntSize(128, 128), IntOffset(l, tp), sz, filterQuality = FilterQuality.Medium)
+        }
     }
 }
 

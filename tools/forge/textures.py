@@ -502,3 +502,77 @@ def fog(seed, size=256):
     a = np.clip((n - 0.38) * 2.2, 0, 1) ** 1.3
     rgb = np.ones((size, size, 3))
     return to_img(rgb, a * 0.85)
+
+
+# ---------------------------------------------------------------- v5: soft ground transitions
+
+def _periodic_wave(n, seed, amp, terms=4):
+    """A 1D periodic wobble of length n (so neighbouring edge tiles meet seamlessly)."""
+    r = np.random.default_rng(seed)
+    x = np.arange(n) / n * 2 * math.pi
+    out = np.zeros(n)
+    for k in range(1, terms + 1):
+        out += np.sin(x * (k + 1) + r.uniform(0, 2 * math.pi)) / k
+    return out / np.max(np.abs(out)) * amp
+
+
+def _over(top_rgb, top_a, bot_rgb, bot_a):
+    a = top_a + bot_a * (1 - top_a)
+    rgb = (top_rgb * top_a[..., None] + bot_rgb * (bot_a * (1 - top_a))[..., None]) / np.maximum(a, 1e-6)[..., None]
+    return rgb, a
+
+
+def _grass_alpha(dist, size, seed):
+    """Alpha of overhanging grass given a distance-into-the-cell field (pixels)."""
+    r = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:size, 0:size]
+    a = np.clip((dist < 0) * 1.0 + np.clip(0.5 - dist / 6.0, 0, 1), 0, 1)
+    # Individual blades poking past the edge.
+    blades = np.zeros((size, size))
+    for _ in range(70):
+        x = r.integers(0, size)
+        length = r.uniform(4, 14)
+        lean = r.uniform(-0.25, 0.25)
+        for s in np.linspace(0, 1, 16):
+            px = int(round(x + lean * length * s)) % size
+            mask = (xx == px) & (dist > -1) & (dist < length * s + 0.5) & (dist > length * s - 2.5)
+            blades = np.maximum(blades, mask * (1 - s * 0.4))
+    return np.clip(np.maximum(a, blades), 0, 1)
+
+
+def ground_edges(size=128):
+    """[grass edge, grass outer corner, shore edge, shore outer corner] as one RGBA strip.
+    Edges are authored for a neighbour at the top, corners for a neighbour at the top-left."""
+    yy, xx = np.mgrid[0:size, 0:size].astype(float)
+    grass = shade(fbm(size, size, 32, 2, 704) * 0.6 + fbm(size, size, 4, 5, 700) * 0.4,
+                  mix(np.array([0.17, 0.30, 0.09]), np.array([0.34, 0.45, 0.15]), fbm(size, size, 4, 5, 700) * 0.8), 4.0, 0.55)
+    black = np.zeros((size, size, 3))
+
+    def grass_piece(dist):
+        ga = _grass_alpha(dist, size, 41)
+        shadow = np.clip(1 - np.abs(dist - 5) / 9, 0, 1) * 0.35 * (dist > -2)
+        rgb, a = _over(grass, ga, black, shadow)
+        return to_img(rgb, a)
+
+    edge_line = 22 + _periodic_wave(size, 5, 10)
+    grass_edge = grass_piece(yy - edge_line[None, :])
+    corner_r = 30 + _periodic_wave(size, 9, 6)[np.clip((np.arctan2(yy, xx) / (math.pi / 2) * (size - 1)).astype(int), 0, size - 1)]
+    grass_corner = grass_piece(np.hypot(xx, yy) - corner_r)
+
+    wet = np.array([0.36, 0.33, 0.26])
+    foam = np.array([0.92, 0.95, 0.97])
+
+    def shore_piece(dist):
+        sand_a = np.clip(0.5 - dist / 3.0, 0, 1) * 0.9
+        f = fbm(size, size, 16, 3, 77)
+        foam_a = np.clip(1 - np.abs(dist - 4) / 3.5, 0, 1) * np.clip((f - 0.3) * 2.5, 0, 1) * 0.85
+        glow_a = np.clip(1 - (dist - 4) / 16, 0, 1) * (dist > 4) * 0.18
+        rgb, a = _over(foam[None, None, :] * np.ones((size, size, 3)), foam_a, wet[None, None, :] * np.ones((size, size, 3)), sand_a)
+        rgb, a = _over(rgb, a, foam[None, None, :] * np.ones((size, size, 3)), glow_a)
+        return to_img(rgb, a)
+
+    shore_line = 9 + _periodic_wave(size, 13, 5)
+    shore_edge = shore_piece(yy - shore_line[None, :])
+    shore_r = 15 + _periodic_wave(size, 17, 1.5)[np.clip((np.arctan2(yy, xx) / (math.pi / 2) * (size - 1)).astype(int), 0, size - 1)]
+    shore_corner = shore_piece(np.hypot(xx, yy) - shore_r)
+    return np.concatenate([grass_edge, grass_corner, shore_edge, shore_corner], axis=1)

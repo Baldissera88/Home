@@ -89,6 +89,7 @@ def textures():
     waters = np.concatenate([T.water(600, f) for f in range(2)], axis=1)
     Image.fromarray(T.to_img(waters)).save(f"{OUT}/tex_water.png", optimize=True)
     Image.fromarray(T.fog(900)).save(f"{OUT}/tex_fog.png", optimize=True)
+    Image.fromarray(T.ground_edges()).save(f"{OUT}/tex_ground_edges.png", optimize=True)
     decals = [T.decal_blood(400 + i) for i in range(4)] + [T.decal_scorch(500)]
     Image.fromarray(np.concatenate(decals, axis=1)).save(f"{OUT}/tex_decals.png", optimize=True)
 
