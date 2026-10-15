@@ -542,11 +542,14 @@ private fun DrawScope.drawMerchant(g: Game, cam: Camera, a: Assets, measurer: Te
 
 private fun DrawScope.drawLoot(l: Loot, cam: Camera, time: Float, a: Assets, measurer: TextMeasurer, styles: TextStyles, near: Boolean) {
     val t = cam.t
-    val bob = sin(time * 3f + l.phase) * t * 0.04f
+    val bob = if (l.flying) 0f else sin(time * 3f + l.phase) * t * 0.04f
     val cx = cam.sx(l.x)
-    val cy = cam.sy(l.y)
-    if (cx < -t * 2 || cy < -t * 3 || cx > size.width + t * 2 || cy > size.height + t * 2) return
-    drawOval(Color.Black.copy(alpha = 0.4f), Offset(cx - t * 0.18f, cy - t * 0.05f), Size(t * 0.36f, t * 0.12f))
+    val gy = cam.sy(l.y)
+    if (cx < -t * 2 || gy < -t * 3 || cx > size.width + t * 2 || gy > size.height + t * 2) return
+    // The shadow stays on the ground and shrinks while the loot is in the air.
+    val sh = 1f / (1f + l.z * 1.5f)
+    drawOval(Color.Black.copy(alpha = 0.4f * sh), Offset(cx - t * 0.18f * sh, gy - t * 0.05f * sh), Size(t * 0.36f * sh, t * 0.12f * sh))
+    val cy = gy - l.z * t
     when (val k = l.kind) {
         is LootKind.Gold -> {
             for ((i, o) in listOf(Offset(-0.08f, 0f), Offset(0.08f, 0.02f), Offset(0f, -0.07f), Offset(0.03f, 0.05f)).withIndex()) {

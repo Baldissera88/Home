@@ -489,7 +489,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         updateNpcs(dt)
         updateEnemies(dt)
         updateProjectiles(dt)
-        updateLoot()
+        updateLoot(dt)
         reveal()
     }
 
@@ -1082,8 +1082,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         if (inVillage) return
         val lvl = levelHere(pr.x, pr.y)
         when {
-            rnd.nextFloat() < 0.55f -> loot += Loot(pr.x, pr.y + 0.1f, LootKind.Gold(goldAmount(rnd.nextInt(2, 8) * lvl)))
-            rnd.nextFloat() < 0.15f -> loot += Loot(pr.x, pr.y + 0.1f, LootKind.Potion)
+            rnd.nextFloat() < 0.55f -> loot += pop(Loot(pr.x, pr.y + 0.1f, LootKind.Gold(goldAmount(rnd.nextInt(2, 8) * lvl))), 0.6f)
+            rnd.nextFloat() < 0.15f -> loot += pop(Loot(pr.x, pr.y + 0.1f, LootKind.Potion), 0.6f)
             rnd.nextFloat() < 0.08f -> dropGear(pr.x, pr.y + 0.1f, makeItem(ilvl(), Rarity.COMMON, false))
         }
     }
@@ -1093,11 +1093,11 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         sfx.equip()
         burst(pr.x, pr.y - 0.2f, GOLD, 30, glow = true)
         val lvl = levelHere(pr.x, pr.y)
-        loot += Loot(pr.x - 0.4f, pr.y + 0.5f, LootKind.Gold(goldAmount(rnd.nextInt(8, 20) * lvl)))
+        loot += pop(Loot(pr.x, pr.y + 0.3f, LootKind.Gold(goldAmount(rnd.nextInt(8, 20) * lvl))))
         repeat(rnd.nextInt(1, 3)) {
             dropGear(pr.x + (it - 0.5f) * 0.7f, pr.y + 0.6f, makeItem(ilvl(), Rarity.MAGIC, false))
         }
-        if (rnd.nextFloat() < 0.4f) loot += Loot(pr.x + 0.4f, pr.y + 0.5f, LootKind.Potion)
+        if (rnd.nextFloat() < 0.4f) loot += pop(Loot(pr.x, pr.y + 0.3f, LootKind.Potion))
         showMessage("Skattekiste!", GOLD)
     }
 
@@ -1255,8 +1255,19 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     private fun goldAmount(base: Int) = max(1, (base * (1f + player.goldFind / 100f)).toInt())
 
+    /** Throws freshly dropped loot up and out in a little arc. */
+    private fun pop(l: Loot, spread: Float = 1f): Loot {
+        val a = rnd.nextFloat() * 2f * PI.toFloat()
+        val s = (0.5f + rnd.nextFloat() * 1.3f) * spread
+        l.vx = cos(a) * s
+        l.vy = sin(a) * s * 0.8f + 0.3f
+        l.vz = 4.5f + rnd.nextFloat() * 2f
+        l.z = 0.01f
+        return l
+    }
+
     private fun dropGear(x: Float, y: Float, item: Item) {
-        loot += Loot(x, y, LootKind.Gear(item))
+        loot += pop(Loot(x, y, LootKind.Gear(item)))
         if (item.rarity >= Rarity.EPIC) {
             sfx.levelUp()
             ring(x, y, 0.2f, item.rarity.color, 24, 2.5f)
@@ -1268,9 +1279,9 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         val lvl = e.level
         if (boss || rnd.nextFloat() < 0.6f) {
             val amount = rnd.nextInt(3, 11) * lvl * (if (boss) 12 else if (e.elite) 3 else 1)
-            loot += Loot(e.x + jitter(), e.y + jitter(), LootKind.Gold(goldAmount(amount)))
+            loot += pop(Loot(e.x, e.y, LootKind.Gold(goldAmount(amount))))
         }
-        if (rnd.nextFloat() < (if (boss) 1f else 0.1f)) loot += Loot(e.x + jitter(), e.y + jitter(), LootKind.Potion)
+        if (rnd.nextFloat() < (if (boss) 1f else 0.1f)) loot += pop(Loot(e.x, e.y, LootKind.Potion))
         val gearChance = when {
             boss -> 1f
             e.elite -> 1f
@@ -1285,7 +1296,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                     boss || e.elite -> Rarity.MAGIC
                     else -> Rarity.COMMON
                 }
-                dropGear(e.x + jitter(), e.y + jitter(), makeItem(lvl + player.level / 2, min, boss))
+                dropGear(e.x, e.y, makeItem(lvl + player.level / 2, min, boss))
             }
         }
     }
@@ -1682,10 +1693,33 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         }
     }
 
-    private fun updateLoot() {
+    private fun updateLoot(dt: Float) {
         val iter = loot.iterator()
         while (iter.hasNext()) {
             val l = iter.next()
+            if (l.flying) {
+                val nx = l.x + l.vx * dt
+                val ny = l.y + l.vy * dt
+                if (dungeon.walkableAt(nx, ny)) {
+                    l.x = nx
+                    l.y = ny
+                }
+                l.vz -= 24f * dt
+                l.z += l.vz * dt
+                if (l.z <= 0f) {
+                    l.z = 0f
+                    if (l.vz < -2.5f) {
+                        l.vz = -l.vz * 0.35f
+                        l.vx *= 0.5f
+                        l.vy *= 0.5f
+                    } else {
+                        l.vz = 0f
+                        l.vx = 0f
+                        l.vy = 0f
+                    }
+                }
+                continue
+            }
             val d = hypot(l.x - player.x, l.y - player.y)
             // Gold and potions are pulled towards the hero.
             if (l.kind !is LootKind.Gear && d < 2.4f && d > 0.05f) {

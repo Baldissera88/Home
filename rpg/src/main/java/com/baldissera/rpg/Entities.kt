@@ -334,6 +334,12 @@ sealed interface LootKind {
 class Loot(var x: Float, var y: Float, val kind: LootKind) {
     val phase = Random.nextFloat() * 6.28f
     var label: TextLayoutResult? = null
+    /** Height and velocity while it flies out of a monster or chest. */
+    var z = 0f
+    var vz = 0f
+    var vx = 0f
+    var vy = 0f
+    val flying: Boolean get() = z > 0f || vz != 0f
 }
 
 /**
