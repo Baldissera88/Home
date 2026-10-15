@@ -15,7 +15,7 @@ class SpriteSheet(
     val foot: Float,
 )
 
-class Assets(res: Resources) {
+class Assets(private val res: Resources) {
     private val opts = BitmapFactory.Options().apply { inScaled = false }
     private fun load(id: Int): ImageBitmap = BitmapFactory.decodeResource(res, id, opts).asImageBitmap()
 
