@@ -190,6 +190,15 @@ class GameRenderTest {
         }
         step(g, 30)
         render(g, a, "13_cave_grotto")
+
+        g.enterFloor(0)
+        g.enemies.clear()
+        g.time = 60f
+        g.rain = 1f
+        g.player.x = g.dungeon.village!!.x + 8.5f
+        g.player.y = g.dungeon.village!!.y + 15.5f
+        step(g, 5)
+        render(g, a, "14_world_rain")
     }
 
     @Test

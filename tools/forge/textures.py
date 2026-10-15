@@ -495,3 +495,10 @@ def floor_hell_big(seed, size=512):
 
 BIG_FLOORS = {"crypt": floor_crypt_big, "cave": floor_cave_big, "hell": floor_hell_big}
 DARK_TOPS = {"crypt": [0.15, 0.14, 0.13], "cave": [0.16, 0.12, 0.09], "hell": [0.13, 0.06, 0.05]}
+
+
+def fog(seed, size=256):
+    n = fbm(size, size, 3, 5, seed)
+    a = np.clip((n - 0.38) * 2.2, 0, 1) ** 1.3
+    rgb = np.ones((size, size, 3))
+    return to_img(rgb, a * 0.85)

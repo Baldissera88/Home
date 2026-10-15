@@ -126,6 +126,17 @@ fun RpgScreen(
                     npc?.kind == NpcKind.ELDER -> GothicButton("📜 Tal med Den Ældste", { overlay = Overlay.ELDER }, Modifier.align(Alignment.Center).offset(y = 90.dp))
                 }
             }
+            game.bossIntro?.let { name ->
+                val k = game.bossIntroTime
+                Column(
+                    Modifier.align(Alignment.Center).offset(y = (-40).dp).graphicsLayer { alpha = (k / 0.6f).coerceIn(0f, 1f) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(name.uppercase(), color = Color(0xFFFF5252), fontSize = 34.sp, textAlign = TextAlign.Center,
+                        style = serifBold.copy(fontWeight = FontWeight.Black, shadow = Shadow(Color(0xFF7F0000), Offset.Zero, 24f)))
+                    Text("— forbereder sig på kamp —", color = parchment.copy(alpha = 0.8f), fontSize = 14.sp, fontFamily = FontFamily.Serif)
+                }
+            }
             game.message?.let { msg ->
                 Text(
                     msg,

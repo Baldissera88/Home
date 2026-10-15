@@ -96,6 +96,15 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     var camY = 0f
         private set
     private var hitStop = 0f
+    /** 0..1 strength of the current rain shower (outdoors only). */
+    var rain = 0f
+        internal set
+    private var rainTarget = 0f
+    private var weatherTimer = 90f
+    var bossIntro: String? = null
+        private set
+    var bossIntroTime = 0f
+        private set
     val stock = mutableListOf<Item>()
     /** The elder's current offers and the accepted contract. */
     val bountyOffers = mutableListOf<Bounty>()
@@ -162,7 +171,15 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     /** 0 = midnight, 1 = noon. A full day lasts six minutes. */
     val daylight: Float get() = 0.5f + 0.5f * cos(time * 2f * PI.toFloat() / 360f)
-    val darknessAlpha: Float get() = if (inWorld) 0.08f + (1f - daylight) * 0.62f else dungeon.biome.darknessAlpha
+    val darknessAlpha: Float get() = if (inWorld) min(0.85f, 0.08f + (1f - daylight) * 0.62f + rain * 0.18f) else dungeon.biome.darknessAlpha
+
+    /** How thick the drifting fog is right now. */
+    val fogAmount: Float get() = when {
+        inWorld -> 0.04f + rain * 0.1f + max(0f, 0.25f - abs(daylight - 0.45f)) * 0.6f
+        dungeon.biome == Biome.CAVE -> 0.2f
+        dungeon.biome == Biome.CRYPT -> 0.12f
+        else -> 0.1f
+    }
 
     /** Whether a hero existed when the app started (decides if the title screen offers "continue"). */
     val hasSave: Boolean = prefs.contains("save3")
@@ -436,6 +453,11 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         updateTexts(dt)
         ambientParticles()
         updateCamera(dt)
+        updateWeather(dt)
+        if (bossIntroTime > 0f) {
+            bossIntroTime -= dt
+            if (bossIntroTime <= 0f) bossIntro = null
+        }
         corpses.removeAll { it.age += dt; it.age > 1.2f }
         ghosts.removeAll { it.age += dt; it.age > 0.3f }
         if (dead || victory) return
@@ -445,6 +467,16 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         updateProjectiles(dt)
         updateLoot()
         reveal()
+    }
+
+    private fun updateWeather(dt: Float) {
+        weatherTimer -= dt
+        if (weatherTimer <= 0f) {
+            weatherTimer = 70f + rnd.nextFloat() * 120f
+            rainTarget = if (rainTarget > 0f || rnd.nextFloat() < 0.6f) 0f else 0.5f + rnd.nextFloat() * 0.5f
+        }
+        val target = if (inWorld) rainTarget else 0f
+        rain += (target - rain) * min(1f, dt * 0.4f)
     }
 
     private fun updateCamera(dt: Float) {
@@ -1334,7 +1366,14 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             val dx = player.x - e.x
             val dy = player.y - e.y
             val d = hypot(dx, dy).coerceAtLeast(0.001f)
-            if (!e.aggro && d < e.type.aggro && !inVillage) e.aggro = true
+            if (!e.aggro && d < e.type.aggro && !inVillage) {
+                e.aggro = true
+                if (e.type.boss) {
+                    bossIntro = e.type.label
+                    bossIntroTime = 3.2f
+                    shake = max(shake, 0.5f)
+                }
+            }
             if (e.aggro && inVillage && d > 4f) e.aggro = false
             if (!e.aggro) continue
             e.faceX = dx / d

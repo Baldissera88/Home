@@ -32,6 +32,7 @@ class Assets(private val res: Resources) {
     val bandit = SpriteSheet(load(R.drawable.spr_bandit), 128, 1.7f, 0.86f)
     val world = SpriteSheet(load(R.drawable.spr_world), 160, 2.6f, 0.88f)
     val ground = load(R.drawable.tex_world_ground)
+    val fog = load(R.drawable.tex_fog)
     val ghost = SpriteSheet(load(R.drawable.spr_ghost), 128, 1.7f, 0.86f)
     val imp = SpriteSheet(load(R.drawable.spr_imp), 96, 1.2f, 0.86f)
     val goblin = SpriteSheet(load(R.drawable.spr_goblin), 96, 1.3f, 0.86f)

@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
@@ -251,6 +252,9 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
         }
     }
 
+    drawFog(g, a, cam)
+    if (g.rain > 0.02f) drawRain(g)
+
     // Coloured light spill on top of the scene.
     fun spill(x: Float, y: Float, radius: Float, color: Color) {
         val c = Offset(cam.sx(x), cam.sy(y))
@@ -276,11 +280,15 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
     for (ft in g.texts) {
         val layout = ft.layout ?: measurer.measure(ft.text, if (ft.big) styles.big else styles.small).also { ft.layout = it }
         val maxAge = if (ft.big) 1.3f else 1f
-        drawText(
-            layout, color = ft.color,
-            topLeft = Offset(cam.sx(ft.x) - layout.size.width / 2f, cam.sy(ft.y) - layout.size.height / 2f),
-            alpha = (1f - ft.age / maxAge).coerceIn(0f, 1f),
-        )
+        val pop = if (ft.big) 1f + 0.6f * max(0f, 1f - ft.age * 6f) else 1f
+        val center = Offset(cam.sx(ft.x), cam.sy(ft.y))
+        withTransform({ scale(pop, pop, center) }) {
+            drawText(
+                layout, color = ft.color,
+                topLeft = Offset(center.x - layout.size.width / 2f, center.y - layout.size.height / 2f),
+                alpha = (1f - ft.age / maxAge).coerceIn(0f, 1f),
+            )
+        }
     }
 }
 
@@ -695,5 +703,52 @@ private fun DrawScope.drawNpc(n: Npc, g: Game, cam: Camera, a: Assets, measurer:
         val by = cy - t * 1.75f - layout.size.height
         drawRoundRect(Color(0xF0F3E9D2), Offset(bx - 8f, by - 5f), Size(layout.size.width + 16f, layout.size.height + 10f), CornerRadius(10f))
         drawText(layout, topLeft = Offset(bx, by))
+    }
+}
+
+// ---------------------------------------------------------------- weather
+
+private val hellFog = ColorFilter.tint(Color(0xFFFF8A65), BlendMode.Modulate)
+private val caveFog = ColorFilter.tint(Color(0xFFB2DFDB), BlendMode.Modulate)
+
+/** Two layers of soft fog drifting at different speeds, locked to the world. */
+private fun DrawScope.drawFog(g: Game, a: Assets, cam: Camera) {
+    val amount = g.fogAmount
+    if (amount <= 0.01f) return
+    val t = cam.t
+    val filter = when (g.dungeon.biome) {
+        Biome.HELL -> hellFog
+        Biome.CAVE -> caveFog
+        else -> null
+    }
+    for (layer in 0..1) {
+        val span = t * (if (layer == 0) 5f else 3.2f)
+        val ox = cam.ox + g.time * t * (if (layer == 0) 0.25f else -0.4f)
+        val oy = cam.oy + g.time * t * (if (layer == 0) 0.08f else 0.15f)
+        val startX = -((ox % span) + span) % span
+        val startY = -((oy % span) + span) % span
+        var y = startY
+        while (y < size.height) {
+            var x = startX
+            while (x < size.width) {
+                drawImage(
+                    a.fog, IntOffset(0, 0), IntSize(256, 256), IntOffset(x.roundToInt(), y.roundToInt()),
+                    IntSize(span.roundToInt() + 1, span.roundToInt() + 1), alpha = amount * (if (layer == 0) 1f else 0.7f), colorFilter = filter,
+                )
+                x += span
+            }
+            y += span
+        }
+    }
+}
+
+private fun DrawScope.drawRain(g: Game) {
+    val n = (160 * g.rain).toInt()
+    val c = Color(0xFFB3C7D9).copy(alpha = 0.35f * g.rain)
+    val len = size.height * 0.03f
+    for (i in 0 until n) {
+        val x = ((i * 97.31f + g.time * 140f) % size.width + size.width) % size.width
+        val y = ((i * 53.77f + g.time * size.height * 1.3f + (i % 7) * 113f) % size.height + size.height) % size.height
+        drawLine(c, Offset(x, y), Offset(x - len * 0.25f, y + len), strokeWidth = 2f)
     }
 }
