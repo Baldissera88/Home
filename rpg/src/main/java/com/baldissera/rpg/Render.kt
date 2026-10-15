@@ -583,6 +583,29 @@ private fun DrawScope.drawLoot(l: Loot, cam: Camera, time: Float, a: Assets, mea
             }
         }
         LootKind.Potion -> drawIcon(a, Icons.POTION, cx, cy - t * 0.25f + bob, t * 0.55f)
+        is LootKind.Shard -> {
+            val pulse = 0.5f + 0.5f * sin(time * 3f + l.phase)
+            val c = Offset(cx, cy - t * 0.42f + bob)
+            val hgt = t * 2.4f
+            drawRect(
+                Brush.verticalGradient(listOf(Color.Transparent, HEART.copy(alpha = 0.4f)), startY = cy - hgt, endY = cy),
+                Offset(cx - t * 0.06f, cy - hgt), Size(t * 0.12f, hgt),
+            )
+            drawCircle(Brush.radialGradient(listOf(HEART.copy(alpha = 0.45f + 0.25f * pulse), Color.Transparent), c, t * 0.65f), t * 0.65f, c)
+            val s = t * (0.3f + 0.02f * pulse)
+            val heart = heartPath(c, s)
+            drawPath(heart, Brush.linearGradient(listOf(Color(0xFFFFB3C1), Color(0xFFE91E63), Color(0xFF880E4F)), Offset(c.x - s, c.y - s), Offset(c.x + s, c.y + s)))
+            // Crystal facets.
+            drawLine(Color.White.copy(alpha = 0.35f), Offset(c.x, c.y - s * 0.45f), Offset(c.x, c.y + s * 0.9f), strokeWidth = t * 0.012f)
+            drawLine(Color.White.copy(alpha = 0.25f), Offset(c.x - s * 0.75f, c.y - s * 0.2f), Offset(c.x, c.y + s * 0.2f), strokeWidth = t * 0.012f)
+            drawLine(Color.White.copy(alpha = 0.25f), Offset(c.x + s * 0.75f, c.y - s * 0.2f), Offset(c.x, c.y + s * 0.2f), strokeWidth = t * 0.012f)
+            drawPath(heart, Color.White.copy(alpha = 0.75f), style = Stroke(t * 0.018f))
+            drawCircle(Color.White.copy(alpha = 0.6f + 0.4f * pulse), t * 0.04f, Offset(c.x - s * 0.45f, c.y - s * 0.4f))
+            for (k in 0 until 4) {
+                val ph = (time * 0.6f + k * 0.25f + l.phase) % 1f
+                drawCircle(HEART.copy(alpha = 1f - ph), t * 0.025f, Offset(cx + sin(k * 2.3f + time * 2f) * t * 0.2f, cy - ph * hgt * 0.6f))
+            }
+        }
         is LootKind.Gear -> {
             val item = k.item
             val rc = item.rarity.color
@@ -666,6 +689,7 @@ fun DrawScope.drawLighting(g: Game) {
     for (l in g.loot) {
         val k = l.kind
         if (k is LootKind.Gear && k.item.rarity >= Rarity.RARE) light(l.x, l.y, t * 1.3f, 0.6f)
+        if (k is LootKind.Shard) light(l.x, l.y - 0.4f, t * 1.8f, 0.75f)
     }
     g.boss?.let { light(it.x, it.y - 0.5f, t * 2.8f, 0.6f) }
 
@@ -779,6 +803,14 @@ private fun DrawScope.drawNpc(n: Npc, g: Game, cam: Camera, a: Assets, measurer:
         drawRoundRect(Color(0xF0F3E9D2), Offset(bx - 8f, by - 5f), Size(layout.size.width + 16f, layout.size.height + 10f), CornerRadius(10f))
         drawText(layout, topLeft = Offset(bx, by))
     }
+}
+
+/** A heart shape of half-width about [s] centred on [c]. */
+private fun heartPath(c: Offset, s: Float) = Path().apply {
+    moveTo(c.x, c.y + s * 0.9f)
+    cubicTo(c.x - s * 1.35f, c.y + s * 0.05f, c.x - s * 0.95f, c.y - s * 1.05f, c.x, c.y - s * 0.42f)
+    cubicTo(c.x + s * 0.95f, c.y - s * 1.05f, c.x + s * 1.35f, c.y + s * 0.05f, c.x, c.y + s * 0.9f)
+    close()
 }
 
 // ---------------------------------------------------------------- ground transitions

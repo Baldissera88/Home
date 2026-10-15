@@ -192,6 +192,7 @@ class GameRenderTest {
             g.player.x = crystal.x + 1.2f
             g.player.y = crystal.y + 1.5f
         }
+        g.loot += Loot(g.player.x - 1.2f, g.player.y - 0.6f, LootKind.Shard("test"))
         step(g, 30)
         render(g, a, "13_cave_grotto")
 
@@ -253,6 +254,23 @@ class GameRenderTest {
             g.sellJunk()
             g.player.inventory.toList().forEach { g.sell(it) }
         }
+        // Heart fragments: found once, and four make a heart.
+        g.enterFloor(0)
+        val worldShards = g.loot.filter { it.kind is LootKind.Shard }
+        check(worldShards.size >= 4) { "only ${worldShards.size} heart fragments in the world" }
+        val before = g.player.maxHp
+        for (s in worldShards.take(4)) {
+            g.player.x = s.x
+            g.player.y = s.y
+            step(g, 3)
+        }
+        check(g.shardsFound.size == 4) { "collected ${g.shardsFound.size} fragments" }
+        check(g.player.maxHp > before) { "no extra heart" }
+        g.enterFloor(0)
+        check(g.loot.count { it.kind is LootKind.Shard } == worldShards.size - 4)
+        g.enterFloor(2)
+        check(g.loot.any { (it.kind as? LootKind.Shard)?.key == "f2" }) { "no fragment on depth 2" }
+
         // Blacksmith and elder services.
         g.enterFloor(0)
         val item = g.makeItem(5, Rarity.RARE, false)

@@ -20,6 +20,8 @@ val HURT_COLOR = Color(0xFFFF5252)
 private val FIRE = Color(0xFFFF7A1A)
 private val FROST = Color(0xFF80DEEA)
 private val LIGHTNING = Color(0xFF9FE7FF)
+val HEART = Color(0xFFFF4F7B)
+const val WORLD_SHARDS = 8
 const val INVENTORY_SIZE = 24
 const val STASH_SIZE = 40
 /** Reach of a burning champion's eruption, in tiles. */
@@ -158,6 +160,9 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     val target: Enemy? get() = boss?.takeIf { it.aggro }
         ?: enemies.filter { it.elite && it.aggro && dist(it) < 9f }.minByOrNull { dist(it) }
     val nearMerchant: Boolean get() = dungeon.hasMerchant && hypot(player.x - merchantX, player.y - merchantY) < 1.6f
+    /** Keys of the heart fragments found so far ("w3" out in the world, "f5" on dungeon depth 5). */
+    val shardsFound = mutableSetOf<String>()
+
     /** Items kept in the stash chest in the village. */
     val stash = mutableListOf<Item>()
     val nearStash: Boolean get() = inWorld && dungeon.props.any { it.type == PropType.STASH && hypot(player.x - it.x, player.y - it.y) < 1.5f }
@@ -253,6 +258,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             restock()
             if (bountyOffers.isEmpty()) rollBounties()
             populateWorld()
+            placeWorldShards()
             showMessage("Landsbyen — et øjebliks fred", Color(0xFFFFE0A3))
         } else {
             val pool = spawnPool()
@@ -266,6 +272,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                     }
                 }
             }
+            placeFloorShard()
             val bossType = bossFor(floor)
             if (bossType != null) {
                 enemies += Enemy(bossType, dungeon.exit.cx + 0.5f, dungeon.exit.cy - 0.5f, floor)
@@ -275,6 +282,42 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             }
         }
         save()
+    }
+
+    /** Hides heart fragments in out-of-the-way corners of the wilderness; the spots are fixed per world. */
+    private fun placeWorldShards() {
+        val d = dungeon
+        val v = d.village ?: return
+        val r = Random(worldSeed xor 0x5EED)
+        val spots = mutableListOf<Pair<Int, Int>>()
+        var tries = 0
+        while (spots.size < WORLD_SHARDS && tries++ < 4000) {
+            val x = r.nextInt(3, d.w - 3)
+            val y = r.nextInt(3, d.h - 3)
+            if (!d.walkable(x, y) || d.tile(x, y) == ENTRANCE) continue
+            if (hypot((x - v.cx).toFloat(), (y - v.cy).toFloat()) < 16f) continue
+            if (spots.any { hypot((it.first - x).toFloat(), (it.second - y).toFloat()) < 12f }) continue
+            // Tucked away: among trees or by the water.
+            val cover = (-2..2).sumOf { dy -> (-2..2).count { dx -> d.tile(x + dx, y + dy).let { it == TREE || it == WATER || it == ROCK } } }
+            if (cover < 7) continue
+            spots += x to y
+        }
+        for ((i, s) in spots.withIndex()) {
+            val key = "w$i"
+            if (key !in shardsFound) loot += Loot(s.first + 0.5f, s.second + 0.5f, LootKind.Shard(key))
+        }
+    }
+
+    /** Every dungeon depth hides one fragment in a room far from the stairs down. */
+    private fun placeFloorShard() {
+        val key = "f$floor"
+        if (key in shardsFound) return
+        val start = dungeon.start
+        val room = dungeon.rooms.filter { it !== start && it.w >= 3 && it.h >= 3 }
+            .maxByOrNull { hypot((it.cx - start.cx).toFloat(), (it.cy - start.cy).toFloat()) } ?: return
+        val corners = listOf(room.x + 1 to room.y + 1, room.x + room.w - 2 to room.y + 1, room.x + 1 to room.y + room.h - 2, room.x + room.w - 2 to room.y + room.h - 2)
+        val (x, y) = corners.firstOrNull { (cx, cy) -> dungeon.walkable(cx, cy) } ?: return
+        loot += Loot(x + 0.5f, y + 0.5f, LootKind.Shard(key))
     }
 
     /** Packs of monsters out in the wild, tougher the further from the village. */
@@ -363,6 +406,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         o.put("equipment", eq)
         o.put("inventory", JSONArray().apply { player.inventory.forEach { put(it.toJson()) } })
         o.put("stash", JSONArray().apply { stash.forEach { put(it.toJson()) } })
+        o.put("shards", JSONArray().apply { shardsFound.forEach { put(it) } })
         o.put("skills", JSONObject().apply { player.skills.forEach { (s, l) -> put(s.name, l) } })
         bounty?.let { o.put("bounty", it.toJson()) }
         prefs.edit().putString("save3", o.toString()).apply()
@@ -387,6 +431,9 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             player.inventory.clear()
             val inv = o.optJSONArray("inventory")
             if (inv != null) for (i in 0 until inv.length()) Item.fromJson(inv.optJSONObject(i))?.let { player.inventory += it }
+            shardsFound.clear()
+            o.optJSONArray("shards")?.let { a -> for (i in 0 until a.length()) shardsFound += a.getString(i) }
+            player.hearts = shardsFound.size / 4
             stash.clear()
             val st = o.optJSONArray("stash")
             if (st != null) for (i in 0 until st.length()) Item.fromJson(st.optJSONObject(i))?.let { stash += it }
@@ -415,6 +462,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         player.equipment.clear()
         player.inventory.clear()
         stash.clear()
+        shardsFound.clear()
+        player.hearts = 0
         player.skills.clear()
         player.skills.putAll(mapOf(Skill.FIREBALL to 1, Skill.WHIRL to 1, Skill.NOVA to 0, Skill.CHAIN to 0))
         player.equipment[Slot.WEAPON] = Item(Slot.WEAPON, "Rustent sværd", Rarity.COMMON, Icons.SWORD, 1, damage = 2)
@@ -1416,6 +1465,21 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 p.potions++
                 sfx.coin()
                 texts += FloatText(p.x, p.y - 1.3f, "+1 eliksir", Color(0xFFFF5370))
+            }
+            is LootKind.Shard -> {
+                shardsFound += kind.key
+                val n = shardsFound.size
+                ring(p.x, p.y, 0.3f, HEART, 36, 4f)
+                if (n % 4 == 0) {
+                    p.hearts = n / 4
+                    p.hp = p.maxHp
+                    sfx.levelUp()
+                    showMessage("Et nyt hjerte! +${HEART_LIFE.toInt()} liv for altid", HEART)
+                } else {
+                    sfx.potion()
+                    showMessage("Livsfragment fundet (${n % 4}/4)", HEART)
+                }
+                save()
             }
             is LootKind.Gear -> {
                 val item = kind.item

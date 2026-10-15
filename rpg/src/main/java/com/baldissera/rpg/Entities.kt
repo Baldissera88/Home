@@ -207,11 +207,13 @@ class Player : Body {
     var stepTimer = 0f
     /** Seconds left of the slow from a frost champion's hit. */
     var chill = 0f
+    /** Extra hearts from collected heart fragments (four fragments per heart). */
+    var hearts = 0
 
     private fun sum(f: (Item) -> Int) = equipment.values.sumOf(f)
     fun has(p: Power) = equipment.values.any { it.power == p }
     val weaponKind: WeaponKind get() = WeaponKind.ofIcon(equipment[Slot.WEAPON]?.icon)
-    val maxHp: Float get() = 70f + level * 14f + sum { it.life }
+    val maxHp: Float get() = 70f + level * 14f + sum { it.life } + hearts * HEART_LIFE
     val maxMana: Float get() = 40f + level * 5f + sum { it.mana }
     val damage: Int get() {
         val base = 6 + level * 2 + sum { it.damage }
@@ -258,6 +260,8 @@ enum class EnemyType(
     DEMON_LORD("Dæmonherren", 900, 28, 1.5f, 0.7f, 480, 1.6f, 0.6f, 1.4f, 9f, boss = true),
     SHADOW_KING("Skyggekongen", 1300, 34, 1.7f, 0.75f, 900, 1.7f, 0.55f, 1.3f, 10f, boss = true),
 }
+
+const val HEART_LIFE = 20f
 
 /** Champion modifiers, Diablo style: every elite rolls one or more. */
 enum class Affix(val label: String, val color: Color) {
@@ -329,6 +333,8 @@ sealed interface LootKind {
     data class Gold(val amount: Int) : LootKind
     data object Potion : LootKind
     data class Gear(val item: Item) : LootKind
+    /** A hidden heart fragment; [key] identifies where it was found so it is only found once. */
+    data class Shard(val key: String) : LootKind
 }
 
 class Loot(var x: Float, var y: Float, val kind: LootKind) {

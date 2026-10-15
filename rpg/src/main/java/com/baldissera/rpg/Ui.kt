@@ -706,6 +706,22 @@ private fun QuestScreen(game: Game, onClose: () -> Unit) {
                 }
             }
         }
+        val shards = game.shardsFound.size
+        Row(
+            Modifier.width(300.dp).background(Color(0x33000000), RoundedCornerShape(6.dp)).padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("❤", color = HEART, fontSize = 22.sp)
+            Spacer(Modifier.width(8.dp))
+            Column {
+                Text("Livsfragmenter ${shards % 4}/4", color = HEART, fontSize = 15.sp, style = serifBold)
+                Text(
+                    "Fire fragmenter giver et nyt hjerte (+${HEART_LIFE.toInt()} liv). Ekstra hjerter: ${game.player.hearts}. " +
+                        "Der gemmer sig ét på hver dybde og flere ude i vildmarken.",
+                    color = parchment.copy(alpha = 0.8f), fontSize = 12.sp,
+                )
+            }
+        }
         Text("Dybeste: ${game.deepest}", color = parchment.copy(alpha = 0.6f), fontSize = 12.sp)
     }
 }
