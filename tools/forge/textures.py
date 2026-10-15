@@ -640,3 +640,64 @@ def floor_cave_natural(seed, size=512):
 
 
 BIG_FLOORS["cave"] = floor_cave_natural
+
+
+# ---------------------------------------------------------------- v5: rubble skirts along wall bases
+
+SKIRTS = {
+    "crypt": ([0.36, 0.34, 0.31], [0.50, 0.47, 0.42], 0.0),
+    "cave": ([0.34, 0.27, 0.20], [0.48, 0.39, 0.29], 0.0),
+    "hell": ([0.16, 0.10, 0.09], [0.28, 0.16, 0.13], 1.0),
+}
+
+
+def wall_skirt(seed, dark, light, ember=0.0, variant=0, w=128, h=64):
+    """Boulders and rubble piled against the foot of a wall, transparent above.
+    Rocks crossing the tile edges are shared by every variant, so any variant can sit next to any other."""
+    yy, xx = np.mgrid[0:h, 0:w].astype(float)
+    height = np.zeros((h, w))
+    alpha = np.zeros((h, w))
+    albedo = np.zeros((h, w, 3))
+    base = h * 0.62
+    rocks = []
+    edge = np.random.default_rng(seed)
+    rocks.append((edge.uniform(-4, 4), base + edge.uniform(-2, 6), edge.uniform(10, 15), edge.uniform(6, 10), edge.random()))
+    rocks.append((edge.uniform(-8, 8), base + edge.uniform(4, 12), edge.uniform(3, 5), edge.uniform(2, 4), edge.random()))
+    r = np.random.default_rng(seed + 97 * (variant + 1))
+    for _ in range(int(r.integers(3, 6))):
+        rx = r.uniform(8, 16)
+        rocks.append((r.uniform(18 + rx, 110 - rx), base + r.uniform(-4, 8), rx, r.uniform(6, 11), r.random()))
+    for _ in range(int(r.integers(10, 18))):
+        rx = r.uniform(2.5, 6)
+        rocks.append((r.uniform(18 + rx, 110 - rx), base + r.uniform(0, 16), rx, r.uniform(2, 4.5), r.random()))
+    rough = fbm(w, h, 24, 3, seed + 7)
+    for cx, cy, rx, ry, tone_k in rocks:
+        dx = (xx - cx + w / 2) % w - w / 2
+        d = (dx / rx) ** 2 + ((yy - cy) / ry) ** 2
+        m = d < 1
+        dome = np.sqrt(np.clip(1 - d, 0, 1)) * ry / 10 + cy / h * 0.3
+        take = m & (dome > height)
+        height = np.where(take, dome, height)
+        tone = mix(np.array(dark), np.array(light), 0.2 + 0.8 * tone_k)
+        albedo[take] = tone
+        alpha = np.maximum(alpha, np.clip((1 - d) * 6, 0, 1))
+    n = fbm(w, h, 16, 3, seed + 3)
+    albedo *= (0.8 + 0.4 * n)[..., None]
+    lit = shade(height + rough * 0.18, albedo, 9.0, 0.4)
+    if ember:
+        glow = np.clip((fbm(w, h, 24, 2, seed + 5 + variant) - 0.68) * 6, 0, 1) * (alpha > 0.5)
+        lit = mix(lit, np.array([1.0, 0.45, 0.12]), glow * 0.8 * ember)
+    # Soft contact shadow under the pile.
+    shadow = np.clip(1 - np.abs(yy - (base + 14)) / 16, 0, 1) * 0.45 * (yy > base - 6)
+    a = alpha + shadow * (1 - alpha)
+    rgb = lit * (alpha / np.maximum(a, 1e-6))[..., None]
+    return to_img(np.clip(rgb, 0, 1), np.clip(a, 0, 1))
+
+
+def wall_skirts():
+    """Rows: crypt, cave, hell; four interchangeable 128x64 variants per row."""
+    rows = []
+    for i, b in enumerate(["crypt", "cave", "hell"]):
+        dark, light, ember = SKIRTS[b]
+        rows.append(np.concatenate([wall_skirt(800 + i, dark, light, ember, v) for v in range(4)], axis=1))
+    return np.concatenate(rows, axis=0)

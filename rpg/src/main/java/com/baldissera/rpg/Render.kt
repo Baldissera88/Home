@@ -245,7 +245,7 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
         }
     }
     for (y in y0..y1) {
-        for (x in x0..x1) if (d.tile(x, y) == WALL) drawWallTile(d, x, y, cam, g.time, wallImg, topImg)
+        for (x in x0..x1) if (d.tile(x, y) == WALL) drawWallTile(d, x, y, cam, g.time, wallImg, topImg, a.wallSkirts)
         while (bi < bbs.size && bbs[bi].y < y + 0.8f) drawBillboard(bbs[bi++])
         for (x in x0..x1) drawWorldTile(g, x, y, cam, a, measurer, styles)
         for (b in d.buildings) if (b.y + b.h - 1 == y) drawBuilding(b, g, cam, a)
@@ -330,6 +330,7 @@ private fun DrawScope.drawStairs(l: Float, tp: Float, t: Float, time: Float) {
 private fun DrawScope.drawWallTile(
     d: Dungeon, x: Int, y: Int, cam: Camera, time: Float,
     wallImg: androidx.compose.ui.graphics.ImageBitmap, topImg: androidx.compose.ui.graphics.ImageBitmap,
+    skirts: androidx.compose.ui.graphics.ImageBitmap,
 ) {
     val t = cam.t
     val h = (t * WALL_HEIGHT).roundToInt()
@@ -354,6 +355,22 @@ private fun DrawScope.drawWallTile(
     val variant = ((d.variant[y * d.w + x] * 2).toInt()).coerceIn(0, 1)
     drawImage(wallImg, IntOffset(variant * 128, 0), IntSize(128, 96), IntOffset(l, bt - h), IntSize(r - l, h), filterQuality = FilterQuality.Medium)
     drawRect(Color.White.copy(alpha = 0.08f), Offset(l.toFloat(), (bt - h).toFloat()), Size((r - l).toFloat(), t * 0.025f))
+
+    // Rubble piled along the foot of the wall breaks up the straight line where it meets the floor.
+    val skirtRow = when (d.biome) {
+        Biome.CRYPT -> 0
+        Biome.CAVE -> 1
+        Biome.HELL -> 2
+        else -> -1
+    }
+    if (skirtRow >= 0) {
+        val sv = (d.variant[y * d.w + x] * 7f).toInt() % 4
+        val sh = ((r - l) * 0.5f).roundToInt()
+        drawImage(
+            skirts, IntOffset(sv * 128, skirtRow * 64), IntSize(128, 64),
+            IntOffset(l, bt - (sh * 0.62f).roundToInt()), IntSize(r - l, sh), filterQuality = FilterQuality.Medium,
+        )
+    }
 
     if (y * d.w + x in d.torches) {
         val cx = (l + r) / 2f
