@@ -332,7 +332,11 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
     for (b in d.buildings) if (b.light != 0L) {
         spill(b.x + b.w / 2f + b.lightX, b.y + b.h + b.lightY - 0.5f, t * 2.2f * flicker(g.time, b.x.toFloat()), Color(b.light))
     }
-    for (pr in g.projectiles) spill(pr.x, pr.y, t * 2f, pr.color.copy(alpha = 0.3f))
+    for (pr in g.projectiles) {
+        // Thrown knives only glint; a fan of them would otherwise wash the hero out in white.
+        if (pr.small) spill(pr.x, pr.y, t * 0.7f, pr.color.copy(alpha = 0.12f))
+        else spill(pr.x, pr.y, t * 2f, pr.color.copy(alpha = 0.3f))
+    }
     for (e in d.entrances) if (e.region == Region.HELL) spill(e.x + 0.5f, e.y + 0.2f, t * 3f * flicker(g.time, 5f), Color(0x55FF3D00))
 
     for (ft in g.texts) {
