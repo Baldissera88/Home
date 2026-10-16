@@ -53,7 +53,7 @@ class Assets(private val res: Resources) {
             HeroClass.ASSASSIN -> R.drawable.spr_hero_assassin
             HeroClass.SORCERESS -> R.drawable.spr_hero_sorceress
         }
-        return heroSheets.getOrPut(id) { SpriteSheet({ load(id) }, 144, 1.9f, 0.9f) }
+        return heroSheets.getOrPut(id) { SpriteSheet({ load(id) }, 216, 1.9f, 0.9f, mirrored = true) }
     }
 
     fun portrait(cls: HeroClass): ImageBitmap = portraits.getOrPut(cls) {
@@ -66,37 +66,37 @@ class Assets(private val res: Resources) {
             }
         )
     }
-    val wolf = SpriteSheet({ load(R.drawable.spr_wolf) }, 128, 1.7f, 0.8f)
-    val bandit = SpriteSheet({ load(R.drawable.spr_bandit) }, 128, 1.7f, 0.86f, smooth = true)
-    val world = SpriteSheet({ load(R.drawable.spr_world) }, 160, 2.6f, 0.88f)
+    val wolf = SpriteSheet({ load(R.drawable.spr_wolf) }, 192, 1.7f, 0.8f, mirrored = true)
+    val bandit = SpriteSheet({ load(R.drawable.spr_bandit) }, 192, 1.7f, 0.86f, smooth = true, mirrored = true)
+    val world = SpriteSheet({ load(R.drawable.spr_world) }, 240, 2.6f, 0.88f)
     val trees = SpriteSheet({ load(R.drawable.spr_trees) }, 320, 3.4f, 0.78f)
     val ground = load(R.drawable.tex_world_ground)
     val fog = load(R.drawable.tex_fog)
     val groundEdges = load(R.drawable.tex_ground_edges)
     val wallSkirts = load(R.drawable.tex_wall_skirts)
-    val ghost = SpriteSheet({ load(R.drawable.spr_ghost) }, 128, 1.7f, 0.86f)
-    val imp = SpriteSheet({ load(R.drawable.spr_imp) }, 96, 1.2f, 0.86f)
-    val goblin = SpriteSheet({ load(R.drawable.spr_goblin) }, 96, 1.3f, 0.86f, smooth = true)
-    val village = SpriteSheet({ load(R.drawable.spr_village) }, 256, 4.4f, 0.86f)
-    val smith = SpriteSheet({ load(R.drawable.spr_smith) }, 128, 1.7f, 0.86f)
-    val elder = SpriteSheet({ load(R.drawable.spr_elder) }, 128, 1.7f, 0.86f)
-    val villagerF = SpriteSheet({ load(R.drawable.spr_villager_f) }, 128, 1.7f, 0.86f, smooth = true)
-    val villagerM = SpriteSheet({ load(R.drawable.spr_villager_m) }, 128, 1.7f, 0.86f, smooth = true)
+    val ghost = SpriteSheet({ load(R.drawable.spr_ghost) }, 192, 1.7f, 0.86f, mirrored = true)
+    val imp = SpriteSheet({ load(R.drawable.spr_imp) }, 144, 1.2f, 0.86f, mirrored = true)
+    val goblin = SpriteSheet({ load(R.drawable.spr_goblin) }, 144, 1.3f, 0.86f, smooth = true, mirrored = true)
+    val village = SpriteSheet({ load(R.drawable.spr_village) }, 384, 4.4f, 0.86f)
+    val smith = SpriteSheet({ load(R.drawable.spr_smith) }, 192, 1.7f, 0.86f)
+    val elder = SpriteSheet({ load(R.drawable.spr_elder) }, 192, 1.7f, 0.86f)
+    val villagerF = SpriteSheet({ load(R.drawable.spr_villager_f) }, 192, 1.7f, 0.86f, smooth = true, mirrored = true)
+    val villagerM = SpriteSheet({ load(R.drawable.spr_villager_m) }, 192, 1.7f, 0.86f, smooth = true, mirrored = true)
     val water = load(R.drawable.tex_water)
     val terrain = Terrain(res)
     val waterShaders by lazy {
         WaterShaders(BitmapFactory.decodeResource(res, R.drawable.tex_water_base, opts), BitmapFactory.decodeResource(res, R.drawable.tex_water_ripples, opts))
     }
-    val skeleton = SpriteSheet({ load(R.drawable.spr_skeleton) }, 128, 1.7f, 0.86f, smooth = true)
-    val skelKing = SpriteSheet({ load(R.drawable.spr_skelking) }, 144, 2.05f, 0.86f, smooth = true)
-    val brute = SpriteSheet({ load(R.drawable.spr_brute) }, 160, 2.3f, 0.86f, smooth = true)
-    val cultist = SpriteSheet({ load(R.drawable.spr_cultist) }, 128, 1.7f, 0.86f)
-    val spider = SpriteSheet({ load(R.drawable.spr_spider) }, 128, 1.7f, 0.8f)
-    val demon = SpriteSheet({ load(R.drawable.spr_demon) }, 256, 3.4f, 0.86f)
-    val slime = SpriteSheet({ load(R.drawable.spr_slime) }, 96, 1.1f, 0.82f)
-    val bat = SpriteSheet({ load(R.drawable.spr_bat) }, 96, 1.3f, 0.9f)
-    val merchant = SpriteSheet({ load(R.drawable.spr_merchant) }, 128, 1.7f, 0.86f)
-    val props = SpriteSheet({ load(R.drawable.spr_props) }, 128, 1.3f, 0.8f)
+    val skeleton = SpriteSheet({ load(R.drawable.spr_skeleton) }, 192, 1.7f, 0.86f, smooth = true, mirrored = true)
+    val skelKing = SpriteSheet({ load(R.drawable.spr_skelking) }, 216, 2.05f, 0.86f, smooth = true, mirrored = true)
+    val brute = SpriteSheet({ load(R.drawable.spr_brute) }, 240, 2.3f, 0.86f, smooth = true, mirrored = true)
+    val cultist = SpriteSheet({ load(R.drawable.spr_cultist) }, 192, 1.7f, 0.86f, mirrored = true)
+    val spider = SpriteSheet({ load(R.drawable.spr_spider) }, 192, 1.7f, 0.8f, mirrored = true)
+    val demon = SpriteSheet({ load(R.drawable.spr_demon) }, 384, 3.4f, 0.86f, mirrored = true)
+    val slime = SpriteSheet({ load(R.drawable.spr_slime) }, 144, 1.1f, 0.82f)
+    val bat = SpriteSheet({ load(R.drawable.spr_bat) }, 144, 1.3f, 0.9f)
+    val merchant = SpriteSheet({ load(R.drawable.spr_merchant) }, 192, 1.7f, 0.86f)
+    val props = SpriteSheet({ load(R.drawable.spr_props) }, 192, 1.3f, 0.8f, perRow = 16)
     val icons = load(R.drawable.spr_icons)
     val decals = load(R.drawable.tex_decals)
 
