@@ -294,7 +294,10 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
         val fade = 1f - pt.age / pt.life
         val c = Offset(cam.sx(pt.x), cam.sy(pt.y) - t * pt.z)
         val r = pt.size * t
-        if (pt.glow) {
+        if (pt.soft) {
+            val rr = r * (1f + 1.5f * pt.age / pt.life)
+            drawCircle(Brush.radialGradient(listOf(pt.color.copy(alpha = pt.color.alpha * fade), Color.Transparent), c, rr), rr, c)
+        } else if (pt.glow) {
             drawCircle(pt.color.copy(alpha = 0.3f * fade), r * 2.5f, c)
             drawCircle(pt.color.lighter(0.5f).copy(alpha = fade), r, c)
         } else {

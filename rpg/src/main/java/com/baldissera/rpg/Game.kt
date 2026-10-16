@@ -1133,10 +1133,11 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                     e.aggro = false
                     e.windup = 0f
                 }
-                repeat(30) {
+                repeat(22) {
                     val a = rnd.nextFloat() * 6.283f
-                    val sp = 0.5f + rnd.nextFloat() * 1.5f
-                    particles += Particle(p.x, p.y, cos(a) * sp, sin(a) * sp * 0.6f, Color(0xAA90A4AE), 0.15f + rnd.nextFloat() * 0.15f, 1.2f, z = 0.3f + rnd.nextFloat() * 0.5f)
+                    val sp = 0.4f + rnd.nextFloat() * 1.2f
+                    val shade = if (rnd.nextBoolean()) Color(0x8C4A4458) else Color(0x80626A78)
+                    particles += Particle(p.x, p.y, cos(a) * sp, sin(a) * sp * 0.6f, shade, 0.35f + rnd.nextFloat() * 0.3f, 1.4f + rnd.nextFloat() * 0.6f, z = 0.2f + rnd.nextFloat() * 0.6f, soft = true)
                 }
                 sfx.portal()
             }

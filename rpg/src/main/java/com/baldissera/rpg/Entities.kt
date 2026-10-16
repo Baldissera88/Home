@@ -633,6 +633,8 @@ class Particle(
     val glow: Boolean = false,
     val gravity: Float = 0f,
     var z: Float = 0.3f,
+    /** A soft, swelling puff of smoke instead of a hard spark. */
+    val soft: Boolean = false,
 ) {
     var age = 0f
 }
