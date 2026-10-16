@@ -13,6 +13,8 @@ class SpriteSheet(
     val worldW: Float,
     /** Where the ground line sits in the cell, as a fraction from the top. */
     val foot: Float,
+    /** 16 columns (idle x2, walk x8, attack x6) instead of the classic 8 (idle, walk x4, attack x3). */
+    val smooth: Boolean = false,
 )
 
 class Assets(private val res: Resources) {
@@ -52,7 +54,7 @@ class Assets(private val res: Resources) {
         )
     }
     val wolf = SpriteSheet(load(R.drawable.spr_wolf), 128, 1.7f, 0.8f)
-    val bandit = SpriteSheet(load(R.drawable.spr_bandit), 128, 1.7f, 0.86f)
+    val bandit = SpriteSheet(load(R.drawable.spr_bandit), 128, 1.7f, 0.86f, smooth = true)
     val world = SpriteSheet(load(R.drawable.spr_world), 160, 2.6f, 0.88f)
     val ground = load(R.drawable.tex_world_ground)
     val fog = load(R.drawable.tex_fog)
@@ -60,16 +62,16 @@ class Assets(private val res: Resources) {
     val wallSkirts = load(R.drawable.tex_wall_skirts)
     val ghost = SpriteSheet(load(R.drawable.spr_ghost), 128, 1.7f, 0.86f)
     val imp = SpriteSheet(load(R.drawable.spr_imp), 96, 1.2f, 0.86f)
-    val goblin = SpriteSheet(load(R.drawable.spr_goblin), 96, 1.3f, 0.86f)
+    val goblin = SpriteSheet(load(R.drawable.spr_goblin), 96, 1.3f, 0.86f, smooth = true)
     val village = SpriteSheet(load(R.drawable.spr_village), 256, 4.4f, 0.86f)
     val smith = SpriteSheet(load(R.drawable.spr_smith), 128, 1.7f, 0.86f)
     val elder = SpriteSheet(load(R.drawable.spr_elder), 128, 1.7f, 0.86f)
-    val villagerF = SpriteSheet(load(R.drawable.spr_villager_f), 128, 1.7f, 0.86f)
-    val villagerM = SpriteSheet(load(R.drawable.spr_villager_m), 128, 1.7f, 0.86f)
+    val villagerF = SpriteSheet(load(R.drawable.spr_villager_f), 128, 1.7f, 0.86f, smooth = true)
+    val villagerM = SpriteSheet(load(R.drawable.spr_villager_m), 128, 1.7f, 0.86f, smooth = true)
     val water = load(R.drawable.tex_water)
-    val skeleton = SpriteSheet(load(R.drawable.spr_skeleton), 128, 1.7f, 0.86f)
-    val skelKing = SpriteSheet(load(R.drawable.spr_skelking), 128, 1.8f, 0.86f)
-    val brute = SpriteSheet(load(R.drawable.spr_brute), 160, 2.3f, 0.86f)
+    val skeleton = SpriteSheet(load(R.drawable.spr_skeleton), 128, 1.7f, 0.86f, smooth = true)
+    val skelKing = SpriteSheet(load(R.drawable.spr_skelking), 144, 2.05f, 0.86f, smooth = true)
+    val brute = SpriteSheet(load(R.drawable.spr_brute), 160, 2.3f, 0.86f, smooth = true)
     val cultist = SpriteSheet(load(R.drawable.spr_cultist), 128, 1.7f, 0.86f)
     val spider = SpriteSheet(load(R.drawable.spr_spider), 128, 1.7f, 0.8f)
     val demon = SpriteSheet(load(R.drawable.spr_demon), 256, 3.4f, 0.86f)

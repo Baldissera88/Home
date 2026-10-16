@@ -36,6 +36,19 @@ DIRECTIONAL = {
     "spr_imp": (M.imp, 96, 1.2, 0.86),
     "spr_goblin": (lambda f: M.humanoid(f, M.GOBLIN), 96, 1.3, 0.86),
 }
+# Humanoid monsters and villagers rendered with the smooth 16-frame layout (idle x2, walk x8, attack x6).
+SMOOTH = {
+    "spr_skeleton": (lambda f: M.humanoid(f, M.SKELETON), 128, 1.7, 0.86),
+    "spr_skelking": (lambda f: M.humanoid(f, M.SKELETON_KING), 144, 2.05, 0.86),
+    "spr_brute": (lambda f: M.humanoid(f, M.BRUTE), 160, 2.3, 0.86),
+    "spr_bandit": (lambda f: M.humanoid(f, M.BANDIT), 128, 1.7, 0.86),
+    "spr_goblin": (lambda f: M.humanoid(f, M.GOBLIN), 96, 1.3, 0.86),
+    "spr_villager_f": (lambda f: M.humanoid(f, M.VILLAGER_F), 128, 1.7, 0.86),
+    "spr_villager_m": (lambda f: M.humanoid(f, M.VILLAGER_M), 128, 1.7, 0.86),
+}
+for _name in SMOOTH:
+    DIRECTIONAL.pop(_name, None)
+
 STRIPS = {
     "spr_slime": (M.slime, 96, 1.1, 0.82),
     "spr_bat": (M.bat, 96, 1.3, 0.9),
@@ -55,6 +68,9 @@ def _portrait_view():
 
 def _render_cell(job):
     kind, name, a, b = job
+    if kind == "smooth":
+        builder, cell, width, foot = SMOOTH[name]
+        return job, render(builder(M.HERO_FRAMES[a]), cell, width, foot, yaw=b * math.pi / 4)
     if kind == "hero":
         frame = M.HERO_FRAMES[a]
         return job, render(M.humanoid(frame, H.SHEETS[name]), HERO_CELL, 1.9, 0.9, yaw=b * math.pi / 4)
@@ -123,6 +139,12 @@ def main():
             continue
         for i in range(4):
             jobs.append(("strip", name, i, 0))
+    for name in SMOOTH:
+        if only and name not in only and "smooth" not in only:
+            continue
+        for d in range(5):
+            for f in range(len(M.HERO_FRAMES)):
+                jobs.append(("smooth", name, f, d))
     if not only or "heroes" in only:
         for name in H.SHEETS:
             if os.environ.get("HEROES") and name not in os.environ["HEROES"].split(","):
@@ -156,6 +178,19 @@ def main():
             src = d if d <= 4 else 8 - d
             for f in range(8):
                 img = results[("dir", name, f, src)]
+                if d > 4:
+                    img = img[:, ::-1]
+                sheet[d * cell:(d + 1) * cell, f * cell:(f + 1) * cell] = img
+        Image.fromarray(sheet).save(f"{OUT}/{name}.png", optimize=True)
+    for name, (_, cell, _, _) in SMOOTH.items():
+        if ("smooth", name, 0, 0) not in results:
+            continue
+        n = len(M.HERO_FRAMES)
+        sheet = np.zeros((cell * 8, cell * n, 4), dtype=np.uint8)
+        for d in range(8):
+            src = d if d <= 4 else 8 - d
+            for f in range(n):
+                img = results[("smooth", name, f, src)]
                 if d > 4:
                     img = img[:, ::-1]
                 sheet[d * cell:(d + 1) * cell, f * cell:(f + 1) * cell] = img

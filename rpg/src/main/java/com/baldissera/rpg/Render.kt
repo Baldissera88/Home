@@ -609,6 +609,9 @@ private fun DrawScope.drawEnemy(e: Enemy, g: Game, cam: Camera, a: Assets, measu
     val row = if (directional) dirRow(e.faceX, e.faceY) else 0
     val col = when {
         !directional -> (e.anim * 7f).toInt() % 4
+        sheet.smooth && e.windup > 0f -> HERO_ATTACK + ((1f - e.windup / e.type.windup) * 6f).toInt().coerceIn(0, 5)
+        sheet.smooth && e.moving -> HERO_WALK + ((e.anim * 14f).toInt() % 8)
+        sheet.smooth -> ((e.anim + e.phase) * 1.3f).toInt() % 2
         e.windup > 0f -> 5 + ((1f - e.windup / e.type.windup) * 3f).toInt().coerceIn(0, 2)
         e.moving -> 1 + ((e.anim * 7f).toInt() % 4)
         else -> 0
@@ -949,7 +952,7 @@ private fun DrawScope.drawNpc(n: Npc, g: Game, cam: Camera, a: Assets, measurer:
         NpcKind.ELDER -> drawSprite(a.elder, (n.anim * 1.5f).toInt() % 4, 0, cx, cy, t, scale = 1.3f)
         NpcKind.VILLAGER_F, NpcKind.VILLAGER_M -> {
             val sheet = if (n.kind == NpcKind.VILLAGER_F) a.villagerF else a.villagerM
-            val col = if (n.moving) 1 + (n.anim * 6f).toInt() % 4 else 0
+            val col = if (n.moving) HERO_WALK + (n.anim * 12f).toInt() % 8 else (n.anim * 1.3f).toInt() % 2
             drawSprite(sheet, col, dirRow(n.faceX, n.faceY), cx, cy, t, scale = 1.25f)
         }
     }
