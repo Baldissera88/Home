@@ -87,7 +87,21 @@ MATERIALS = {
     "cloth_teal": ((0.06, 0.28, 0.32), 0.0, 0.0, 0.12),
     "arcane": ((0.75, 0.45, 1.0), 0.3, 1.8, 0.0),
     "fur_light": ((0.62, 0.54, 0.44), 0.0, 0.0, 0.35),
+    # Realistic flora.
+    "leaf_oak": ((0.16, 0.31, 0.08), 0.0, 0.0, 0.55),
+    "leaf_birch": ((0.30, 0.44, 0.12), 0.0, 0.0, 0.5),
+    "leaf_autumn": ((0.42, 0.27, 0.08), 0.0, 0.0, 0.5),
+    "needles": ((0.08, 0.21, 0.08), 0.0, 0.0, 0.5),
+    "bark_oak": ((0.25, 0.19, 0.13), 0.0, 0.0, 0.45),
+    "bark_pine": ((0.30, 0.19, 0.12), 0.0, 0.0, 0.4),
+    "bark_birch": ((0.78, 0.76, 0.70), 0.0, 0.0, 0.25),
+    "bark_dead": ((0.30, 0.27, 0.23), 0.0, 0.0, 0.4),
+    "moss_rock": ((0.26, 0.36, 0.12), 0.0, 0.0, 0.5),
+    "granite": ((0.47, 0.46, 0.43), 0.0, 0.0, 0.35),
 }
+# Materials whose surface colour varies smoothly (clumps of leaves, bark, lichen) instead of speckling.
+SMOOTH_GRAIN = {"leaf_oak": 9.0, "leaf_birch": 11.0, "leaf_autumn": 9.0, "needles": 14.0, "bark_oak": 7.0, "bark_pine": 6.0,
+                "bark_birch": 5.0, "bark_dead": 7.0, "moss_rock": 6.0, "granite": 5.0}
 MAT_NAMES = list(MATERIALS)
 MAT_INDEX = {n: i for i, n in enumerate(MAT_NAMES)}
 MAT_RGB = np.array([MATERIALS[n][0] for n in MAT_NAMES], dtype=np.float32)
@@ -209,9 +223,79 @@ def prim_dist(p, prim):
     raise ValueError(k)
 
 
+def noise3(p, seed=0):
+    """Smooth 3D value noise in [0, 1] for points p (N, 3)."""
+    pf = np.floor(p)
+    f = p - pf
+    f = f * f * (3 - 2 * f)
+    pi = pf.astype(np.int64)
+
+    def h(dx, dy, dz):
+        n = ((pi[:, 0] + dx) * 73856093) ^ ((pi[:, 1] + dy) * 19349663) ^ ((pi[:, 2] + dz) * 83492791) ^ (seed * 2654435761)
+        n = n.astype(np.uint64)
+        n = (n ^ (n >> np.uint64(13))) * np.uint64(1274126177)
+        n = n ^ (n >> np.uint64(16))
+        return (n & np.uint64(0xFFFF)).astype(np.float32) / 65535.0
+
+    x, y, z = f[:, 0], f[:, 1], f[:, 2]
+    c000, c100, c010, c110 = h(0, 0, 0), h(1, 0, 0), h(0, 1, 0), h(1, 1, 0)
+    c001, c101, c011, c111 = h(0, 0, 1), h(1, 0, 1), h(0, 1, 1), h(1, 1, 1)
+    a = c000 + (c100 - c000) * x
+    b = c010 + (c110 - c010) * x
+    c = c001 + (c101 - c001) * x
+    d = c011 + (c111 - c011) * x
+    e = a + (b - a) * y
+    g = c + (d - c) * y
+    return e + (g - e) * z
+
+
+def fbm3(p, octaves=3, seed=0):
+    total = np.zeros(p.shape[0], dtype=np.float32)
+    amp, norm_ = 1.0, 0.0
+    for o in range(octaves):
+        total += amp * noise3(p * (2.0 ** o), seed + o * 31)
+        norm_ += amp
+        amp *= 0.5
+    return total / norm_
+
+
+def group(prims, mat, k=0.05, disp=None, scale=(1.0, 1.0, 1.0), **kw):
+    """Smooth union of primitives treated as one surface, optionally displaced by noise.
+
+    disp = (frequency, amplitude, octaves, seed); scale stretches the noise per axis (e.g. bark ridges).
+    """
+    return dict(kind="group", prims=prims, mat=mat, k=k, disp=disp, nscale=np.array(scale, dtype=np.float32), **kw)
+
+
 def smin(a, b, k):
     h = np.clip(0.5 + 0.5 * (b - a) / k, 0.0, 1.0)
     return b * (1 - h) + a * h - k * h * (1 - h)
+
+
+def _group_dist(p, prim):
+    bound = prim.get("bound")
+    if bound is not None:
+        # Points well outside the bounding sphere only need the (conservative) distance to it.
+        db = (np.linalg.norm(p - bound[0], axis=1) - bound[1]).astype(np.float32)
+        near = np.nonzero(db < 0.08)[0]
+        if near.size < p.shape[0]:
+            out = db.copy()
+            if near.size:
+                sub = dict(prim)
+                sub["bound"] = None
+                out[near] = _group_dist(p[near], sub)
+            return out
+    d = np.full(p.shape[0], 1e3, dtype=np.float32)
+    for sub in prim["prims"]:
+        d = smin(d, prim_dist(p, sub).astype(np.float32), prim["k"])
+    disp = prim.get("disp")
+    if disp is not None:
+        freq, amp, octaves, seed = disp
+        near = np.nonzero(d < amp * 2.5 + 0.02)[0]
+        if near.size:
+            n = fbm3(p[near] * prim["nscale"] * freq, octaves, seed)
+            d[near] -= (n - 0.45) * 2.0 * amp
+    return d
 
 
 def scene(p, prims):
@@ -219,7 +303,7 @@ def scene(p, prims):
     d = np.full(p.shape[0], 1e3, dtype=np.float32)
     m = np.zeros(p.shape[0], dtype=np.int32)
     for prim in prims:
-        di = prim_dist(p, prim).astype(np.float32)
+        di = (_group_dist(p, prim) if prim["kind"] == "group" else prim_dist(p, prim)).astype(np.float32)
         mi = MAT_INDEX[prim["mat"]]
         op = prim.get("op", "add")
         if op == "sub":
@@ -253,7 +337,7 @@ def _hash_noise(p):
     return n - np.floor(n)
 
 
-def render(prims, size=128, width=1.6, foot=0.82, yaw=0.0, ss=2, view=None, up=None):
+def render(prims, size=128, width=1.6, foot=0.82, yaw=0.0, ss=2, view=None, up=None, step=0.85, iters=90):
     """Render a model to an RGBA uint8 image. `foot` is where y=0 lands, as a fraction from the top."""
     view = VIEW if view is None else view
     up = UP if up is None else up
@@ -271,13 +355,13 @@ def render(prims, size=128, width=1.6, foot=0.82, yaw=0.0, ss=2, view=None, up=N
     t = np.zeros(count, dtype=np.float32)
     hit = np.zeros(count, dtype=bool)
     alive = np.ones(count, dtype=bool)
-    for _ in range(90):
+    for _ in range(iters):
         idx = np.nonzero(alive)[0]
         if idx.size == 0:
             break
         p = origins[idx] + t[idx, None] * view
         d, _ = sdf(p)
-        t[idx] += d * 0.85
+        t[idx] += d * step
         done = d < 0.0015
         hit[idx[done]] = True
         far = t[idx] > 12.0
@@ -314,6 +398,11 @@ def render(prims, size=128, width=1.6, foot=0.82, yaw=0.0, ss=2, view=None, up=N
         base = MAT_RGB[mat]
         grain = MAT_GRAIN[mat]
         noise = _hash_noise(p @ ry)
+        pm = p @ ry
+        for name, freq in SMOOTH_GRAIN.items():
+            sel = np.nonzero(mat == MAT_INDEX[name])[0]
+            if sel.size:
+                noise[sel] = fbm3(pm[sel] * freq, 3, 7) * 0.8 + noise[sel] * 0.2
         base = base * (1.0 + grain[:, None] * (noise[:, None] - 0.5) * 2.0)
         metal = MAT_METAL[mat][:, None]
         emit = MAT_EMIT[mat][:, None]

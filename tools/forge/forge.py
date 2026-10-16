@@ -13,6 +13,7 @@ import numpy as np
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(__file__))
+import flora as F  # noqa: E402
 import heroes as H  # noqa: E402
 import models as M  # noqa: E402
 import textures as T  # noqa: E402
@@ -88,6 +89,8 @@ def _render_cell(job):
         return job, render(M.PROPS[a][1](), 128, 1.3, 0.8)
     if kind == "village":
         return job, render(M.VILLAGE[a][1](), 256, 4.4, 0.86)
+    if kind == "tree":
+        return job, render(F.TREES[a][1](), F.TREE_CELL, F.TREE_WIDTH, F.TREE_FOOT, step=0.6, iters=160)
     if kind == "world":
         return job, render(M.WORLD[a][1](), 160, 2.6, 0.88)
     if kind == "icon":
@@ -160,6 +163,8 @@ def main():
         jobs += [("icon", "icons", i, 0) for i in range(len(M.ICONS))]
     if not only or "world" in only:
         jobs += [("world", "world", i, 0) for i in range(len(M.WORLD))]
+    if not only or "trees" in only:
+        jobs += [("tree", "trees", i, 0) for i in range(len(F.TREES))]
     if not only or "village" in only:
         jobs += [("village", "village", i, 0) for i in range(len(M.VILLAGE))]
 
@@ -225,6 +230,10 @@ def main():
     if not only or "world" in only:
         strip = np.concatenate([results[("world", "world", i, 0)] for i in range(len(M.WORLD))], axis=1)
         Image.fromarray(strip).save(f"{OUT}/spr_world.png", optimize=True)
+    if not only or "trees" in only:
+        cells = [results[("tree", "trees", i, 0)] for i in range(len(F.TREES))]
+        grid = np.concatenate([np.concatenate(cells[:4], axis=1), np.concatenate(cells[4:8], axis=1)], axis=0)
+        Image.fromarray(grid).save(f"{OUT}/spr_trees.png", optimize=True)
     if not only or "village" in only:
         strip = np.concatenate([results[("village", "village", i, 0)] for i in range(len(M.VILLAGE))], axis=1)
         Image.fromarray(strip).save(f"{OUT}/spr_village.png", optimize=True)

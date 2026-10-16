@@ -468,20 +468,20 @@ private val shadowLayer = Paint()
 private fun sunShadowStrength(g: Game) = ((g.daylight - 0.22f) / 0.3f).coerceIn(0f, 1f) * (1f - g.rain * 0.7f)
 
 /**
- * Projects a sprite onto the ground away from the sun: every pixel moves up and to the right in proportion
+ * Projects a sprite onto the ground away from the sun: every pixel moves right and a little down in proportion
  * to its height above the sprite's foot line at [y]. Long shadows in the morning and evening, short at noon.
  */
 private fun DrawScope.castShadow(g: Game, s: SpriteSheet, col: Int, row: Int, x: Float, y: Float, t: Float, scale: Float) {
     val low = 1f - g.daylight
-    val kx = 0.32f + 1.0f * low
-    val ky = 0.42f + 0.45f * low
+    val kx = 0.55f + 0.9f * low
+    val ky = 0.2f + 0.15f * low
     val v = shadowMatrix.values
     v.fill(0f)
     v[0] = 1f
     v[4] = -kx
     v[12] = kx * y
-    v[5] = ky
-    v[13] = y * (1f - ky)
+    v[5] = -ky
+    v[13] = y * (1f + ky)
     v[10] = 1f
     v[15] = 1f
     withTransform({ transform(shadowMatrix) }) {
@@ -497,11 +497,11 @@ private fun DrawScope.drawSunShadows(g: Game, a: Assets, cam: Camera, x0: Int, x
     val d = g.dungeon
     shadowLayer.alpha = 0.36f * strength
     drawIntoCanvas { it.saveLayer(Rect(Offset.Zero, size), shadowLayer) }
-    // Shadows reach up and to the right, so look a little beyond the bottom and left of the view.
-    for (y in max(0, y0 - 1)..min(d.h - 1, y1 + 4)) for (x in max(0, x0 - 4)..min(d.w - 1, x1 + 1)) {
+    // Shadows reach right and down, so look a little beyond the top and left of the view.
+    for (y in max(0, y0 - 3)..min(d.h - 1, y1 + 1)) for (x in max(0, x0 - 4)..min(d.w - 1, x1 + 1)) {
         val v = d.variant[y * d.w + x]
         when (d.tile(x, y)) {
-            TREE -> castShadow(g, a.world, treeSprite(v), 0, cam.sx(x + 0.5f), cam.sy(y + 0.8f), t, treeScale(v))
+            TREE -> treeSprite(v).let { castShadow(g, a.trees, it % 4, it / 4, cam.sx(x + 0.5f), cam.sy(y + 0.8f), t, treeScale(v)) }
             ROCK -> castShadow(g, a.world, if (v < 0.4f) 6 else if (v < 0.8f) 7 else 8, 0, cam.sx(x + 0.5f), cam.sy(y + 0.8f), t, 0.8f)
             ENTRANCE -> d.entrances.firstOrNull { it.x == x && it.y == y }?.let {
                 castShadow(g, a.world, it.region.sprite, 0, cam.sx(x + 0.5f), cam.sy(y + 0.95f), t, 1f)
@@ -509,16 +509,16 @@ private fun DrawScope.drawSunShadows(g: Game, a: Assets, cam: Camera, x0: Int, x
         }
     }
     for (b in d.buildings) {
-        if (b.y + b.h < y0 - 1 || b.y > y1 + 5 || b.x + b.w < x0 - 6 || b.x > x1 + 1) continue
+        if (b.y + b.h < y0 - 3 || b.y > y1 + 1 || b.x + b.w < x0 - 6 || b.x > x1 + 1) continue
         castShadow(g, a.village, b.sprite, 0, cam.sx(b.x + b.w / 2f), cam.sy((b.y + b.h).toFloat()), t, 1f)
     }
     for (p in d.props) {
-        if (p.y < y0 - 1 || p.y > y1 + 3 || p.type == PropType.SKULLS) continue
+        if (p.y < y0 - 3 || p.y > y1 + 1 || p.type == PropType.SKULLS) continue
         val col = if (p.used && p.type != PropType.SHRINE) p.type.brokenSprite else p.type.sprite
         castShadow(g, if (p.type.world) a.world else a.props, col, 0, cam.sx(p.x), cam.sy(p.y), t, 1f)
     }
     for (n in d.npcs) {
-        if (n.y < y0 - 1 || n.y > y1 + 3) continue
+        if (n.y < y0 - 3 || n.y > y1 + 1) continue
         when (n.kind) {
             NpcKind.SMITH -> castShadow(g, a.smith, 0, 0, cam.sx(n.x), cam.sy(n.y), t, 1.3f)
             NpcKind.ELDER -> castShadow(g, a.elder, 0, 0, cam.sx(n.x), cam.sy(n.y), t, 1.3f)
@@ -531,7 +531,7 @@ private fun DrawScope.drawSunShadows(g: Game, a: Assets, cam: Camera, x0: Int, x
     }
     if (d.hasMerchant) castShadow(g, a.merchant, 0, 0, cam.sx(g.merchantX), cam.sy(g.merchantY), t, CHAR_SCALE)
     for (e in g.enemies) {
-        if (e.y < y0 - 1 || e.y > y1 + 3 || e.type == EnemyType.GHOST) continue
+        if (e.y < y0 - 3 || e.y > y1 + 1 || e.type == EnemyType.GHOST) continue
         val (sheet, scale0, directional) = a.enemySprite(e.type)
         castShadow(g, sheet, enemyCol(e, sheet, directional), if (directional) dirRow(e.faceX, e.faceY) else 0, cam.sx(e.x), cam.sy(e.y), t, scale0 * e.size * CHAR_SCALE)
     }
@@ -951,7 +951,7 @@ fun DrawScope.drawScene(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
 
 private val DAY_LIGHT = Color(0xFFFFFAF0)
 private val GOLDEN_LIGHT = Color(0xFFFFD2A6)
-private val NIGHT_LIGHT = Color(0xFF3B4870)
+private val NIGHT_LIGHT = Color(0xFF2E3A62)
 private val RAIN_LIGHT = Color(0xFF8E97A3)
 
 /** The colour the whole scene is multiplied by before any light falls on it. */
@@ -1008,7 +1008,7 @@ fun DrawScope.drawLighting(g: Game) {
     for (m in g.meteors) light(m.x, m.y, t * 3f, FIRE_LIGHT, 0.5f + 0.5f * (1f - m.t / 0.75f))
     for (pr in d.props) {
         when {
-            pr.type == PropType.CAMPFIRE -> light(pr.x, pr.y - 0.3f, t * 8f * flicker(g.time, 1f), FIRE_LIGHT, 1f)
+            pr.type == PropType.CAMPFIRE -> light(pr.x, pr.y - 0.3f, t * 5.5f * flicker(g.time, 1f), FIRE_LIGHT, 0.95f)
             pr.type == PropType.SHRINE && !pr.used -> light(pr.x, pr.y - 0.6f, t * 2.4f, Color(0xFF6FF3FF), 0.75f)
             pr.type.light != 0L -> light(pr.x, pr.y - 0.4f, t * 3.4f * flicker(g.time, pr.x), Color(pr.type.light).copy(alpha = 1f), 0.9f)
         }
@@ -1056,10 +1056,19 @@ fun DrawScope.drawLighting(g: Game) {
 
 // ---------------------------------------------------------------- overworld
 
-private fun treeSprite(v: Float) = when {
-    v < 0.05f -> 4
-    v < 0.13f -> 5
-    else -> (v * 1000f).toInt() % 4
+/** Cell in the trees sheet (four per row): pines, oaks, a birch and an autumn oak, then a dead tree and a shrub. */
+private fun treeSprite(v: Float): Int {
+    if (v < 0.05f) return 6
+    if (v < 0.13f) return 7
+    val k = (v * 997f) % 1f
+    return when {
+        k < 0.3f -> 0
+        k < 0.5f -> 1
+        k < 0.7f -> 2
+        k < 0.85f -> 3
+        k < 0.95f -> 4
+        else -> 5
+    }
 }
 
 private fun treeScale(v: Float) = 0.9f + ((v * 7f) % 1f) * 0.25f
@@ -1078,8 +1087,8 @@ private fun DrawScope.drawWorldTile(g: Game, x: Int, y: Int, cam: Camera, a: Ass
         TREE -> {
             val idx = treeSprite(v)
             val p = g.player
-            val behind = y + 0.8f > p.y && y + 0.8f - p.y < 2.6f && abs(x + 0.5f - p.x) < 1.4f
-            drawSprite(a.world, idx, 0, cx, cy, t, scale = treeScale(v), alpha = if (behind && idx < 5) 0.45f else 1f)
+            val behind = y + 0.8f > p.y && y + 0.8f - p.y < 2.8f && abs(x + 0.5f - p.x) < 1.3f
+            drawSprite(a.trees, idx % 4, idx / 4, cx, cy, t, scale = treeScale(v), alpha = if (behind && idx < 6) 0.45f else 1f)
         }
         ROCK -> drawSprite(a.world, if (v < 0.4f) 6 else if (v < 0.8f) 7 else 8, 0, cx, cy, t, scale = 0.8f)
         ENTRANCE -> {
