@@ -863,7 +863,6 @@ private fun ShopRow(
 }
 
 @Composable
-@Composable
 private fun TitleScreen(game: Game, frame: Long, onContinue: () -> Unit, onNew: () -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         // The village glows through a vignette while embers drift up from below.
