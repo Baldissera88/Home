@@ -80,4 +80,14 @@ class UiScreenTest {
     @Test fun smith() = shoot("u5_smith", 6, ::loadUp)
     @Test fun elder() = shoot("u6_elder", 7, ::loadUp)
     @Test fun map() = shoot("u7_map", 5) { g -> g.player.x += 10f; repeat(200) { g.update(1f / 30f) } }
+    @Test fun quests() = shoot("u8_quests", 3) { g ->
+        g.shardsFound += listOf("w0", "w1", "w2", "w3", "f1")
+        g.player.hearts = 1
+    }
+    @Test fun stash() = shoot("u9_stash", 9) { g ->
+        loadUp(g)
+        repeat(12) { g.stash += g.makeItem(6, Rarity.entries.random(), false) }
+    }
+    @Test fun dead() = shoot("u10_dead", -1) { g -> g.dead = true }
+    @Test fun victory() = shoot("u11_victory", -1) { g -> g.victory = true }
 }

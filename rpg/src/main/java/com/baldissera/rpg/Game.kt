@@ -143,7 +143,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     var messageTimer = 0f
         private set
     var dead = false
-        private set
+        internal set
     var levelFlash = 0f
         private set
 
