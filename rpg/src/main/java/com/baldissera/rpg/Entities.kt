@@ -234,6 +234,8 @@ enum class HeroClass(
     val armorBonus: Int,
     /** 1..5 ratings shown on the class select screen: might, toughness, speed, magic. */
     val ratings: List<Int>,
+    /** Icon on the attack button. */
+    val attackIcon: String = "⚔️",
 ) {
     KNIGHT(
         "Knight", "Sword, shield and holy light",
@@ -254,14 +256,14 @@ enum class HeroClass(
         "A deadly shadow. Strikes fast and from behind, poisons foes and vanishes in smoke before they can answer.",
         Color(0xFFB388FF), listOf(WeaponKind.DAGGER),
         listOf(Skill.SHADOW_STEP, Skill.FAN_OF_KNIVES, Skill.SMOKE_BOMB, Skill.VENOM),
-        70f, 12f, 40f, 4f, 1f, 10, 1.12f, 0, 1f, 0, listOf(4, 2, 5, 2),
+        70f, 12f, 40f, 4f, 1f, 10, 1.12f, 0, 1f, 0, listOf(4, 2, 5, 2), "🗡️",
     ),
     SORCERESS(
         "Sorceress", "Fire, frost and lightning",
         "A master of the elements. Keeps her distance with arcane bolts and burns, freezes and shatters whole hordes.",
         Color(0xFFCE93D8), listOf(WeaponKind.STAFF),
         listOf(Skill.FIREBALL, Skill.CHAIN, Skill.NOVA, Skill.METEOR),
-        60f, 10f, 70f, 8f, 1f, 0, 1f, 25, 1.7f, 0, listOf(2, 1, 3, 5),
+        60f, 10f, 70f, 8f, 1f, 0, 1f, 25, 1.7f, 0, listOf(2, 1, 3, 5), "🔮",
     ),
 }
 

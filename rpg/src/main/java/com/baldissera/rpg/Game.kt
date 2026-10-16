@@ -2171,9 +2171,9 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                     explode = true
                 }
             }
-            if (particles.size < 600) {
+            if (particles.size < 600 && (!pr.small || rnd.nextFloat() < 0.25f)) {
                 particles += Particle(pr.x, pr.y, (rnd.nextFloat() - 0.5f) * 0.6f, (rnd.nextFloat() - 0.5f) * 0.6f,
-                    pr.color, 0.07f, 0.3f, glow = true, z = 0.35f)
+                    pr.color, if (pr.small) 0.03f else 0.07f, if (pr.small) 0.2f else 0.3f, glow = true, z = 0.35f)
             }
             if (explode && pr.small && !pr.hostile) {
                 iter.remove()

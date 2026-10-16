@@ -277,6 +277,14 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
     for (pr in g.projectiles) {
         val c = Offset(cam.sx(pr.x), cam.sy(pr.y) - t * 0.4f)
         val r = pr.radius * t
+        if (pr.small && !pr.hostile) {
+            // Knives and arcane bolts: a short streak along their flight.
+            val sp = hypot(pr.vx, pr.vy).coerceAtLeast(0.01f)
+            val tail = Offset(c.x - pr.vx / sp * t * 0.45f, c.y - pr.vy / sp * t * 0.45f)
+            drawLine(pr.color.copy(alpha = 0.35f), tail, c, strokeWidth = r * 1.4f, cap = StrokeCap.Round)
+            drawLine(Color.White.copy(alpha = 0.9f), Offset((tail.x + c.x) / 2f, (tail.y + c.y) / 2f), c, strokeWidth = r * 0.5f, cap = StrokeCap.Round)
+            continue
+        }
         drawCircle(Brush.radialGradient(listOf(pr.color.copy(alpha = 0.6f), Color.Transparent), c, r * 3.2f), r * 3.2f, c)
         drawCircle(pr.color.lighter(0.35f), r, c)
         drawCircle(Color.White.copy(alpha = 0.9f), r * 0.45f, c)

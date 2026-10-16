@@ -413,7 +413,7 @@ private fun Controls(game: Game, modifier: Modifier) {
         Box(Modifier.align(Alignment.BottomEnd).size(236.dp, 210.dp)) {
             val attackC = Offset(236f - 48f, 210f - 48f)
             ActionButton(
-                "⚔️", Color(0xFFB0BEC5), 96.dp, Modifier.at(attackC, 96f),
+                game.player.heroClass.attackIcon, Color(0xFFB0BEC5), 96.dp, Modifier.at(attackC, 96f),
                 onPress = {
                     game.attackHeld = true
                     game.attack()
@@ -924,9 +924,12 @@ private fun ShopRow(
 @Composable
 private fun ClassSelectScreen(assets: Assets, onPick: (HeroClass) -> Unit, onBack: () -> Unit) {
     var selected by remember { mutableStateOf(HeroClass.KNIGHT) }
-    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xF2100A08), Color(0xFA050303)))).systemBarsPadding()) {
+    Column(
+        Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xF2100A08), Color(0xFA050303)))).systemBarsPadding(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
         Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
+            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -986,9 +989,8 @@ private fun ClassSelectScreen(assets: Assets, onPick: (HeroClass) -> Unit, onBac
                     }
                 }
             }
-            GothicButton("Begin as ${selected.label}", { onPick(selected) })
-            Spacer(Modifier.height(8.dp))
         }
+        GothicButton("Begin as ${selected.label}", { onPick(selected) }, Modifier.padding(vertical = 10.dp))
     }
 }
 
