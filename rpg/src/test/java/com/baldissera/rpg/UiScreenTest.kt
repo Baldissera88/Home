@@ -3,6 +3,7 @@ package com.baldissera.rpg
 import android.content.Context
 import android.graphics.Bitmap
 import android.view.View
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -31,7 +32,9 @@ class UiScreenTest {
         ShadowChoreographer.setFrameDelay(Duration.ofMillis(16))
         val t0 = System.currentTimeMillis()
         fun log(step: String) = println("[ui $name] $step after ${System.currentTimeMillis() - t0} ms")
-        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        log("start")
+        // A bare activity: MainActivity's own screen runs the endless game loop, which never lets the looper go idle.
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
         log("activity ready")
         val ctx = activity.applicationContext
         val sfx = Sfx(ctx)
