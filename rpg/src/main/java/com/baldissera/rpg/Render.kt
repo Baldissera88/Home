@@ -60,6 +60,7 @@ private fun flicker(time: Float, seed: Float) =
 
 private val grayscale = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0.15f) })
 private val frozenTint = ColorFilter.tint(Color(0xFF9FD8FF), BlendMode.Modulate)
+private val poisonTint = ColorFilter.tint(Color(0xFFB2FF59), BlendMode.Modulate)
 private val queenTint = ColorFilter.tint(Color(0xFFC9A0FF), BlendMode.Modulate)
 private val shadowTint = ColorFilter.tint(Color(0xFF8E7CC3), BlendMode.Modulate)
 private val trollTint = ColorFilter.tint(Color(0xFFA5D6A7), BlendMode.Modulate)
@@ -216,6 +217,8 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
         drawOval(w.color.copy(alpha = 0.75f * fade), Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f), style = Stroke(t * 0.09f * fade + 1f))
         drawOval(Color.White.copy(alpha = 0.5f * fade), Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f), style = Stroke(t * 0.025f * fade + 1f))
     }
+
+    drawZones(g, cam)
 
     // Billboards sorted by depth.
     val bbs = ArrayList<Billboard>(g.enemies.size + d.props.size + 2)
@@ -415,21 +418,33 @@ private fun DrawScope.drawFlame(cx: Float, cy: Float, size: Float, time: Float, 
 
 // ---------------------------------------------------------------- billboards
 
+/** Hero sheets: columns 0-1 idle (breathing), 2-9 walk, 10-15 attack. */
+private const val HERO_WALK = 2
+private const val HERO_ATTACK = 10
+
 /** Sprite column and row for the hero's current pose and facing. */
-private fun heroFrame(p: Player): Pair<Int, Int> {
+private fun heroFrame(p: Player, time: Float): Pair<Int, Int> {
     var row = dirRow(p.faceX, p.faceY)
     val col = when {
+        p.spin > 0f -> {
+            row = ((p.spin * 22f).toInt()) % 8
+            HERO_ATTACK + 3
+        }
+        p.leap > 0f -> HERO_ATTACK + ((1f - p.leap / p.leapDur) * 4f).toInt().coerceIn(0, 3)
+        p.charge > 0f -> HERO_ATTACK + 2
         p.whirl > 0f -> {
             row = (row + ((1f - p.whirl / 0.45f) * 16f).toInt()) % 8
-            6
+            HERO_ATTACK + 3
         }
-        p.swing > 0f -> 5 + ((1f - p.swing / p.swingTime) * 3f).toInt().coerceIn(0, 2)
-        p.cast > 0f -> 6
-        p.moving -> 1 + (p.walk.toInt() % 4)
-        else -> 0
+        p.swing > 0f -> HERO_ATTACK + ((1f - p.swing / p.swingTime) * 6f).toInt().coerceIn(0, 5)
+        p.cast > 0f -> HERO_ATTACK + ((1f - p.cast / 0.4f) * 6f).toInt().coerceIn(0, 5)
+        p.moving -> HERO_WALK + ((p.walk * 2f).toInt() % 8)
+        else -> (time * 1.3f).toInt() % 2
     }
     return col to row
 }
+
+private fun heroSheet(g: Game, a: Assets) = a.hero(g.player.heroClass, g.player.weaponKind)
 
 /** A faint outline of the hero on top of whatever stands in front, so he is never lost behind walls or a crowd. */
 private fun DrawScope.drawHeroSilhouette(g: Game, cam: Camera, a: Assets) {
@@ -439,46 +454,112 @@ private fun DrawScope.drawHeroSilhouette(g: Game, cam: Camera, a: Assets) {
     // Only when a monster stands right in front of the hero's body, not merely nearby.
     val crowded = g.enemies.any { it.y > p.y + 0.15f && it.y - p.y < 0.9f + 0.3f * it.size && abs(it.x - p.x) < 0.5f * it.size + 0.15f }
     if (!behindWall && !crowded) return
-    val (col, row) = heroFrame(p)
-    drawSprite(a.hero(p.weaponKind), col, row, cam.sx(p.x), cam.sy(p.y), cam.t, scale = CHAR_SCALE, alpha = 0.25f, filter = ghostTint)
+    val (col, row) = heroFrame(p, g.time)
+    drawSprite(heroSheet(g, a), col, row, cam.sx(p.x), cam.sy(p.y) - p.leapZ * cam.t, cam.t, scale = CHAR_SCALE, alpha = 0.25f, filter = ghostTint)
 }
+
+private val holyGold = Color(0xFFFFE082)
+private val venomGreen = Color(0xFF9CCC65)
 
 private fun DrawScope.drawPlayer(g: Game, cam: Camera, a: Assets) {
     val p = g.player
     val t = cam.t
     val cx = cam.sx(p.x)
-    val cy = cam.sy(p.y)
+    val cy = cam.sy(p.y) - p.leapZ * t
 
     p.buff?.let { b ->
         val pulse = 0.5f + 0.5f * sin(g.time * 4f)
         drawCircle(b.color.copy(alpha = 0.25f + 0.2f * pulse), t * 0.42f, Offset(cx, cy), style = Stroke(t * 0.05f))
+    }
+    if (p.fury > 0f) {
+        val pulse = 0.5f + 0.5f * sin(g.time * 9f)
+        drawOval(Color(0xFFFF5722).copy(alpha = 0.18f + 0.12f * pulse), Offset(cx - t * 0.5f, cy - t * 0.25f), Size(t, t * 0.5f))
     }
     if (g.levelFlash > 0f) {
         val k = 1f - g.levelFlash / 1.2f
         drawCircle(GOLD.copy(alpha = 1f - k), t * (0.4f + k * 1.8f), Offset(cx, cy - t * 0.3f), style = Stroke(t * 0.08f))
     }
 
-    val (col, row) = heroFrame(p)
+    val (col, row) = heroFrame(p, g.time)
 
-    if (p.swing > 0f || p.whirl > 0f) {
-        val r = t * 0.8f
+    if (p.swing > 0f || p.whirl > 0f || p.spin > 0f) {
+        val r = t * (if (p.spin > 0f) 1.1f else 0.8f)
         val face = atan2(p.faceY, p.faceX)
         val body = Offset(cx, cy - t * 0.4f)
-        val (start, sweep) = if (p.whirl > 0f) 0f to 360f else
-            Math.toDegrees((face - 1.2).toDouble()).toFloat() to Math.toDegrees(((1f - p.swing / p.swingTime) * 2.4f).toDouble()).toFloat()
+        val (start, sweep) = when {
+            p.spin > 0f -> (p.spin * 1400f % 360f) to 300f
+            p.whirl > 0f -> 0f to 360f
+            else -> Math.toDegrees((face - 1.2).toDouble()).toFloat() to Math.toDegrees(((1f - p.swing / p.swingTime) * 2.4f).toDouble()).toFloat()
+        }
+        val trail = if (p.venom > 0f) venomGreen else Color.White
         drawArc(
-            Color.White.copy(alpha = 0.3f), start, sweep, useCenter = false,
+            trail.copy(alpha = if (p.spin > 0f) 0.4f else 0.3f), start, sweep, useCenter = false,
             topLeft = Offset(body.x - r, body.y - r * 0.6f), size = Size(r * 2f, r * 1.2f), style = Stroke(t * 0.12f, cap = StrokeCap.Round),
         )
     }
 
+    val sheet = heroSheet(g, a)
     for (gh in g.ghosts) {
-        drawSprite(a.hero(gh.kind), 1, gh.row, cam.sx(gh.x), cam.sy(gh.y), t, scale = CHAR_SCALE, alpha = (1f - gh.age / 0.3f) * 0.35f, filter = ghostTint)
+        drawSprite(sheet, gh.col, gh.row, cam.sx(gh.x), cam.sy(gh.y), t, scale = CHAR_SCALE, alpha = (1f - gh.age / 0.3f) * 0.35f, filter = ghostTint)
     }
-    val sheet = a.hero(p.weaponKind)
-    drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE)
+    // Stealth: a faint, shimmering shape.
+    val alpha = if (p.stealth > 0f) 0.35f + 0.08f * sin(g.time * 7f) else 1f
+    drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE, alpha = alpha, filter = if (p.stealth > 0f) ghostTint else null)
     if (p.chill > 0f) drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE, alpha = min(0.55f, p.chill), filter = frozenTint)
     if (p.hurt > 0f) drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE, alpha = p.hurt * 1.1f, filter = redFlash)
+    if (p.venom > 0f && (g.time * 6f).toInt() % 2 == 0) {
+        drawCircle(venomGreen.copy(alpha = 0.5f), t * 0.04f, Offset(cx + t * 0.3f, cy - t * 0.45f))
+        drawCircle(venomGreen.copy(alpha = 0.5f), t * 0.04f, Offset(cx - t * 0.3f, cy - t * 0.45f))
+    }
+    if (p.holy > 0f) {
+        // A golden dome of holy light.
+        val k = min(1f, p.holy)
+        val r = t * 0.62f
+        val c = Offset(cx, cy - t * 0.45f)
+        drawCircle(Brush.radialGradient(listOf(Color.Transparent, holyGold.copy(alpha = 0.3f * k)), c, r), r, c)
+        drawCircle(holyGold.copy(alpha = (0.55f + 0.2f * sin(g.time * 5f)) * k), r, c, style = Stroke(t * 0.025f))
+    }
+}
+
+/** Hallowed ground, burning craters and meteors on their way down. */
+private fun DrawScope.drawZones(g: Game, cam: Camera) {
+    val t = cam.t
+    for (z in g.zones) {
+        val c = Offset(cam.sx(z.x), cam.sy(z.y))
+        val fadeIn = min(1f, z.age * 4f)
+        val fadeOut = min(1f, (z.life - z.age) * 2f)
+        val k = fadeIn * fadeOut
+        val rx = z.radius * t
+        when (z.kind) {
+            ZoneKind.CONSECRATE -> {
+                drawOval(Brush.radialGradient(listOf(holyGold.copy(alpha = 0.35f * k), holyGold.copy(alpha = 0.08f * k)), c, rx), Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f))
+                drawOval(holyGold.copy(alpha = 0.8f * k), Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f), style = Stroke(t * 0.035f))
+                // Slowly turning runes around the rim.
+                for (i in 0 until 12) {
+                    val ang = g.time * 0.6f + i * (PI.toFloat() / 6f)
+                    val px = c.x + kotlin.math.cos(ang) * rx * 0.85f
+                    val py = c.y + sin(ang) * rx * 0.85f * 0.6f
+                    drawCircle(Color.White.copy(alpha = 0.7f * k), t * 0.035f, Offset(px, py))
+                }
+            }
+            ZoneKind.FIRE -> {
+                drawOval(Brush.radialGradient(listOf(Color(0xFFFF6D00).copy(alpha = 0.5f * k), Color(0xFF3E0E00).copy(alpha = 0.2f * k)), c, rx), Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f))
+                for (i in 0 until 5) drawFlame(c.x + sin(i * 2.4f) * rx * 0.55f, c.y + kotlin.math.cos(i * 1.7f) * rx * 0.3f, t * 0.3f * k, g.time, i * 3f)
+            }
+        }
+    }
+    for (m in g.meteors) {
+        val c = Offset(cam.sx(m.x), cam.sy(m.y))
+        val k = 1f - m.t / 0.75f
+        val rx = 2.3f * t
+        drawOval(Color(0xFFFF3D00).copy(alpha = 0.15f + 0.25f * k), Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f))
+        drawOval(Color(0xFFFFAB40).copy(alpha = 0.8f), Offset(c.x - rx * k, c.y - rx * k * 0.6f), Size(rx * k * 2, rx * k * 1.2f), style = Stroke(t * 0.04f))
+        // The meteor streaks in from high above.
+        val hx = c.x + t * 3f * (1f - k)
+        val hy = c.y - t * 9f * (1f - k)
+        drawLine(Color(0xFFFF7043).copy(alpha = 0.6f), Offset(hx + t * 1.2f, hy - t * 3.6f), Offset(hx, hy), strokeWidth = t * 0.22f, cap = StrokeCap.Round)
+        drawCircle(Brush.radialGradient(listOf(Color.White, Color(0xFFFFAB40), Color.Transparent), Offset(hx, hy), t * 0.5f), t * 0.5f, Offset(hx, hy))
+    }
 }
 
 private fun DrawScope.drawEnemy(e: Enemy, g: Game, cam: Camera, a: Assets, measurer: TextMeasurer, styles: TextStyles) {
@@ -526,6 +607,7 @@ private fun DrawScope.drawEnemy(e: Enemy, g: Game, cam: Camera, a: Assets, measu
     }
     val filter = when {
         e.frozen > 0f -> frozenTint
+        e.poison > 0f -> poisonTint
         e.type == EnemyType.SPIDER_QUEEN -> queenTint
         e.type == EnemyType.SHADOW_KING -> shadowTint
         e.type == EnemyType.TROLL -> trollTint
@@ -545,6 +627,16 @@ private fun DrawScope.drawEnemy(e: Enemy, g: Game, cam: Camera, a: Assets, measu
     }
 
     val headY = cy - sheet.worldW * t * scale * (sheet.foot - 0.25f)
+    if (e.stun > 0f) {
+        // Dazed: little stars circling over the head.
+        for (i in 0 until 3) {
+            val ang = g.time * 5f + i * 2.094f
+            val sx = cx + kotlin.math.cos(ang) * t * 0.28f * e.size
+            val sy = headY + t * 0.05f + sin(ang) * t * 0.08f
+            drawCircle(Color(0xFFFFEE58), t * 0.045f, Offset(sx, sy))
+            drawCircle(Color.White, t * 0.02f, Offset(sx, sy))
+        }
+    }
     if (e.elite) {
         val label = e.label ?: measurer.measure(e.name, styles.label.copy(color = Color(0xFF82B1FF))).also { e.label = it }
         var top = headY - label.size.height - t * 0.12f

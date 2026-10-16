@@ -32,6 +32,7 @@ class MainActivity : ComponentActivity() {
         val settings = getSharedPreferences("settings", Context.MODE_PRIVATE)
         music.enabled = settings.getBoolean("music", true)
         sfx.enabled = settings.getBoolean("sfx", true)
+        sfx.haptics = settings.getBoolean("haptics", true)
         game = Game(sfx, getSharedPreferences("hero", Context.MODE_PRIVATE))
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {

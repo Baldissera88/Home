@@ -98,6 +98,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     val corpses = mutableListOf<Corpse>()
     val ghosts = mutableListOf<Ghost>()
     val bolts = mutableListOf<Bolt>()
+    val zones = mutableListOf<Zone>()
+    val meteors = mutableListOf<Meteor>()
     val waves = mutableListOf<Wave>()
     /** Smoothed camera centre in world tiles. */
     var camX = 0f
@@ -110,6 +112,13 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         internal set
     private var rainTarget = 0f
     private var weatherTimer = 90f
+    /** 1 right after changing area, fading to 0: the screen fades in from black. */
+    var fade = 0f
+        private set
+    /** Kills in quick succession; a streak of five or more pays out bonus experience. */
+    var streak = 0
+        private set
+    private var streakTimer = 0f
     var bossIntro: String? = null
         private set
     var bossIntroTime = 0f
@@ -120,6 +129,9 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     var bounty: Bounty? = null
         private set
     var explored = BooleanArray(dungeon.w * dungeon.h)
+    /** Bumped whenever new tiles are revealed, so the map image is only rebuilt when it changes. */
+    var exploredVersion = 0
+        private set
         private set
     var floor = 0
         private set
@@ -234,12 +246,16 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     // ---------------------------------------------------------------- floors & saving
 
     fun enterFloor(target: Int) {
+        fade = 1f
         floor = target
         if (floor > deepest) deepest = floor
         dungeon = if (floor == 0) Dungeon.overworld(worldSeed) else Dungeon.generate(rnd, Biome.forFloor(floor))
         explored = BooleanArray(dungeon.w * dungeon.h)
+        exploredVersion++
         enemies.clear()
         projectiles.clear()
+        zones.clear()
+        meteors.clear()
         loot.clear()
         texts.clear()
         particles.clear()
@@ -400,7 +416,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         val o = JSONObject()
             .put("level", player.level).put("xp", player.xp).put("gold", player.gold).put("potions", player.potions)
             .put("deepest", deepest).put("quest", questStage).put("points", player.skillPoints).put("victory", victory)
-            .put("seed", worldSeed)
+            .put("seed", worldSeed).put("class", player.heroClass.name)
         val eq = JSONObject()
         player.equipment.forEach { (slot, item) -> eq.put(slot.name, item.toJson()) }
         o.put("equipment", eq)
@@ -439,21 +455,31 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             if (st != null) for (i in 0 until st.length()) Item.fromJson(st.optJSONObject(i))?.let { stash += it }
             bounty = Bounty.fromJson(o.optJSONObject("bounty"))
             val sk = o.optJSONObject("skills")
-            Skill.entries.forEach { s -> if (sk != null && sk.has(s.name)) player.skills[s] = sk.getInt(s.name) }
+            val saved = Skill.entries.associateWith { s -> if (sk != null && sk.has(s.name)) sk.getInt(s.name) else 0 }
+            val cls = HeroClass.entries.firstOrNull { it.name == o.optString("class") }
+            player.heroClass = cls ?: HeroClass.KNIGHT
+            player.skills.clear()
+            player.heroClass.skills.forEachIndexed { i, s -> player.skills[s] = saved.getValue(s).coerceAtLeast(if (i < 2) 1 else 0) }
+            if (cls == null) {
+                // A hero from before classes: becomes a knight and gets back the points spent on spells.
+                val spent = saved.filterKeys { it !in player.heroClass.skills }.values.sum()
+                player.skillPoints += (spent - 1).coerceAtLeast(0)
+            }
             player.hp = player.maxHp
             player.mana = player.maxMana
             true
         }.getOrDefault(false)
     }
 
-    fun newGame() {
+    fun newGame(heroClass: HeroClass = HeroClass.KNIGHT) {
         prefs.edit().remove("save3").remove("save").apply()
-        resetHero()
+        resetHero(heroClass)
         dead = false
         enterFloor(0)
     }
 
-    private fun resetHero() {
+    private fun resetHero(heroClass: HeroClass = HeroClass.KNIGHT) {
+        player.heroClass = heroClass
         player.level = 1
         player.xp = 0
         player.gold = 0
@@ -465,9 +491,25 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         shardsFound.clear()
         player.hearts = 0
         player.skills.clear()
-        player.skills.putAll(mapOf(Skill.FIREBALL to 1, Skill.WHIRL to 1, Skill.NOVA to 0, Skill.CHAIN to 0))
-        player.equipment[Slot.WEAPON] = Item(Slot.WEAPON, "Rusty Sword", Rarity.COMMON, Icons.SWORD, 1, damage = 2)
-        player.equipment[Slot.OFFHAND] = Item(Slot.OFFHAND, "Old Round Shield", Rarity.COMMON, Icons.SHIELD, 1, armor = 2)
+        heroClass.skills.forEachIndexed { i, sk -> player.skills[sk] = if (i < 2) 1 else 0 }
+        when (heroClass) {
+            HeroClass.KNIGHT -> {
+                player.equipment[Slot.WEAPON] = Item(Slot.WEAPON, "Rusty Sword", Rarity.COMMON, Icons.SWORD, 1, damage = 2)
+                player.equipment[Slot.OFFHAND] = Item(Slot.OFFHAND, "Old Round Shield", Rarity.COMMON, Icons.SHIELD, 1, armor = 2)
+            }
+            HeroClass.BARBARIAN -> {
+                player.equipment[Slot.WEAPON] = Item(Slot.WEAPON, "Notched Axe", Rarity.COMMON, Icons.AXE, 1, damage = 3)
+                player.equipment[Slot.ARMOR] = Item(Slot.ARMOR, "Wolf Pelt", Rarity.COMMON, Icons.LEATHER, 1, armor = 2, life = 4)
+            }
+            HeroClass.ASSASSIN -> {
+                player.equipment[Slot.WEAPON] = Item(Slot.WEAPON, "Worn Dagger", Rarity.COMMON, Icons.DAGGER, 1, damage = 2)
+                player.equipment[Slot.OFFHAND] = Item(Slot.OFFHAND, "Parrying Dagger", Rarity.COMMON, Icons.DAGGER, 1, crit = 2)
+            }
+            HeroClass.SORCERESS -> {
+                player.equipment[Slot.WEAPON] = Item(Slot.WEAPON, "Apprentice Staff", Rarity.COMMON, Icons.STAFF, 1, damage = 2, spell = 8)
+                player.equipment[Slot.OFFHAND] = Item(Slot.OFFHAND, "Torn Grimoire", Rarity.COMMON, Icons.SCROLL, 1, mana = 8)
+            }
+        }
         player.hp = player.maxHp
         player.mana = player.maxMana
         deepest = 0
@@ -539,6 +581,19 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         shakeX = if (shake > 0f) (rnd.nextFloat() - 0.5f) * shake * 0.3f else 0f
         shakeY = if (shake > 0f) (rnd.nextFloat() - 0.5f) * shake * 0.3f else 0f
         levelFlash = max(0f, levelFlash - dt)
+        fade = max(0f, fade - dt * 2f)
+        if (streakTimer > 0f) {
+            streakTimer -= dt
+            if (streakTimer <= 0f) {
+                if (streak >= 5) {
+                    val bonus = streak * (4 + player.level * 2)
+                    showMessage("MASSACRE ×$streak!  +$bonus XP", Color(0xFFFF8A65))
+                    gainXp(bonus)
+                    sfx.levelUp()
+                }
+                streak = 0
+            }
+        }
         if (hitStop > 0f) {
             // A brief freeze on heavy hits makes them land harder.
             hitStop -= dt
@@ -563,6 +618,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         updateNpcs(dt)
         updateEnemies(dt)
         updateProjectiles(dt)
+        updateZones(dt)
         updateLoot(dt)
         reveal()
     }
@@ -590,7 +646,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     fun dodge() {
         val p = player
-        if (dead || p.dodgeCd > 0f || p.dodge > 0f) return
+        if (dead || p.dodgeCd > 0f || p.dodge > 0f || p.busy) return
         var dx = joyX
         var dy = joyY
         val len = hypot(dx, dy)
@@ -709,7 +765,18 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             p.buffTime -= dt
             if (p.buffTime <= 0f) p.buff = null
         }
-        p.mana = min(p.maxMana, p.mana + (5f + p.level * 0.3f) * dt)
+        p.mana = min(p.maxMana, p.mana + p.manaRegen * dt)
+        p.holy = max(0f, p.holy - dt)
+        p.fury = max(0f, p.fury - dt)
+        p.venom = max(0f, p.venom - dt)
+        if (p.stealth > 0f) {
+            p.stealth -= dt
+            if (rnd.nextFloat() < dt * 10f) particles += Particle(p.x + jitter(), p.y, 0f, -0.3f, Color(0x8890A4AE), 0.08f, 0.8f, z = 0.5f)
+        }
+        if (updateClassMoves(dt)) {
+            pushOutOfProps(p, 0.28f)
+            return
+        }
         if (p.sinceHurt > 4f || inVillage) p.hp = min(p.maxHp, p.hp + p.maxHp * (if (inVillage) 0.1f else 0.012f) * dt)
 
         val len = hypot(joyX, joyY)
@@ -717,19 +784,29 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         if (p.dodge > 0f) {
             p.dodge -= dt
             move(p, p.dodgeX * 9f * dt, p.dodgeY * 9f * dt, 0.28f)
-            ghosts += Ghost(p.x, p.y, dirRow(p.faceX, p.faceY), p.weaponKind)
+            ghosts += Ghost(p.x, p.y, dirRow(p.faceX, p.faceY))
             p.moving = true
             p.walk += dt * 20f
-        } else if (p.moving) {
+        } else run {
+            // Velocity eases towards the stick (quick to start, a short glide to stop) so movement feels fluid.
             val speed = p.speed * min(1f, len)
-            val nx = joyX / len
-            val ny = joyY / len
-            if (p.swing <= 0f && p.whirl <= 0f && p.cast <= 0f) {
-                p.faceX = nx
-                p.faceY = ny
+            val tx = if (p.moving) joyX / len * speed else 0f
+            val ty = if (p.moving) joyY / len * speed else 0f
+            val k = min(1f, dt * (if (p.moving) 16f else 11f))
+            p.vx += (tx - p.vx) * k
+            p.vy += (ty - p.vy) * k
+            if (p.moving && p.swing <= 0f && p.whirl <= 0f && p.cast <= 0f) {
+                p.faceX = joyX / len
+                p.faceY = joyY / len
             }
-            move(p, nx * speed * dt, ny * speed * dt, 0.28f)
-            p.walk += dt * speed * 2.2f
+            val v = hypot(p.vx, p.vy)
+            if (v > 0.02f) move(p, p.vx * dt, p.vy * dt, 0.28f) else {
+                p.vx = 0f
+                p.vy = 0f
+            }
+            p.moving = v > 0.6f
+            if (!p.moving) return@run
+            p.walk += dt * v * 2.2f
             p.stepTimer -= dt
             if (p.stepTimer <= 0f) {
                 p.stepTimer = 0.28f
@@ -779,8 +856,12 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     fun attack() {
         val p = player
-        if (dead || p.attackCd > 0f) return
+        if (dead || p.attackCd > 0f || p.busy) return
         val kind = p.weaponKind
+        if (kind == WeaponKind.STAFF) {
+            arcaneBolt()
+            return
+        }
         val target = nearestEnemy(kind.reach + 1.3f)
         if (target != null) {
             faceToward(target.x, target.y)
@@ -811,6 +892,10 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     private fun onHitPowers(e: Enemy) {
         val p = player
+        if (p.venom > 0f) {
+            e.poison = 3f
+            e.poisonDps = max(e.poisonDps, p.damage * p.venomPct / 3f)
+        }
         if (p.has(Power.FROSTBITE) && rnd.nextFloat() < 0.15f) {
             e.frozen = if (e.type.boss) 0.4f else 1.2f
             e.windup = 0f
@@ -850,13 +935,13 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             showMessage("Learn ${skill.label} under ✨ Skills", skill.color)
             return
         }
-        if (!skillReady(skill)) return
+        if (!skillReady(skill) || p.busy) return
         val chainTarget = if (skill == Skill.CHAIN) nearestEnemy(6.5f) else null
         if (skill == Skill.CHAIN && chainTarget == null) {
             texts += FloatText(p.x, p.y - 1.4f, "No target", LIGHTNING)
             return
         }
-        val cost = if (skill == Skill.WHIRL && p.has(Power.STORM)) 0f else skill.mana
+        val cost = if ((skill == Skill.WHIRL || skill == Skill.BERSERK) && p.has(Power.STORM)) 0f else skill.mana
         if (p.mana < cost) {
             showMessage("Not enough mana", Color(0xFF64B5F6))
             return
@@ -913,6 +998,276 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 shake = max(shake, 0.3f)
             }
             Skill.CHAIN -> chainLightning(chainTarget!!, lvl)
+            Skill.METEOR -> {
+                val t = nearestEnemy(8f)
+                val tx = t?.x ?: (p.x + p.faceX * 4f)
+                val ty = t?.y ?: (p.y + p.faceY * 4f)
+                t?.let { faceToward(it.x, it.y) }
+                p.cast = 0.4f
+                meteors += Meteor(tx, ty, p.damage * (3f + 0.6f * (lvl - 1)) * spellMult())
+                sfx.fireball()
+            }
+            Skill.SHIELD_CHARGE -> {
+                nearestEnemy(6f)?.let { faceToward(it.x, it.y) }
+                p.charge = 0.32f + 0.02f * lvl
+                p.chargeX = p.faceX
+                p.chargeY = p.faceY
+                p.chargeHit.clear()
+                sfx.swing()
+                burst(p.x, p.y, Color(0xFFB0BEC5), 12)
+            }
+            Skill.CONSECRATE -> {
+                p.cast = 0.35f
+                zones += Zone(p.x, p.y, 2.7f, 6f, ZoneKind.CONSECRATE, p.damage * (0.4f + 0.1f * (lvl - 1)))
+                ring(p.x, p.y, 0.4f, Color(0xFFFFE082), 30, 5f)
+                sfx.levelUp()
+            }
+            Skill.HOLY_SHIELD -> {
+                p.holy = 6f + 2f * lvl
+                p.hp = min(p.maxHp, p.hp + p.maxHp * (0.15f + 0.05f * lvl))
+                ring(p.x, p.y, 0.2f, Color(0xFFFFF59D), 30, 3f)
+                sfx.potion()
+                texts += FloatText(p.x, p.y - 1.4f, "Holy Shield", Color(0xFFFFF59D))
+            }
+            Skill.LEAP -> {
+                val t = nearestEnemy(7f)
+                var tx = t?.x ?: (p.x + p.faceX * 4f)
+                var ty = t?.y ?: (p.y + p.faceY * 4f)
+                if (!dungeon.walkableAt(tx, ty)) {
+                    tx = p.x
+                    ty = p.y
+                }
+                faceToward(tx, ty)
+                p.leapFromX = p.x
+                p.leapFromY = p.y
+                p.leapToX = tx
+                p.leapToY = ty
+                p.leapDur = 0.5f
+                p.leap = p.leapDur
+                p.leapPower = 1.8f + 0.4f * (lvl - 1)
+                sfx.swing()
+            }
+            Skill.WAR_CRY -> {
+                p.fury = 8f + 2f * lvl
+                for (e in enemies) if (dist(e) < 5.5f) {
+                    e.fear = if (e.type.boss) 0.8f else 2.5f + 0.25f * lvl
+                    e.windup = 0f
+                }
+                ring(p.x, p.y, 0.4f, Color(0xFFFF7043), 36, 6f)
+                shake = max(shake, 0.4f)
+                sfx.levelUp()
+                texts += FloatText(p.x, p.y - 1.5f, "RAAAGH!", Color(0xFFFF7043), big = true)
+            }
+            Skill.BERSERK -> {
+                p.spin = 1.5f + 0.25f * lvl
+                p.spinTick = 0f
+                p.spinPower = 0.7f + 0.15f * (lvl - 1)
+            }
+            Skill.EARTHQUAKE -> {
+                p.cast = 0.35f
+                val dmg = p.damage * (2.2f + 0.5f * (lvl - 1))
+                for (e in enemies.toList()) if (dist(e) < 3.6f) {
+                    damageEnemy(e, dmg, 9f)
+                    e.stun = max(e.stun, if (e.type.boss) 0.5f else 1.2f)
+                }
+                for (pr in dungeon.props) if (pr.type.breakable && !pr.used && hypot(pr.x - p.x, pr.y - p.y) < 3.6f) breakProp(pr)
+                ring(p.x, p.y, 0.5f, Color(0xFFBCAAA4), 40, 7f)
+                waves += Wave(p.x, p.y, 4.6f, Color(0xFF8D6E63), 0.6f)
+                repeat(24) {
+                    val a = rnd.nextFloat() * 6.283f
+                    val r = rnd.nextFloat() * 3.4f
+                    particles += Particle(p.x + cos(a) * r, p.y + sin(a) * r, 0f, -1.5f, Color(0xFF8D7B5E), 0.06f + rnd.nextFloat() * 0.06f, 0.7f, gravity = 5f, z = 0.05f)
+                }
+                addDecal(p.x, p.y, 4, 2.4f)
+                shake = 1f
+                hitStop = max(hitStop, 0.08f)
+                sfx.explode()
+                sfx.rumble(60, 230)
+            }
+            Skill.SHADOW_STEP -> {
+                val t = nearestEnemy(7f)
+                if (t == null) {
+                    p.mana += cost
+                    p.cooldowns[skill] = 0f
+                    texts += FloatText(p.x, p.y - 1.4f, "No target", skill.color)
+                    return
+                }
+                val dx = t.x - p.x
+                val dy = t.y - p.y
+                val d = hypot(dx, dy).coerceAtLeast(0.01f)
+                var nx = t.x + dx / d * 0.85f
+                var ny = t.y + dy / d * 0.85f
+                if (!dungeon.walkableAt(nx, ny)) {
+                    nx = t.x - dx / d * 0.85f
+                    ny = t.y - dy / d * 0.85f
+                }
+                burst(p.x, p.y - 0.4f, Color(0xFF7C4DFF), 18, glow = true)
+                if (dungeon.walkableAt(nx, ny)) {
+                    p.x = nx
+                    p.y = ny
+                }
+                faceToward(t.x, t.y)
+                burst(p.x, p.y - 0.4f, Color(0xFF7C4DFF), 18, glow = true)
+                p.swingTime = 0.25f
+                p.swing = p.swingTime
+                damageEnemy(t, p.damage * (2f + 0.4f * (lvl - 1)), 5f, forceCrit = true)
+                onHitPowers(t)
+                sfx.portal()
+            }
+            Skill.FAN_OF_KNIVES -> {
+                val n = 8 + 2 * lvl
+                for (k in 0 until n) {
+                    val a = k * 2f * PI.toFloat() / n
+                    projectiles += Projectile(
+                        p.x, p.y, cos(a) * 11f, sin(a) * 11f, p.damage * (0.9f + 0.2f * (lvl - 1)), hostile = false,
+                        color = Color(0xFFE0E0E0), life = 0.45f, radius = 0.12f, small = true,
+                        poison = if (p.venom > 0f) p.damage * p.venomPct / 3f else 0f,
+                    )
+                }
+                p.whirl = 0.3f
+                sfx.swing()
+            }
+            Skill.SMOKE_BOMB -> {
+                p.stealth = 3f + lvl
+                for (e in enemies) if (!e.type.boss) {
+                    e.aggro = false
+                    e.windup = 0f
+                }
+                repeat(30) {
+                    val a = rnd.nextFloat() * 6.283f
+                    val sp = 0.5f + rnd.nextFloat() * 1.5f
+                    particles += Particle(p.x, p.y, cos(a) * sp, sin(a) * sp * 0.6f, Color(0xAA90A4AE), 0.15f + rnd.nextFloat() * 0.15f, 1.2f, z = 0.3f + rnd.nextFloat() * 0.5f)
+                }
+                sfx.portal()
+            }
+            Skill.VENOM -> {
+                p.venom = 8f + 2f * lvl
+                p.venomPct = 0.5f + 0.15f * (lvl - 1)
+                burst(p.x, p.y - 0.5f, Color(0xFF9CCC65), 20, glow = true)
+                sfx.potion()
+            }
+        }
+    }
+
+    /** Arcane bolt: the staff's basic attack is a seeking shot of magic. */
+    private fun arcaneBolt() {
+        val p = player
+        val target = nearestEnemy(8f)
+        target?.let { faceToward(it.x, it.y) }
+        p.attackCd = WeaponKind.STAFF.cooldown / (1f + p.attackSpeed / 100f)
+        p.cast = 0.25f
+        val dx = target?.let { it.x - p.x } ?: p.faceX
+        val dy = target?.let { it.y - p.y } ?: p.faceY
+        val d = hypot(dx, dy).coerceAtLeast(0.01f)
+        projectiles += Projectile(
+            p.x + dx / d * 0.5f, p.y + dy / d * 0.5f, dx / d * 10f, dy / d * 10f, p.damage * 0.95f * spellMult(), hostile = false,
+            color = Color(0xFFB388FF), life = 0.8f, radius = 0.13f, small = true,
+        )
+        sfx.zap()
+    }
+
+    /** Skills that take over the hero's movement for a moment. Returns true while one is running. */
+    private fun updateClassMoves(dt: Float): Boolean {
+        val p = player
+        if (p.leap > 0f) {
+            p.leap -= dt
+            val k = (1f - p.leap / p.leapDur).coerceIn(0f, 1f)
+            p.x = p.leapFromX + (p.leapToX - p.leapFromX) * k
+            p.y = p.leapFromY + (p.leapToY - p.leapFromY) * k
+            if (p.leap <= 0f) {
+                val dmg = p.damage * p.leapPower
+                for (e in enemies.toList()) if (dist(e) < 2.3f) {
+                    damageEnemy(e, dmg, 7f)
+                    e.stun = max(e.stun, if (e.type.boss) 0.4f else 1f)
+                }
+                for (pr in dungeon.props) if (pr.type.breakable && !pr.used && hypot(pr.x - p.x, pr.y - p.y) < 2.3f) breakProp(pr)
+                ring(p.x, p.y, 0.3f, Color(0xFFFFAB40), 30, 5f)
+                burst(p.x, p.y, if (inWorld) Color(0xFF8D7B5E) else Color(0xFF6D625A), 24)
+                addDecal(p.x, p.y, 4, 1.3f)
+                shake = max(shake, 0.8f)
+                hitStop = max(hitStop, 0.06f)
+                sfx.explode()
+                sfx.rumble(45, 200)
+            }
+            return true
+        }
+        if (p.charge > 0f) {
+            p.charge -= dt
+            val bx = p.x
+            val by = p.y
+            move(p, p.chargeX * 13f * dt, p.chargeY * 13f * dt, 0.28f)
+            if (rnd.nextFloat() < 0.7f) ghosts += Ghost(p.x, p.y, dirRow(p.faceX, p.faceY), 12)
+            for (e in enemies.toList()) if (e !in p.chargeHit && dist(e) < 1.0f + e.type.radius * e.size) {
+                p.chargeHit += e
+                damageEnemy(e, p.damage * (1.5f + 0.3f * ((p.skills[Skill.SHIELD_CHARGE] ?: 1) - 1)), 9f)
+                e.stun = max(e.stun, if (e.type.boss) 0.4f else 1f + 0.25f * (p.skills[Skill.SHIELD_CHARGE] ?: 1))
+                sfx.hit()
+                shake = max(shake, 0.3f)
+            }
+            // Stop at walls.
+            if (hypot(p.x - bx, p.y - by) < 0.01f) p.charge = 0f
+            return true
+        }
+        if (p.spin > 0f) {
+            p.spin -= dt
+            p.spinTick -= dt
+            if (p.spinTick <= 0f) {
+                p.spinTick = 0.22f
+                var hit = false
+                for (e in enemies.toList()) if (dist(e) < 1.9f + e.type.radius * e.size) {
+                    damageEnemy(e, p.damage * p.spinPower, 2.5f)
+                    onHitPowers(e)
+                    hit = true
+                }
+                for (pr in dungeon.props) if (pr.type.breakable && !pr.used && hypot(pr.x - p.x, pr.y - p.y) < 1.9f) breakProp(pr)
+                sfx.swing()
+                if (hit) sfx.hit()
+            }
+            // The hero can steer while spinning, a little slower than walking.
+            val len = hypot(joyX, joyY)
+            if (len > 0.15f) move(p, joyX / len * p.speed * 0.8f * dt, joyY / len * p.speed * 0.8f * dt, 0.28f)
+            if (rnd.nextFloat() < 0.6f) particles += Particle(p.x + jitter() * 2f, p.y + jitter(), 0f, -0.3f, Color(0x99CFD8DC), 0.05f, 0.35f, z = 0.4f)
+            return true
+        }
+        return false
+    }
+
+    /** Hallowed ground and burning craters, plus meteors on their way down. */
+    private fun updateZones(dt: Float) {
+        val p = player
+        val mi = meteors.iterator()
+        while (mi.hasNext()) {
+            val m = mi.next()
+            m.t -= dt
+            if (m.t > 0f) continue
+            mi.remove()
+            for (e in enemies.toList()) if (hypot(e.x - m.x, e.y - m.y) < 2.3f + e.type.radius) damageEnemy(e, m.dmg, 6f)
+            zones += Zone(m.x, m.y, 1.8f, 3f, ZoneKind.FIRE, m.dmg * 0.12f)
+            ring(m.x, m.y, 0.3f, Color(0xFFFF7043), 40, 6f)
+            waves += Wave(m.x, m.y, 3f, Color(0xFFFF5722), 0.5f)
+            burst(m.x, m.y, Color(0xFFFFAB40), 40, glow = true)
+            addDecal(m.x, m.y, 4, 2.2f)
+            shake = max(shake, 0.9f)
+            hitStop = max(hitStop, 0.05f)
+            sfx.explode()
+            sfx.rumble(45, 200)
+        }
+        val zi = zones.iterator()
+        while (zi.hasNext()) {
+            val z = zi.next()
+            z.age += dt
+            if (z.age >= z.life) {
+                zi.remove()
+                continue
+            }
+            z.tick -= dt
+            if (z.tick > 0f) continue
+            z.tick = 0.5f
+            for (e in enemies.toList()) if (hypot(e.x - z.x, e.y - z.y) < z.radius + e.type.radius) damageEnemy(e, z.dps * 0.5f, 0.5f)
+            if (z.kind == ZoneKind.CONSECRATE && hypot(p.x - z.x, p.y - z.y) < z.radius) {
+                val lvl = p.skills[Skill.CONSECRATE] ?: 1
+                p.hp = min(p.maxHp, p.hp + p.maxHp * (0.02f + 0.01f * lvl) * 0.5f)
+            }
         }
     }
 
@@ -1209,7 +1564,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     private fun bleeds(t: EnemyType) = t != EnemyType.SKELETON && t != EnemyType.SKELETON_KING && t != EnemyType.SLIME && t != EnemyType.GHOST
 
-    private fun damageEnemy(e: Enemy, base: Float, knock: Float) {
+    private fun damageEnemy(e: Enemy, base: Float, knock: Float, forceCrit: Boolean = false) {
         if (e.shield > 0f) {
             e.aggro = true
             if (e.flash <= 0f) {
@@ -1219,7 +1574,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             }
             return
         }
-        val crit = rnd.nextInt(100) < player.critChance
+        val crit = forceCrit || player.stealth > 0f || rnd.nextInt(100) < player.critChance
+        if (player.stealth > 0f) player.stealth = 0f
         val dmg = base * (0.85f + rnd.nextFloat() * 0.3f) * (if (crit) 2f else 1f)
         e.hp -= dmg
         e.flash = 0.12f
@@ -1231,27 +1587,32 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         val k = if (e.type.boss) knock * 0.12f else knock / e.size
         e.kx += dx / d * k
         e.ky += dy / d * k
-        texts += FloatText(e.x, e.y - 1f, dmg.roundToInt().toString(), if (crit) GOLD else Color.White, big = crit)
+        texts += FloatText(
+            e.x, e.y - 1f, dmg.roundToInt().toString(), if (crit) GOLD else Color.White, big = crit,
+            vx = (rnd.nextFloat() - 0.5f) * 2.4f, vy = -3.2f - rnd.nextFloat(), gravity = 7.5f,
+        )
         burst(e.x, e.y, bloodColor(e.type), 7)
         if (crit) {
             shake = max(shake, 0.3f)
             hitStop = max(hitStop, 0.04f)
+            sfx.rumble(14, 70)
         }
     }
 
     private fun hurtPlayer(raw: Float, from: Enemy? = null) {
-        if (player.dodge > 0f) {
+        if (player.dodge > 0f || player.leap > 0f || player.charge > 0f) {
             texts += FloatText(player.x, player.y - 1.2f, "Dodged!", Color(0xFFB0BEC5))
             return
         }
         if (from != null) championHit(from, raw)
         var dmg = raw * 100f / (100f + player.armorValue * 4f)
-        if (player.buff == Buff.WARD) dmg *= 0.6f
+        dmg *= player.damageTaken
         player.hp -= dmg
         player.hurt = 0.3f
         player.sinceHurt = 0f
         shake = max(shake, 0.4f)
         sfx.hurt()
+        sfx.rumble(28, 110)
         texts += FloatText(player.x, player.y - 1.2f, "-${dmg.roundToInt()}", HURT_COLOR)
         burst(player.x, player.y + 0.1f, Color(0xFF8E1B1B), 4)
         if (player.hp <= 0f) {
@@ -1276,6 +1637,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     private fun kill(e: Enemy) {
         sfx.kill()
+        streak++
+        streakTimer = 1.6f
         corpses += Corpse(e.type, e.x, e.y, e.faceX, e.faceY, e.size)
         hitStop = max(hitStop, if (e.type.boss) 0.35f else 0.05f)
         burst(e.x, e.y, bloodColor(e.type), 20)
@@ -1300,6 +1663,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 showMessage("${e.type.label} is defeated!", GOLD)
             }
             shake = 1f
+            sfx.rumble(160, 255)
             burst(e.x, e.y, GOLD, 70, glow = true)
             save()
         }
@@ -1394,7 +1758,17 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         }
         if (rarity < minRarity) rarity = minRarity
         val s = slot ?: Slot.entries.random(rnd)
-        val picked = bases.getValue(s).random(rnd)
+        val cls = player.heroClass
+        val options = when (s) {
+            Slot.WEAPON -> bases.getValue(s).filter { WeaponKind.ofIcon(it.second) in cls.weapons }
+            Slot.OFFHAND -> when (cls) {
+                HeroClass.ASSASSIN -> listOf("Parrying Dagger" to Icons.DAGGER, "Sai" to Icons.DAGGER, "Stiletto" to Icons.DAGGER)
+                HeroClass.SORCERESS -> listOf("Grimoire" to Icons.SCROLL, "Spellbook" to Icons.SCROLL, "Tome" to Icons.SCROLL)
+                else -> bases.getValue(s)
+            }
+            else -> bases.getValue(s)
+        }
+        val picked = options.ifEmpty { bases.getValue(s) }.random(rnd)
         val base = picked.first
         val icon = keepIcon ?: picked.second
         val name = keepName ?: when (rarity) {
@@ -1413,7 +1787,11 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 stats["damage"] = v(2f + level * 1.7f)
                 if (icon == Icons.STAFF) stats["spell"] = v(8f + level * 1.5f).coerceAtMost(90)
             }
-            Slot.OFFHAND -> { stats["armor"] = v(2f + level * 1.2f); stats["life"] = v(3f + level * 1.5f) }
+            Slot.OFFHAND -> when (icon) {
+                Icons.SCROLL -> { stats["mana"] = v(5f + level * 2f); stats["spell"] = v(5f + level).coerceAtMost(60) }
+                Icons.DAGGER -> { stats["damage"] = v(1f + level * 0.8f); stats["crit"] = v(2f).coerceAtMost(15) }
+                else -> { stats["armor"] = v(2f + level * 1.2f); stats["life"] = v(3f + level * 1.5f) }
+            }
             Slot.HELM -> { stats["armor"] = v((if (leather) 0.6f else 1f) + level * 0.8f); stats["life"] = v(3f + level * 2f) }
             Slot.ARMOR -> {
                 stats["armor"] = v((if (leather) 1.2f else 2f) + level * (if (leather) 1f else 1.5f))
@@ -1527,11 +1905,39 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                     e.ky = 0f
                 }
             }
+            if (e.poison > 0f) {
+                e.poison -= dt
+                e.hp -= e.poisonDps * dt
+                if (e.poison <= 0f) e.poisonDps = 0f
+                if (rnd.nextFloat() < dt * 8f) particles += Particle(e.x + jitter(), e.y, 0f, -0.5f, Color(0xFF9CCC65), 0.05f, 0.6f, glow = true, z = 0.6f)
+            }
             if (e.frozen > 0f) {
                 e.frozen -= dt
                 continue
             }
+            if (e.stun > 0f) {
+                e.stun -= dt
+                e.windup = 0f
+                continue
+            }
             e.anim += dt
+            // The hero vanished in smoke: monsters lose track of him.
+            if (player.stealth > 0f && !e.type.boss) {
+                e.aggro = false
+                continue
+            }
+            if (e.fear > 0f) {
+                e.fear -= dt
+                val fx = e.x - player.x
+                val fy = e.y - player.y
+                val fd = hypot(fx, fy).coerceAtLeast(0.01f)
+                move(e, fx / fd * e.speed * dt, fy / fd * e.speed * dt, e.type.radius)
+                e.faceX = fx / fd
+                e.faceY = fy / fd
+                e.moving = true
+                e.windup = 0f
+                continue
+            }
 
             val dx = player.x - e.x
             val dy = player.y - e.y
@@ -1769,6 +2175,19 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 particles += Particle(pr.x, pr.y, (rnd.nextFloat() - 0.5f) * 0.6f, (rnd.nextFloat() - 0.5f) * 0.6f,
                     pr.color, 0.07f, 0.3f, glow = true, z = 0.35f)
             }
+            if (explode && pr.small && !pr.hostile) {
+                iter.remove()
+                enemies.firstOrNull { e -> hypot(e.x - pr.x, e.y - pr.y) < e.type.radius * e.size + pr.radius }?.let { e ->
+                    damageEnemy(e, pr.dmg, 1.5f)
+                    if (pr.poison > 0f) {
+                        e.poison = 3f
+                        e.poisonDps = max(e.poisonDps, pr.poison)
+                    }
+                    sfx.hit()
+                }
+                burst(pr.x, pr.y, pr.color, 6, glow = true)
+                continue
+            }
             if (explode) {
                 iter.remove()
                 if (!pr.hostile) {
@@ -1827,7 +2246,11 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         val r = if (inWorld) 9 else 7
         for (y in py - r..py + r) for (x in px - r..px + r) {
             if (x in 0 until dungeon.w && y in 0 until dungeon.h && (x - px) * (x - px) + (y - py) * (y - py) <= r * r) {
-                explored[y * dungeon.w + x] = true
+                val i = y * dungeon.w + x
+                if (!explored[i]) {
+                    explored[i] = true
+                    exploredVersion++
+                }
             }
         }
     }
@@ -1903,7 +2326,9 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         while (iter.hasNext()) {
             val t = iter.next()
             t.age += dt
-            t.y -= dt * 0.9f
+            t.vy += t.gravity * dt
+            t.x += t.vx * dt
+            t.y += t.vy * dt
             if (t.age > (if (t.big) 1.3f else 1f)) iter.remove()
         }
     }

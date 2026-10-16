@@ -42,6 +42,17 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.graphics.FilterQuality
+import kotlin.math.roundToInt
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.text.font.Font
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -68,18 +79,27 @@ private val panel = Color(0xCC120D0B)
 private val bronze = Color(0xFF8C6A3F)
 private val parchment = Color(0xFFE8D9B5)
 private val textShadow = Shadow(Color.Black, Offset(2f, 2f), 4f)
-private val serifBold = TextStyle(fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, shadow = textShadow)
+/** Cinzel for titles, names and buttons; Alegreya Sans for everything else. Both are SIL OFL fonts (see rpg/third_party/fonts). */
+val Cinzel = FontFamily(Font(R.font.cinzel_bold, FontWeight.Bold), Font(R.font.cinzel_black, FontWeight.Black))
+val Alegreya = FontFamily(Font(R.font.alegreya_sans_medium, FontWeight.Medium), Font(R.font.alegreya_sans_bold, FontWeight.Bold))
+private val serifBold = TextStyle(fontFamily = Cinzel, fontWeight = FontWeight.Bold, shadow = textShadow)
+private val titleStyle = TextStyle(fontFamily = Cinzel, fontWeight = FontWeight.Black, shadow = textShadow)
+
+/** The sound player, for button clicks anywhere in the menus. */
+private var uiSfx: Sfx? = null
 
 private enum class Overlay { NONE, INVENTORY, SKILLS, QUESTS, SHOP, MAP, SMITH, ELDER, SETTINGS, STASH }
 
 @Composable
 fun RpgScreen(
     game: Game, assets: Assets, music: Music, sfx: Sfx, settings: android.content.SharedPreferences,
-    autoStart: Boolean = false, debugOverlay: Int = -1, animate: Boolean = true,
+    autoStart: Boolean = false, debugOverlay: Int = -1, animate: Boolean = true, debugChooseClass: Boolean = false,
 ) {
     var frame by remember { mutableLongStateOf(0L) }
     var hudTick by remember { mutableIntStateOf(0) }
     var started by remember { mutableStateOf(autoStart) }
+    var choosing by remember { mutableStateOf(debugChooseClass) }
+    uiSfx = sfx
     var overlay by remember { mutableStateOf(if (debugOverlay >= 0) Overlay.entries[debugOverlay] else Overlay.NONE) }
 
     LaunchedEffect(Unit) {
@@ -102,12 +122,13 @@ fun RpgScreen(
     val measurer = rememberTextMeasurer()
     val styles = remember {
         TextStyles(
-            small = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold, shadow = textShadow),
-            big = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Black, shadow = textShadow),
-            label = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+            small = TextStyle(fontFamily = Alegreya, fontSize = 16.sp, fontWeight = FontWeight.Bold, shadow = textShadow),
+            big = TextStyle(fontFamily = Cinzel, fontSize = 22.sp, fontWeight = FontWeight.Black, shadow = textShadow),
+            label = TextStyle(fontFamily = Alegreya, fontSize = 12.sp, fontWeight = FontWeight.Bold),
         )
     }
 
+    CompositionLocalProvider(LocalTextStyle provides TextStyle(fontFamily = Alegreya, fontWeight = FontWeight.Medium)) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         Canvas(Modifier.fillMaxSize()) {
             frame.let { }
@@ -119,6 +140,7 @@ fun RpgScreen(
             drawIntoCanvas { it.saveLayer(Rect(Offset.Zero, size), Paint()) }
             drawLighting(game)
             drawIntoCanvas { it.restore() }
+            if (game.fade > 0f) drawRect(Color.Black.copy(alpha = game.fade * game.fade))
         }
 
         hudTick.let { }
@@ -142,7 +164,7 @@ fun RpgScreen(
                 ) {
                     Text(name.uppercase(), color = Color(0xFFFF5252), fontSize = 34.sp, textAlign = TextAlign.Center,
                         style = serifBold.copy(fontWeight = FontWeight.Black, shadow = Shadow(Color(0xFF7F0000), Offset.Zero, 24f)))
-                    Text("— prepares for battle —", color = parchment.copy(alpha = 0.8f), fontSize = 14.sp, fontFamily = FontFamily.Serif)
+                    Text("— prepares for battle —", color = parchment.copy(alpha = 0.8f), fontSize = 14.sp, fontFamily = Alegreya)
                 }
             }
             game.message?.let { msg ->
@@ -162,13 +184,19 @@ fun RpgScreen(
         }
 
         when {
+            !started && choosing -> ClassSelectScreen(
+                assets,
+                onPick = { cls ->
+                    game.newGame(cls)
+                    choosing = false
+                    started = true
+                },
+                onBack = { choosing = false },
+            )
             !started -> TitleScreen(
                 game, frame,
                 onContinue = { started = true },
-                onNew = {
-                    game.newGame()
-                    started = true
-                },
+                onNew = { choosing = true },
             )
             game.dead -> DeathScreen(onRespawn = { game.respawn() })
             game.victory -> VictoryScreen(game, onContinue = { game.victory = false; game.save() })
@@ -182,6 +210,7 @@ fun RpgScreen(
             overlay == Overlay.ELDER -> ElderScreen(game, hudTick, onClose = { overlay = Overlay.NONE })
             overlay == Overlay.SETTINGS -> SettingsScreen(music, sfx, settings, onClose = { overlay = Overlay.NONE })
         }
+    }
     }
 }
 
@@ -198,7 +227,7 @@ private fun Hud(game: Game, assets: Assets, onOpen: (Overlay) -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(game.areaTitle, color = parchment, fontSize = 16.sp, style = serifBold, textAlign = TextAlign.Center)
-                Text("Level ${p.level}", color = GOLD, fontSize = 13.sp, fontWeight = FontWeight.Bold, style = TextStyle(shadow = textShadow))
+                Text("Level ${p.level} ${p.heroClass.label}", color = GOLD, fontSize = 13.sp, fontWeight = FontWeight.Bold, style = TextStyle(shadow = textShadow))
                 Box(
                     Modifier.padding(top = 3.dp).fillMaxWidth(0.85f).height(6.dp)
                         .background(Color(0xAA000000), RoundedCornerShape(3.dp))
@@ -216,6 +245,12 @@ private fun Hud(game: Game, assets: Assets, onOpen: (Overlay) -> Unit) {
                     Text(
                         if (b.done) "📜 Bounty done — see the Elder" else "📜 ${b.type.label}: ${b.got}/${b.need}",
                         color = if (b.done) GOLD else parchment, fontSize = 11.sp, style = TextStyle(shadow = textShadow),
+                    )
+                }
+                if (game.streak >= 3) {
+                    Text(
+                        "×${game.streak} streak", color = if (game.streak >= 5) Color(0xFFFF8A65) else parchment,
+                        fontSize = (14 + minOf(game.streak, 12)).sp, style = titleStyle,
                     )
                 }
             }
@@ -264,7 +299,7 @@ private fun MenuButton(icon: String, badge: Boolean, onClick: () -> Unit) {
             modifier = Modifier
                 .background(panel, RoundedCornerShape(10.dp))
                 .border(1.dp, bronze, RoundedCornerShape(10.dp))
-                .clickable(onClick = onClick)
+                .clickable { uiSfx?.click(); onClick() }
                 .padding(6.dp)
         )
         if (badge) {
@@ -296,6 +331,36 @@ private fun Orb(fraction: Float, color: Color, label: String) {
     }
 }
 
+/** The explored part of the area as one pixel per tile, rebuilt only when more of it is revealed. */
+private object MapCache {
+    var dungeon: Dungeon? = null
+    var version = -1
+    var image: ImageBitmap? = null
+}
+
+private fun mapImage(game: Game): ImageBitmap {
+    val d = game.dungeon
+    MapCache.image?.let { if (MapCache.dungeon === d && MapCache.version == game.exploredVersion) return it }
+    val px = IntArray(d.w * d.h)
+    for (i in px.indices) {
+        if (!game.explored[i]) continue
+        px[i] = when (d.tiles[i]) {
+            WALL -> if (game.inWorld) 0xFF8D6E63.toInt() else 0xFF3A332D.toInt()
+            STAIRS, ENTRANCE -> 0xFF4FC3F7.toInt()
+            TREE -> 0xFF2E5E1E.toInt()
+            ROCK -> 0xFF7A7570.toInt()
+            WATER -> 0xFF2B6C8F.toInt()
+            BLOCK -> 0xFF6D4C41.toInt()
+            else -> if (game.inWorld) 0xFF5E7A3A.toInt() else 0xFF7A6E64.toInt()
+        }
+    }
+    val image = android.graphics.Bitmap.createBitmap(px, d.w, d.h, android.graphics.Bitmap.Config.ARGB_8888).asImageBitmap()
+    MapCache.dungeon = d
+    MapCache.version = game.exploredVersion
+    MapCache.image = image
+    return image
+}
+
 @Composable
 private fun Minimap(game: Game) {
     Canvas(
@@ -303,20 +368,10 @@ private fun Minimap(game: Game) {
     ) {
         val d = game.dungeon
         val cell = size.width / max(d.w, d.h)
-        for (y in 0 until d.h) for (x in 0 until d.w) {
-            val i = y * d.w + x
-            if (!game.explored[i]) continue
-            val color = when (d.tiles[i]) {
-                WALL -> if (game.inWorld) Color(0xFF8D6E63) else continue
-                STAIRS, ENTRANCE -> Color(0xFF4FC3F7)
-                TREE -> Color(0xFF2E5E1E)
-                ROCK -> Color(0xFF7A7570)
-                WATER -> Color(0xFF2B6C8F)
-                BLOCK -> Color(0xFF6D4C41)
-                else -> if (game.inWorld) Color(0xFF5E7A3A) else Color(0xFF6D625A)
-            }
-            drawRect(color, Offset(x * cell, y * cell), Size(cell + 0.5f, cell + 0.5f))
-        }
+        drawImage(
+            mapImage(game), IntOffset.Zero, IntSize(d.w, d.h), IntOffset.Zero,
+            IntSize((d.w * cell).roundToInt(), (d.h * cell).roundToInt()), filterQuality = FilterQuality.None,
+        )
         val st = d.exit
         if (!game.inWorld && game.explored[st.cy * d.w + st.cx]) drawCircle(Color(0xFF4FC3F7), cell * 2f, Offset((st.cx + 0.5f) * cell, (st.cy + 0.5f) * cell))
         for (e in d.entrances) {
@@ -366,7 +421,7 @@ private fun Controls(game: Game, modifier: Modifier) {
                 onRelease = { game.attackHeld = false },
             )
             // Four skills on an arc around the attack button, the potion at its foot.
-            val skills = listOf(Skill.FIREBALL, Skill.WHIRL, Skill.NOVA, Skill.CHAIN)
+            val skills = game.player.heroClass.skills
             val angles = listOf(280f, 245f, 210f, 175f)
             for ((i, s) in skills.withIndex()) {
                 val a = Math.toRadians(angles[i].toDouble())
@@ -507,7 +562,10 @@ private fun GothicButton(label: String, onClick: () -> Unit, modifier: Modifier 
                 RoundedCornerShape(6.dp),
             )
             .border(2.dp, bronze, RoundedCornerShape(6.dp))
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(enabled = enabled) {
+                uiSfx?.click()
+                onClick()
+            }
             .padding(horizontal = 14.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -664,7 +722,7 @@ private fun SkillsScreen(game: Game, tick: Int, onClose: () -> Unit) {
             if (p.skillPoints > 0) "You have ${p.skillPoints} points to spend" else "You gain a point every level",
             color = if (p.skillPoints > 0) GOLD else parchment.copy(alpha = 0.7f), fontSize = 14.sp,
         )
-        for (s in Skill.entries) {
+        for (s in p.heroClass.skills) {
             val lvl = p.skills[s] ?: 0
             Row(
                 Modifier.width(310.dp).background(Color(0x55000000), RoundedCornerShape(8.dp))
@@ -695,7 +753,7 @@ private fun QuestScreen(game: Game, onClose: () -> Unit) {
     DarkPanel("Quests", onClose) {
         Text(
             "A darkness rises from the depths beneath the village. Four rulers guard the path to the Shadow King's throne.",
-            color = parchment.copy(alpha = 0.85f), fontSize = 13.sp, fontFamily = FontFamily.Serif, modifier = Modifier.width(300.dp),
+            color = parchment.copy(alpha = 0.85f), fontSize = 13.sp, fontFamily = Alegreya, modifier = Modifier.width(300.dp),
         )
         for ((i, q) in QUESTS.withIndex()) {
             val done = i < game.questStage
@@ -756,7 +814,7 @@ private fun StashScreen(game: Game, assets: Assets, onClose: () -> Unit) {
     var refresh by remember { mutableIntStateOf(0) }
     refresh.let { }
     DarkPanel("Your Stash", onClose) {
-        Text("Whatever you leave here stays safe.", color = parchment.copy(alpha = 0.8f), fontSize = 13.sp, fontFamily = FontFamily.Serif)
+        Text("Whatever you leave here stays safe.", color = parchment.copy(alpha = 0.8f), fontSize = 13.sp, fontFamily = Alegreya)
         StashGrid(game, assets, "🗝 Stash", game.stash, STASH_SIZE, selected) { selected = it }
         StashGrid(game, assets, "🎒 Bag", p.inventory, INVENTORY_SIZE, selected) { selected = it }
         selected?.let { item ->
@@ -786,7 +844,7 @@ private fun ShopScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Uni
     var refresh by remember { mutableIntStateOf(0) }
     refresh.let { }
     DarkPanel("The Merchant", onClose) {
-        Text("\"What'll it be, adventurer?\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp)
+        Text("\"What'll it be, adventurer?\"", color = parchment, fontFamily = Alegreya, fontSize = 14.sp)
         Text("You have 💰 ${p.gold}", color = GOLD, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             GothicButton("Buy", { tab = 0 }, wide = false, enabled = tab != 0)
@@ -862,6 +920,78 @@ private fun ShopRow(
     }
 }
 
+/** Choose a hero: portraits, strengths and skills of each class. */
+@Composable
+private fun ClassSelectScreen(assets: Assets, onPick: (HeroClass) -> Unit, onBack: () -> Unit) {
+    var selected by remember { mutableStateOf(HeroClass.KNIGHT) }
+    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xF2100A08), Color(0xFA050303)))).systemBarsPadding()) {
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("‹", color = parchment, fontSize = 30.sp, modifier = Modifier.clickable(onClick = onBack).padding(horizontal = 8.dp))
+                Text("CHOOSE YOUR HERO", color = GOLD, fontSize = 22.sp, style = titleStyle, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(30.dp))
+            }
+            for (row in HeroClass.entries.chunked(2)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    for (cls in row) {
+                        val on = cls == selected
+                        Column(
+                            Modifier.weight(1f)
+                                .background(
+                                    Brush.verticalGradient(listOf(cls.color.copy(alpha = if (on) 0.32f else 0.12f), Color(0xFF0C0907))),
+                                    RoundedCornerShape(10.dp),
+                                )
+                                .border(if (on) 2.dp else 1.dp, if (on) cls.color else bronze.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+                                .clickable { selected = cls }
+                                .padding(8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Image(assets.portrait(cls), cls.label, Modifier.fillMaxWidth().aspectRatio(1f))
+                            Text(cls.label.uppercase(), color = if (on) cls.color else parchment, fontSize = 16.sp, style = titleStyle)
+                            Text(cls.tagline, color = parchment.copy(alpha = 0.7f), fontSize = 11.sp, textAlign = TextAlign.Center)
+                        }
+                    }
+                }
+            }
+            // Details of the chosen class.
+            Column(
+                Modifier.fillMaxWidth().background(Color(0x66000000), RoundedCornerShape(10.dp))
+                    .border(1.dp, selected.color.copy(alpha = 0.6f), RoundedCornerShape(10.dp)).padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(selected.blurb, color = parchment, fontSize = 13.sp, fontFamily = Alegreya)
+                for ((label, value) in listOf("Might", "Toughness", "Speed", "Magic").zip(selected.ratings)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(label, color = parchment.copy(alpha = 0.75f), fontSize = 12.sp, modifier = Modifier.width(80.dp))
+                        for (i in 1..5) {
+                            Box(
+                                Modifier.padding(end = 4.dp).size(width = 28.dp, height = 8.dp)
+                                    .background(if (i <= value) selected.color else Color(0x33FFFFFF), RoundedCornerShape(2.dp))
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(2.dp))
+                for (sk in selected.skills) {
+                    Row(verticalAlignment = Alignment.Top) {
+                        Text(sk.icon, fontSize = 20.sp, modifier = Modifier.width(32.dp))
+                        Column {
+                            Text(sk.label, color = sk.color, fontSize = 14.sp, style = serifBold)
+                            Text(sk.describe(1), color = parchment.copy(alpha = 0.75f), fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+            GothicButton("Begin as ${selected.label}", { onPick(selected) })
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
 @Composable
 private fun TitleScreen(game: Game, frame: Long, onContinue: () -> Unit, onNew: () -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -892,14 +1022,14 @@ private fun TitleScreen(game: Game, frame: Long, onContinue: () -> Unit, onNew: 
                 "SHADOW\nDEPTHS",
                 textAlign = TextAlign.Center,
                 style = TextStyle(
-                    color = Color(0xFFE0B25A), fontSize = 50.sp, lineHeight = 54.sp, fontFamily = FontFamily.Serif,
+                    color = Color(0xFFE0B25A), fontSize = 46.sp, lineHeight = 52.sp, fontFamily = Cinzel,
                     fontWeight = FontWeight.Black, shadow = Shadow(Color(0xFFFF3D00), Offset(0f, 0f), 28f),
                 ),
             )
             Text("─── ✦ ───", color = bronze, fontSize = 16.sp)
-            Text("Descend into darkness. Claim the treasure. Survive.", color = parchment.copy(alpha = 0.8f), fontFamily = FontFamily.Serif, fontSize = 15.sp)
+            Text("Descend into darkness. Claim the treasure. Survive.", color = parchment.copy(alpha = 0.8f), fontFamily = Alegreya, fontSize = 15.sp)
             Spacer(Modifier.height(10.dp))
-            if (game.hasSave) GothicButton("Continue — level ${game.player.level}, depth ${game.deepest}", onContinue)
+            if (game.hasSave) GothicButton("Continue — level ${game.player.level} ${game.player.heroClass.label}", onContinue)
             GothicButton("New Adventure", onNew)
             Spacer(Modifier.height(6.dp))
             Text(
@@ -915,7 +1045,7 @@ private fun DeathScreen(onRespawn: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Color(0xAA200000)), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("YOU HAVE FALLEN", color = Color(0xFFD32F2F), fontSize = 38.sp, style = serifBold.copy(fontWeight = FontWeight.Black))
-            Text("The darkness claimed you this time.", color = parchment, fontFamily = FontFamily.Serif)
+            Text("The darkness claimed you this time.", color = parchment, fontFamily = Alegreya)
             GothicButton("Wake in the village (−20% gold)", onRespawn)
         }
     }
@@ -929,7 +1059,7 @@ private fun VictoryScreen(game: Game, onContinue: () -> Unit) {
                 style = serifBold.copy(fontWeight = FontWeight.Black, shadow = Shadow(Color(0xFFFFD54F), Offset.Zero, 24f)))
             Text(
                 "The Shadow King has fallen and light returns to the land. Songs of your deeds will be sung for generations.",
-                color = parchment, fontFamily = FontFamily.Serif, fontSize = 15.sp, textAlign = TextAlign.Center,
+                color = parchment, fontFamily = Alegreya, fontSize = 15.sp, textAlign = TextAlign.Center,
             )
             Text("Level ${game.player.level} · ${game.player.gold} gold", color = GOLD, fontSize = 15.sp)
             Text("Yet the depths go on… and the monsters only grow stronger.", color = Color.Gray, fontSize = 13.sp, textAlign = TextAlign.Center)
@@ -948,20 +1078,10 @@ private fun MapScreen(game: Game, onClose: () -> Unit) {
             ) {
                 val d = game.dungeon
                 val cell = size.width / max(d.w, d.h)
-                for (y in 0 until d.h) for (x in 0 until d.w) {
-                    val i = y * d.w + x
-                    if (!game.explored[i]) continue
-                    val color = when (d.tiles[i]) {
-                        WALL -> if (game.inWorld) Color(0xFF8D6E63) else Color(0xFF3A332D)
-                        STAIRS, ENTRANCE -> Color(0xFF4FC3F7)
-                        TREE -> Color(0xFF2E5E1E)
-                        ROCK -> Color(0xFF7A7570)
-                        WATER -> Color(0xFF2B6C8F)
-                        BLOCK -> Color(0xFF6D4C41)
-                        else -> if (game.inWorld) Color(0xFF5E7A3A) else Color(0xFF7A6E64)
-                    }
-                    drawRect(color, Offset(x * cell, y * cell), Size(cell + 0.6f, cell + 0.6f))
-                }
+                drawImage(
+                    mapImage(game), IntOffset.Zero, IntSize(d.w, d.h), IntOffset.Zero,
+                    IntSize((d.w * cell).roundToInt(), (d.h * cell).roundToInt()), filterQuality = FilterQuality.None,
+                )
                 for (e in d.entrances) {
                     drawCircle(if (e.region == Region.HELL) Color(0xFFFF3D00) else Color(0xFF4FC3F7), cell * 2.2f, Offset((e.x + 0.5f) * cell, (e.y + 0.5f) * cell))
                 }
@@ -1012,7 +1132,7 @@ private fun SmithScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Un
     var refresh by remember { mutableIntStateOf(0) }
     refresh.let { }
     DarkPanel("The Blacksmith", onClose) {
-        Text("\"Show me your gear. I can reforge it or make it stronger.\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp,
+        Text("\"Show me your gear. I can reforge it or make it stronger.\"", color = parchment, fontFamily = Alegreya, fontSize = 14.sp,
             textAlign = TextAlign.Center, modifier = Modifier.width(300.dp))
         Text("You have 💰 ${p.gold}", color = GOLD, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         Text("Equipment", color = parchment, fontSize = 14.sp, style = serifBold)
@@ -1058,20 +1178,20 @@ private fun ElderScreen(game: Game, tick: Int, onClose: () -> Unit) {
         val b = game.bounty
         when {
             b != null && b.done -> {
-                Text("\"You kept your word. Here is your reward.\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp)
+                Text("\"You kept your word. Here is your reward.\"", color = parchment, fontFamily = Alegreya, fontSize = 14.sp)
                 GothicButton("Claim ${b.gold} 💰 + ${b.rarity.label.lowercase()} item", {
                     reward = game.claimBounty()
                     refresh++
                 })
             }
             b != null -> {
-                Text("\"Come back when the work is done.\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp)
+                Text("\"Come back when the work is done.\"", color = parchment, fontFamily = Alegreya, fontSize = 14.sp)
                 Text("Slay ${b.need} ${b.type.plural}: ${b.got}/${b.need}", color = GOLD, fontSize = 16.sp, style = serifBold)
                 Text("Reward: ${b.gold} 💰 and a ${b.rarity.label.lowercase()} item", color = b.rarity.color, fontSize = 13.sp)
                 GothicButton("Abandon bounty", { game.abandonBounty(); refresh++ }, wide = false)
             }
             else -> {
-                Text("\"The land is full of dangers. Help us, and you shall be rewarded.\"", color = parchment, fontFamily = FontFamily.Serif,
+                Text("\"The land is full of dangers. Help us, and you shall be rewarded.\"", color = parchment, fontFamily = Alegreya,
                     fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.width(300.dp))
                 for (offer in game.bountyOffers.toList()) {
                     Row(
@@ -1098,6 +1218,7 @@ private fun ElderScreen(game: Game, tick: Int, onClose: () -> Unit) {
 private fun SettingsScreen(music: Music, sfx: Sfx, settings: android.content.SharedPreferences, onClose: () -> Unit) {
     var musicOn by remember { mutableStateOf(music.enabled) }
     var sfxOn by remember { mutableStateOf(sfx.enabled) }
+    var hapticsOn by remember { mutableStateOf(sfx.haptics) }
     DarkPanel("Settings", onClose) {
         GothicButton(if (musicOn) "🎵 Music: on" else "🎵 Music: off", {
             musicOn = !musicOn
@@ -1108,6 +1229,12 @@ private fun SettingsScreen(music: Music, sfx: Sfx, settings: android.content.Sha
             sfxOn = !sfxOn
             sfx.enabled = sfxOn
             settings.edit().putBoolean("sfx", sfxOn).apply()
+        })
+        GothicButton(if (hapticsOn) "📳 Vibration: on" else "📴 Vibration: off", {
+            hapticsOn = !hapticsOn
+            sfx.haptics = hapticsOn
+            settings.edit().putBoolean("haptics", hapticsOn).apply()
+            if (hapticsOn) sfx.rumble(40, 160)
         })
         Text("The game saves automatically.", color = Color.Gray, fontSize = 12.sp)
     }

@@ -47,8 +47,8 @@ class UiScreenTest {
         repeat(20) { game.update(1f / 60f) }
         activity.setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                RpgScreen(game, assets, music, sfx, settings, autoStart = overlay != -2,
-                    debugOverlay = if (overlay < 0) -1 else overlay, animate = false)
+                RpgScreen(game, assets, music, sfx, settings, autoStart = overlay != -2 && overlay != -3,
+                    debugOverlay = if (overlay < 0) -1 else overlay, animate = false, debugChooseClass = overlay == -3)
             }
         }
         log("content set")
@@ -90,4 +90,9 @@ class UiScreenTest {
     }
     @Test fun dead() = shoot("u10_dead", -1) { g -> g.dead = true }
     @Test fun victory() = shoot("u11_victory", -1) { g -> g.victory = true }
+    @Test fun classSelect() = shoot("u12_class_select", -3)
+    @Test fun sorceressHud() = shoot("u13_hud_sorceress", -1) { g ->
+        g.newGame(HeroClass.SORCERESS)
+        for (s in g.player.heroClass.skills) g.player.skills[s] = 1
+    }
 }

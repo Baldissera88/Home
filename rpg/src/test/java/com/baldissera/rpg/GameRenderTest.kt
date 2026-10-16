@@ -38,9 +38,14 @@ class GameRenderTest {
     private val ctx: Context = ApplicationProvider.getApplicationContext()
     private val outDir = File("build/screens").apply { mkdirs() }
 
-    private fun newGame(): Game {
+    private fun newGame(cls: HeroClass = HeroClass.KNIGHT): Game {
         val prefs = ctx.getSharedPreferences("test${System.nanoTime()}", Context.MODE_PRIVATE)
-        return Game(Sfx(ctx), prefs).also { it.newGame() }
+        return Game(Sfx(ctx), prefs).also { it.newGame(cls) }
+    }
+
+    private fun learnAll(g: Game, level: Int = 3) {
+        for (s in g.player.heroClass.skills) g.player.skills[s] = level
+        g.player.mana = g.player.maxMana
     }
 
     private fun step(g: Game, frames: Int) = repeat(frames) { g.update(1f / 60f) }
@@ -104,7 +109,8 @@ class GameRenderTest {
         g.enterFloor(1)
         nearest(g) { !it.type.boss }?.let { approach(g, it) }
         step(g, 45)
-        g.cast(Skill.FIREBALL)
+        learnAll(g)
+        g.cast(Skill.SHIELD_CHARGE)
         step(g, 8)
         render(g, a, "04_crypt_fight")
 
@@ -139,10 +145,9 @@ class GameRenderTest {
         step(g, 40)
         g.cast(Skill.WHIRL)
         step(g, 6)
-        g.player.skills[Skill.CHAIN] = 3
-        g.player.mana = g.player.maxMana
-        g.cast(Skill.CHAIN)
-        step(g, 2)
+        learnAll(g)
+        g.cast(Skill.CONSECRATE)
+        step(g, 10)
         render(g, a, "08_hell")
 
         if (g.dead) g.respawn()
@@ -217,15 +222,86 @@ class GameRenderTest {
         champ.burnCd = 0.35f
         g.player.chill = 1f
         render(g, a, "15_champion")
+
+        // One scene per class, mid-skill.
+        fun showcase(cls: HeroClass, name: String, floor: Int, act: (Game) -> Unit) {
+            val h = newGame(cls)
+            h.player.level = 8
+            h.player.hp = h.player.maxHp
+            learnAll(h)
+            h.enterFloor(floor)
+            h.enemies.clear()
+            val types = listOf(EnemyType.SKELETON, EnemyType.SKELETON, EnemyType.GHOST, EnemyType.SKELETON)
+            for ((i, t) in types.withIndex()) {
+                val ang = i * 1.57f + 0.4f
+                val ex = h.player.x + kotlin.math.cos(ang) * 2.2f
+                val ey = h.player.y + kotlin.math.sin(ang) * 1.8f
+                if (h.dungeon.walkableAt(ex, ey)) h.enemies += Enemy(t, ex, ey, floor)
+            }
+            step(h, 30)
+            act(h)
+            render(h, a, name)
+        }
+        showcase(HeroClass.KNIGHT, "16_knight", 2) { h ->
+            h.cast(Skill.CONSECRATE)
+            h.cast(Skill.HOLY_SHIELD)
+            step(h, 20)
+            h.attack()
+            step(h, 4)
+        }
+        showcase(HeroClass.BARBARIAN, "17_barbarian", 5) { h ->
+            h.cast(Skill.WAR_CRY)
+            step(h, 10)
+            h.cast(Skill.BERSERK)
+            step(h, 14)
+        }
+        showcase(HeroClass.ASSASSIN, "18_assassin", 2) { h ->
+            h.cast(Skill.VENOM)
+            step(h, 4)
+            h.cast(Skill.FAN_OF_KNIVES)
+            step(h, 6)
+        }
+        showcase(HeroClass.SORCERESS, "19_sorceress", 8) { h ->
+            h.cast(Skill.METEOR)
+            step(h, 20)
+            h.attack()
+            step(h, 4)
+        }
+        showcase(HeroClass.BARBARIAN, "20_barbarian_leap", 2) { h ->
+            h.cast(Skill.LEAP)
+            step(h, 14)
+        }
     }
 
     @Test
     fun simulateManyFloors() {
-        val g = newGame()
         val r = Random(7)
+        for ((ci, cls) in HeroClass.entries.withIndex()) {
+            val h = newGame(cls)
+            h.player.level = 20
+            learnAll(h, 4)
+            for (floor in listOf(1, 5, 8, 0)) {
+                h.enterFloor(floor)
+                repeat(900) { i ->
+                    if (i % 30 == 0) {
+                        h.joyX = r.nextFloat() * 2f - 1f
+                        h.joyY = r.nextFloat() * 2f - 1f
+                    }
+                    h.attackHeld = i % 90 < 50
+                    val skill = cls.skills[(i / 60 + ci) % 4]
+                    if (i % 60 == 0) h.cast(skill)
+                    if (i % 300 == 0) h.dodge()
+                    if (i % 400 == 0) h.drinkPotion()
+                    if (h.dead) h.respawn()
+                    if (h.victory) h.victory = false
+                    h.update(1f / 30f)
+                }
+            }
+            repeat(200) { check(h.makeItem(10, Rarity.RARE, false, slot = Slot.WEAPON).weaponKind!! in cls.weapons) }
+        }
+        val g = newGame()
         g.player.level = 25
-        g.player.skills[Skill.NOVA] = 3
-        g.player.skills[Skill.CHAIN] = 4
+        learnAll(g, 4)
         for (floor in listOf(0, 1, 2, 3, 4, 6, 7, 9, 10, 12)) {
             g.enterFloor(floor)
             g.enemies += Enemy(EnemyType.BANDIT, g.player.x + 3f, g.player.y, floor + 1, elite = true, affixes = Affix.entries, title = "Test")
@@ -235,10 +311,10 @@ class GameRenderTest {
                     g.joyY = r.nextFloat() * 2f - 1f
                 }
                 g.attackHeld = i % 90 < 50
-                if (i % 120 == 0) g.cast(Skill.FIREBALL)
+                if (i % 120 == 0) g.cast(Skill.SHIELD_CHARGE)
                 if (i % 200 == 0) g.cast(Skill.WHIRL)
-                if (i % 400 == 0) g.cast(Skill.NOVA)
-                if (i % 150 == 75) g.cast(Skill.CHAIN)
+                if (i % 400 == 0) g.cast(Skill.CONSECRATE)
+                if (i % 150 == 75) g.cast(Skill.HOLY_SHIELD)
                 if (i % 500 == 0) g.drinkPotion()
                 if (i == 900 && floor > 0) g.townPortal()
                 if (g.dead) g.respawn()

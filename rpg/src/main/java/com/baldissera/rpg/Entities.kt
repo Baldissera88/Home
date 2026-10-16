@@ -82,7 +82,7 @@ enum class Power(val label: String, val text: String) {
     INFERNO("Inferno", "Fireballs split into three"),
     VAMPIRE("Bloodthirst", "Every kill restores 5% life"),
     GREED("Greed", "Twice as much gold from monsters"),
-    STORM("Storm", "Whirlwind costs no mana"),
+    STORM("Storm", "Sweeping Blow and Whirlwind cost no mana"),
 }
 
 class Item(
@@ -183,11 +183,98 @@ fun englishName(name: String): String {
 // ---------------------------------------------------------------- skills
 
 enum class Skill(val label: String, val icon: String, val mana: Float, val cooldown: Float, val color: Color, val describe: (Int) -> String) {
+    // Knight.
+    WHIRL("Sweeping Blow", "🌀", 20f, 1.0f, Color(0xFF90CAF9), { l -> "Swing your weapon all the way around. ${130 + (l - 1) * 30}% damage." }),
+    SHIELD_CHARGE("Shield Charge", "🛡️", 15f, 4f, Color(0xFFB0BEC5), { l ->
+        "Charge forward, bashing aside and stunning everything in your path for ${"%.1f".format(1f + 0.25f * l)} s. ${150 + (l - 1) * 30}% damage."
+    }),
+    CONSECRATE("Consecration", "☀️", 30f, 10f, Color(0xFFFFE082), { l ->
+        "Hallow the ground for 6 s: enemies on it burn for ${40 + (l - 1) * 10}% damage a second, and you heal ${2 + l}% life a second."
+    }),
+    HOLY_SHIELD("Holy Shield", "🔆", 25f, 16f, Color(0xFFFFF59D), { l -> "A blessing blocks 40% of all damage for ${6 + 2 * l} s and heals ${15 + 5 * l}% life." }),
+
+    // Barbarian.
+    LEAP("Leap", "💥", 15f, 3f, Color(0xFFFFAB40), { l -> "Leap onto the nearest foe and crash down, stunning everything around. ${180 + (l - 1) * 40}% damage." }),
+    WAR_CRY("War Cry", "📯", 20f, 14f, Color(0xFFFF7043), { l -> "A terrifying roar: +50% damage for ${8 + 2 * l} s, and nearby enemies flee in fear." }),
+    BERSERK("Whirlwind", "🌪️", 28f, 6f, Color(0xFFCFD8DC), { l ->
+        "Spin into a storm of steel for ${"%.1f".format(1.5f + 0.25f * l)} s, hitting everything near you. ${70 + (l - 1) * 15}% damage per hit."
+    }),
+    EARTHQUAKE("Earthquake", "⛰️", 35f, 8f, Color(0xFFBCAAA4), { l -> "Slam the ground: a quake ripples out, stunning and hurling enemies back. ${220 + (l - 1) * 50}% damage." }),
+
+    // Assassin.
+    SHADOW_STEP("Shadow Step", "👤", 12f, 3f, Color(0xFFB388FF), { l -> "Vanish and strike from behind the nearest foe with a certain critical hit. ${200 + (l - 1) * 40}% damage." }),
+    FAN_OF_KNIVES("Fan of Knives", "🗡️", 18f, 1.5f, Color(0xFFE0E0E0), { l -> "Hurl ${8 + 2 * l} knives in every direction. ${90 + (l - 1) * 20}% damage each." }),
+    SMOKE_BOMB("Smoke Bomb", "🌫️", 20f, 12f, Color(0xFF90A4AE), { l -> "Vanish in smoke for ${3 + l} s: enemies lose sight of you, you run 30% faster and your next strike is critical." }),
+    VENOM("Venom Blades", "☠️", 20f, 14f, Color(0xFF9CCC65), { l -> "Coat your blades for ${8 + 2 * l} s: hits poison for ${50 + (l - 1) * 15}% damage over 3 s and you strike 20% faster." }),
+
+    // Sorceress.
     FIREBALL("Fireball", "🔥", 12f, 0.35f, Color(0xFFFF7A1A), { l -> "Hurls an exploding ball of fire. ${160 + (l - 1) * 40}% damage." }),
-    WHIRL("Whirlwind", "🌀", 20f, 1.0f, Color(0xFF90CAF9), { l -> "Swing your weapon all the way around. ${130 + (l - 1) * 30}% damage." }),
     NOVA("Frost Nova", "❄️", 25f, 6f, Color(0xFF80DEEA), { l -> "Freezes every nearby enemy for ${"%.1f".format(2f + l * 0.5f)} s. ${100 + (l - 1) * 25}% damage." }),
     CHAIN("Chain Lightning", "⚡", 16f, 0.7f, Color(0xFF9FE7FF), { l -> "A bolt leaps between up to ${2 + l} enemies. ${110 + (l - 1) * 30}% damage." }),
+    METEOR("Meteor", "☄️", 35f, 5f, Color(0xFFFF7043), { l -> "Call a meteor down on the nearest foe: a huge blast that leaves the ground burning. ${300 + (l - 1) * 60}% damage." }),
 }
+
+/** The playable classes. Each has its own look, weapons, strengths and four skills. */
+enum class HeroClass(
+    val label: String,
+    val tagline: String,
+    val blurb: String,
+    val color: Color,
+    val weapons: List<WeaponKind>,
+    val skills: List<Skill>,
+    val baseLife: Float,
+    val lifePerLevel: Float,
+    val baseMana: Float,
+    val manaPerLevel: Float,
+    val damageMult: Float,
+    val critBonus: Int,
+    val speedMult: Float,
+    val spellBonus: Int,
+    val manaRegen: Float,
+    val armorBonus: Int,
+    /** 1..5 ratings shown on the class select screen: might, toughness, speed, magic. */
+    val ratings: List<Int>,
+) {
+    KNIGHT(
+        "Knight", "Sword, shield and holy light",
+        "A steadfast warrior. Charges into the fray behind a shield and calls on holy power to heal and protect.",
+        Color(0xFF90CAF9), listOf(WeaponKind.SWORD, WeaponKind.MACE, WeaponKind.SPEAR),
+        listOf(Skill.WHIRL, Skill.SHIELD_CHARGE, Skill.CONSECRATE, Skill.HOLY_SHIELD),
+        80f, 15f, 40f, 5f, 1f, 0, 1f, 0, 1f, 6, listOf(3, 5, 3, 2),
+    ),
+    BARBARIAN(
+        "Barbarian", "Great axes and raw fury",
+        "A towering berserker. Leaps into packs of monsters, spins through them and shakes the earth itself.",
+        Color(0xFFFF8A65), listOf(WeaponKind.AXE, WeaponKind.SWORD, WeaponKind.MACE),
+        listOf(Skill.LEAP, Skill.WAR_CRY, Skill.BERSERK, Skill.EARTHQUAKE),
+        95f, 18f, 30f, 3f, 1.2f, 0, 1f, 0, 0.85f, 2, listOf(5, 4, 3, 1),
+    ),
+    ASSASSIN(
+        "Assassin", "Twin daggers from the shadows",
+        "A deadly shadow. Strikes fast and from behind, poisons foes and vanishes in smoke before they can answer.",
+        Color(0xFFB388FF), listOf(WeaponKind.DAGGER),
+        listOf(Skill.SHADOW_STEP, Skill.FAN_OF_KNIVES, Skill.SMOKE_BOMB, Skill.VENOM),
+        70f, 12f, 40f, 4f, 1f, 10, 1.12f, 0, 1f, 0, listOf(4, 2, 5, 2),
+    ),
+    SORCERESS(
+        "Sorceress", "Fire, frost and lightning",
+        "A master of the elements. Keeps her distance with arcane bolts and burns, freezes and shatters whole hordes.",
+        Color(0xFFCE93D8), listOf(WeaponKind.STAFF),
+        listOf(Skill.FIREBALL, Skill.CHAIN, Skill.NOVA, Skill.METEOR),
+        60f, 10f, 70f, 8f, 1f, 0, 1f, 25, 1.7f, 0, listOf(2, 1, 3, 5),
+    ),
+}
+
+/** Lasting ground effects: hallowed ground and the burning crater a meteor leaves. */
+enum class ZoneKind { CONSECRATE, FIRE }
+
+class Zone(val x: Float, val y: Float, val radius: Float, val life: Float, val kind: ZoneKind, val dps: Float) {
+    var age = 0f
+    var tick = 0f
+}
+
+/** A meteor on its way down; it lands when [t] reaches zero. */
+class Meteor(val x: Float, val y: Float, val dmg: Float, var t: Float = 0.75f)
 
 /** An expanding shockwave ring on the ground. */
 class Wave(val x: Float, val y: Float, val radius: Float, val color: Color, val life: Float) {
@@ -225,7 +312,8 @@ class Player : Body {
     var mana = 0f
     val equipment = mutableMapOf<Slot, Item>()
     val inventory = mutableListOf<Item>()
-    val skills = mutableMapOf(Skill.FIREBALL to 1, Skill.WHIRL to 1, Skill.NOVA to 0)
+    var heroClass = HeroClass.KNIGHT
+    val skills = mutableMapOf<Skill, Int>()
     val cooldowns = mutableMapOf<Skill, Float>()
     var skillPoints = 0
     var swing = 0f
@@ -245,27 +333,58 @@ class Player : Body {
     var dodgeX = 0f
     var dodgeY = 0f
     var stepTimer = 0f
+    /** Smoothed walking velocity, tiles per second. */
+    var vx = 0f
+    var vy = 0f
     /** Seconds left of the slow from a frost champion's hit. */
     var chill = 0f
     /** Extra hearts from collected heart fragments (four fragments per heart). */
     var hearts = 0
 
+    // Class skills in progress.
+    var spin = 0f
+    var spinTick = 0f
+    var charge = 0f
+    var chargeX = 0f
+    var chargeY = 1f
+    val chargeHit = mutableSetOf<Enemy>()
+    var leap = 0f
+    var leapDur = 0.5f
+    var leapFromX = 0f
+    var leapFromY = 0f
+    var leapToX = 0f
+    var leapToY = 0f
+    var leapPower = 1.8f
+    var spinPower = 0.7f
+    var holy = 0f
+    var fury = 0f
+    var stealth = 0f
+    var venom = 0f
+    var venomPct = 0.5f
+    /** Height of a leap above the ground, in tiles. */
+    val leapZ: Float get() = if (leap > 0f) kotlin.math.sin((1f - leap / leapDur) * Math.PI.toFloat()) * 1.2f else 0f
+    val busy: Boolean get() = spin > 0f || charge > 0f || leap > 0f
+
     private fun sum(f: (Item) -> Int) = equipment.values.sumOf(f)
     fun has(p: Power) = equipment.values.any { it.power == p }
     val weaponKind: WeaponKind get() = WeaponKind.ofIcon(equipment[Slot.WEAPON]?.icon)
-    val maxHp: Float get() = 70f + level * 14f + sum { it.life } + hearts * HEART_LIFE
-    val maxMana: Float get() = 40f + level * 5f + sum { it.mana }
+    val maxHp: Float get() = heroClass.baseLife + level * heroClass.lifePerLevel + sum { it.life } + hearts * HEART_LIFE
+    val maxMana: Float get() = heroClass.baseMana + level * heroClass.manaPerLevel + sum { it.mana }
     val damage: Int get() {
-        val base = 6 + level * 2 + sum { it.damage }
-        return if (buff == Buff.MIGHT) (base * 1.5f).toInt() else base
+        val base = (6 + level * 2 + sum { it.damage }) * heroClass.damageMult
+        return if (buff == Buff.MIGHT || fury > 0f) (base * 1.5f).toInt() else base.toInt()
     }
-    val armorValue: Int get() = level + sum { it.armor }
-    val critChance: Int get() = 5 + sum { it.crit } + weaponKind.critBonus
+    val armorValue: Int get() = level + heroClass.armorBonus * (1 + level / 4) + sum { it.armor }
+    val critChance: Int get() = 5 + heroClass.critBonus + sum { it.crit } + weaponKind.critBonus
     val lifeSteal: Int get() = sum { it.lifeSteal }
-    val spellBonus: Int get() = sum { it.spell } + weaponKind.spellBonus
-    val attackSpeed: Int get() = sum { it.atkSpeed }
+    val spellBonus: Int get() = heroClass.spellBonus + sum { it.spell } + weaponKind.spellBonus
+    val attackSpeed: Int get() = sum { it.atkSpeed } + (if (venom > 0f) 20 else 0)
     val goldFind: Int get() = sum { it.goldFind } + (if (has(Power.GREED)) 100 else 0)
-    val speed: Float get() = 3.4f * (1f + sum { it.speed } / 100f) * (if (buff == Buff.SWIFT) 1.35f else 1f) * (if (chill > 0f) 0.6f else 1f)
+    val manaRegen: Float get() = (5f + level * 0.3f) * heroClass.manaRegen
+    val speed: Float get() = 3.4f * heroClass.speedMult * (1f + sum { it.speed } / 100f) * (if (buff == Buff.SWIFT) 1.35f else 1f) *
+        (if (chill > 0f) 0.6f else 1f) * (if (stealth > 0f) 1.3f else 1f)
+    /** Fraction of incoming damage that gets through blessings and wards. */
+    val damageTaken: Float get() = (if (buff == Buff.WARD) 0.6f else 1f) * (if (holy > 0f) 0.6f else 1f)
     val xpToNext: Int get() = 40 + level * level * 22
 }
 
@@ -335,6 +454,10 @@ class Enemy(
     var cooldown = 0.5f
     var flash = 0f
     var frozen = 0f
+    var stun = 0f
+    var fear = 0f
+    var poison = 0f
+    var poisonDps = 0f
     var kx = 0f
     var ky = 0f
     var faceX = 0f
@@ -368,6 +491,10 @@ class Projectile(
     var life: Float = 2f,
     val radius: Float = 0.18f,
     val aoe: Float = 0f,
+    /** Small shots (knives, arcane bolts) hit one target without an explosion. */
+    val small: Boolean = false,
+    /** Poison damage per second applied on hit (venom-coated knives). */
+    val poison: Float = 0f,
 )
 
 sealed interface LootKind {
@@ -474,11 +601,21 @@ class Corpse(val type: EnemyType, val x: Float, val y: Float, val faceX: Float, 
 }
 
 /** Afterimage left behind by a dodge roll. */
-class Ghost(val x: Float, val y: Float, val row: Int, val kind: WeaponKind) {
+class Ghost(val x: Float, val y: Float, val row: Int, val col: Int = 4) {
     var age = 0f
 }
 
-class FloatText(var x: Float, var y: Float, val text: String, val color: Color, val big: Boolean = false) {
+class FloatText(
+    var x: Float,
+    var y: Float,
+    val text: String,
+    val color: Color,
+    val big: Boolean = false,
+    /** Damage numbers pop out sideways and arc down; other texts just rise. */
+    var vx: Float = 0f,
+    var vy: Float = -0.9f,
+    val gravity: Float = 0f,
+) {
     var age = 0f
     var layout: TextLayoutResult? = null
 }

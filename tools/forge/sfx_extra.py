@@ -31,8 +31,22 @@ def zap(seed=4):
     return (sig * 0.85).astype(np.float32)
 
 
+def click():
+    """A soft, woody UI tick: a short filtered noise burst over a quick pitched knock."""
+    rng = np.random.default_rng(11)
+    n = int(SR * 0.07)
+    t = np.arange(n) / SR
+    knock = np.sin(2 * np.pi * 820 * t) * np.exp(-t * 90) + 0.5 * np.sin(2 * np.pi * 1640 * t) * np.exp(-t * 140)
+    noise = rng.standard_normal(n)
+    noise = np.convolve(noise, np.ones(6) / 6, mode="same") * np.exp(-t * 200)
+    sig = knock * 0.8 + noise * 0.35
+    sig /= np.max(np.abs(sig)) + 1e-9
+    return (sig * 0.6).astype(np.float32)
+
+
 def main():
     sf.write(os.path.join(OUT, "zap.wav"), zap(), SR, subtype="PCM_16")
+    sf.write(os.path.join(OUT, "click.wav"), click(), SR, subtype="PCM_16")
 
 
 if __name__ == "__main__":

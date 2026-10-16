@@ -3,9 +3,24 @@ package com.baldissera.rpg
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.SoundPool
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import kotlin.random.Random
 
 class Sfx(context: Context) {
+    private val vibrator: Vibrator? = runCatching {
+        if (Build.VERSION.SDK_INT >= 31) {
+            context.getSystemService(VibratorManager::class.java)?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Vibrator::class.java)
+        }
+    }.getOrNull()
+    /** Short vibrations on hits and big impacts. */
+    var haptics = true
+
     private val pool = SoundPool.Builder()
         .setMaxStreams(8)
         .setAudioAttributes(
@@ -34,7 +49,7 @@ class Sfx(context: Context) {
             "swing" to R.raw.swing, "hit" to R.raw.hit, "kill" to R.raw.kill, "coin" to R.raw.coin,
             "equip" to R.raw.equip, "potion" to R.raw.potion, "fireball" to R.raw.fireball,
             "explode" to R.raw.explode, "hurt" to R.raw.hurt, "levelup" to R.raw.levelup, "stairs" to R.raw.stairs,
-            "frost" to R.raw.frost, "portal" to R.raw.portal, "zap" to R.raw.zap,
+            "frost" to R.raw.frost, "portal" to R.raw.portal, "zap" to R.raw.zap, "click" to R.raw.click,
         )
         for ((name, res) in sounds) ids[name] = pool.load(context, res, 1)
         ambientId = pool.load(context, R.raw.ambient, 1)
@@ -61,6 +76,14 @@ class Sfx(context: Context) {
     fun frost() = play("frost", 0.8f)
     fun portal() = play("portal", 0.8f, varyPitch = false)
     fun zap() = play("zap", 0.7f)
+    fun click() = play("click", 0.45f, varyPitch = false)
+
+    /** A short buzz: [ms] long, [strength] 1..255. */
+    fun rumble(ms: Long, strength: Int) {
+        if (!haptics) return
+        val v = vibrator ?: return
+        runCatching { if (v.hasVibrator()) v.vibrate(VibrationEffect.createOneShot(ms, strength.coerceIn(1, 255))) }
+    }
 
     fun pause() = pool.autoPause()
     fun resume() = pool.autoResume()

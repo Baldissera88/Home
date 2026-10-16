@@ -13,6 +13,7 @@ import numpy as np
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(__file__))
+import heroes as H  # noqa: E402
 import models as M  # noqa: E402
 import textures as T  # noqa: E402
 from sdf import norm, render  # noqa: E402
@@ -21,18 +22,12 @@ OUT = os.path.join(os.path.dirname(__file__), "..", "..", "rpg", "src", "main", 
 
 # name: (builder(frame) -> prims, cell px, world width, foot fraction)
 DIRECTIONAL = {
-    "spr_hero": (lambda f: M.humanoid(f, M.HERO), 128, 1.7, 0.86),
     "spr_skeleton": (lambda f: M.humanoid(f, M.SKELETON), 128, 1.7, 0.86),
     "spr_skelking": (lambda f: M.humanoid(f, M.SKELETON_KING), 128, 1.8, 0.86),
     "spr_brute": (lambda f: M.humanoid(f, M.BRUTE), 160, 2.3, 0.86),
     "spr_cultist": (M.cultist, 128, 1.7, 0.86),
     "spr_spider": (M.spider, 128, 1.7, 0.8),
     "spr_demon": (M.demon, 256, 3.4, 0.86),
-    "spr_hero_axe": (lambda f: M.humanoid(f, M.HERO_AXE), 128, 1.7, 0.86),
-    "spr_hero_mace": (lambda f: M.humanoid(f, M.HERO_MACE), 128, 1.7, 0.86),
-    "spr_hero_dagger": (lambda f: M.humanoid(f, M.HERO_DAGGER), 128, 1.7, 0.86),
-    "spr_hero_spear": (lambda f: M.humanoid(f, M.HERO_SPEAR), 128, 1.7, 0.86),
-    "spr_hero_staff": (lambda f: M.humanoid(f, M.HERO_STAFF), 128, 1.7, 0.86),
     "spr_bandit": (lambda f: M.humanoid(f, M.BANDIT), 128, 1.7, 0.86),
     "spr_wolf": (M.wolf, 128, 1.7, 0.8),
     "spr_villager_f": (lambda f: M.humanoid(f, M.VILLAGER_F), 128, 1.7, 0.86),
@@ -50,8 +45,22 @@ STRIPS = {
 }
 
 
+HERO_CELL = 144
+
+
+def _portrait_view():
+    e = math.radians(28)
+    return norm((0, -math.sin(e), -math.cos(e))), norm((0, math.cos(e), -math.sin(e)))
+
+
 def _render_cell(job):
     kind, name, a, b = job
+    if kind == "hero":
+        frame = M.HERO_FRAMES[a]
+        return job, render(M.humanoid(frame, H.SHEETS[name]), HERO_CELL, 1.9, 0.9, yaw=b * math.pi / 4)
+    if kind == "portrait":
+        view, up = _portrait_view()
+        return job, render(M.humanoid(M.HERO_FRAMES[0], H.PORTRAITS[name]), 320, 1.25, 0.94, yaw=0.45, view=view, up=up)
     if kind == "dir":
         builder, cell, width, foot = DIRECTIONAL[name]
         frame = M.FRAMES[a]
@@ -114,6 +123,15 @@ def main():
             continue
         for i in range(4):
             jobs.append(("strip", name, i, 0))
+    if not only or "heroes" in only:
+        for name in H.SHEETS:
+            if os.environ.get("HEROES") and name not in os.environ["HEROES"].split(","):
+                continue
+            for d in range(5):
+                for f in range(len(M.HERO_FRAMES)):
+                    jobs.append(("hero", name, f, d))
+        for name in H.PORTRAITS:
+            jobs.append(("portrait", name, 0, 0))
     if not only or "props" in only:
         jobs += [("prop", "props", i, 0) for i in range(len(M.PROPS))]
     if not only or "icons" in only:
@@ -142,6 +160,22 @@ def main():
                     img = img[:, ::-1]
                 sheet[d * cell:(d + 1) * cell, f * cell:(f + 1) * cell] = img
         Image.fromarray(sheet).save(f"{OUT}/{name}.png", optimize=True)
+    if not only or "heroes" in only:
+        n = len(M.HERO_FRAMES)
+        for name in H.SHEETS:
+            if ("hero", name, 0, 0) not in results:
+                continue
+            sheet = np.zeros((HERO_CELL * 8, HERO_CELL * n, 4), dtype=np.uint8)
+            for d in range(8):
+                src = d if d <= 4 else 8 - d
+                for f in range(n):
+                    img = results[("hero", name, f, src)]
+                    if d > 4:
+                        img = img[:, ::-1]
+                    sheet[d * HERO_CELL:(d + 1) * HERO_CELL, f * HERO_CELL:(f + 1) * HERO_CELL] = img
+            Image.fromarray(sheet).save(f"{OUT}/spr_{name}.png", optimize=True)
+        for name in H.PORTRAITS:
+            Image.fromarray(results[("portrait", name, 0, 0)]).save(f"{OUT}/portrait_{name}.png", optimize=True)
     for name, (_, cell, _, _) in STRIPS.items():
         if only and name not in only:
             continue

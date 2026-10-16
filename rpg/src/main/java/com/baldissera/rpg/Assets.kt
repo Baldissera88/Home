@@ -19,15 +19,38 @@ class Assets(private val res: Resources) {
     private val opts = BitmapFactory.Options().apply { inScaled = false }
     private fun load(id: Int): ImageBitmap = BitmapFactory.decodeResource(res, id, opts).asImageBitmap()
 
-    private val heroes = mapOf(
-        WeaponKind.SWORD to SpriteSheet(load(R.drawable.spr_hero), 128, 1.7f, 0.86f),
-        WeaponKind.AXE to SpriteSheet(load(R.drawable.spr_hero_axe), 128, 1.7f, 0.86f),
-        WeaponKind.MACE to SpriteSheet(load(R.drawable.spr_hero_mace), 128, 1.7f, 0.86f),
-        WeaponKind.DAGGER to SpriteSheet(load(R.drawable.spr_hero_dagger), 128, 1.7f, 0.86f),
-        WeaponKind.SPEAR to SpriteSheet(load(R.drawable.spr_hero_spear), 128, 1.7f, 0.86f),
-        WeaponKind.STAFF to SpriteSheet(load(R.drawable.spr_hero_staff), 128, 1.7f, 0.86f),
-    )
-    fun hero(kind: WeaponKind) = heroes.getValue(kind)
+    // Hero sheets are 16 columns of 144 px cells (idle x2, walk x8, attack x6) and are loaded only when a class needs them.
+    private val heroSheets = HashMap<Int, SpriteSheet>()
+    private val portraits = HashMap<HeroClass, ImageBitmap>()
+
+    fun hero(cls: HeroClass, kind: WeaponKind): SpriteSheet {
+        val id = when (cls) {
+            HeroClass.KNIGHT -> when (kind) {
+                WeaponKind.MACE -> R.drawable.spr_hero_knight_mace
+                WeaponKind.SPEAR -> R.drawable.spr_hero_knight_spear
+                else -> R.drawable.spr_hero_knight_sword
+            }
+            HeroClass.BARBARIAN -> when (kind) {
+                WeaponKind.SWORD -> R.drawable.spr_hero_barbarian_sword
+                WeaponKind.MACE -> R.drawable.spr_hero_barbarian_mace
+                else -> R.drawable.spr_hero_barbarian_axe
+            }
+            HeroClass.ASSASSIN -> R.drawable.spr_hero_assassin
+            HeroClass.SORCERESS -> R.drawable.spr_hero_sorceress
+        }
+        return heroSheets.getOrPut(id) { SpriteSheet(load(id), 144, 1.9f, 0.9f) }
+    }
+
+    fun portrait(cls: HeroClass): ImageBitmap = portraits.getOrPut(cls) {
+        load(
+            when (cls) {
+                HeroClass.KNIGHT -> R.drawable.portrait_knight
+                HeroClass.BARBARIAN -> R.drawable.portrait_barbarian
+                HeroClass.ASSASSIN -> R.drawable.portrait_assassin
+                HeroClass.SORCERESS -> R.drawable.portrait_sorceress
+            }
+        )
+    }
     val wolf = SpriteSheet(load(R.drawable.spr_wolf), 128, 1.7f, 0.8f)
     val bandit = SpriteSheet(load(R.drawable.spr_bandit), 128, 1.7f, 0.86f)
     val world = SpriteSheet(load(R.drawable.spr_world), 160, 2.6f, 0.88f)

@@ -10,12 +10,35 @@ from sdf import (box, capsule, cylinder, ellipsoid, frame_from, norm, octa, rot_
 FRAMES = [("idle", 0), ("walk", 0), ("walk", 1), ("walk", 2), ("walk", 3), ("atk", 0), ("atk", 1), ("atk", 2)]
 
 
+# Hero sheets use smoother cycles: idle x2 (breathing), walk x8 and attack x6.
+HERO_FRAMES = [("idle", 0, 2), ("idle", 1, 2)] + [("walk", i, 8) for i in range(8)] + [("atk", i, 6) for i in range(6)]
+
+
+def _frame(frame):
+    """(kind, index, count): frames are (kind, i) for the classic 8-column sheets or (kind, i, n)."""
+    if len(frame) > 2:
+        return frame[0], frame[1], frame[2]
+    return frame[0], frame[1], {"walk": 4, "atk": 3}.get(frame[0], 1)
+
+
 def _walk(frame):
-    kind, i = frame
+    kind, i, n = _frame(frame)
     if kind == "walk":
-        ph = i * math.pi / 2 + math.pi / 4
+        ph = i * 2 * math.pi / n + math.pi / n
         return math.sin(ph), abs(math.cos(ph))
     return 0.0, 1.0
+
+
+def _keys(frame, keys):
+    """Sample a list of keyframes (vectors or floats) at the attack frame, blending linearly between keys."""
+    kind, i, n = _frame(frame)
+    t = i / max(1, n - 1) * (len(keys) - 1)
+    k = min(int(t), len(keys) - 2)
+    f = t - k
+    a, b = keys[k], keys[k + 1]
+    if isinstance(a, (int, float)):
+        return a * (1 - f) + b * f
+    return tuple(norm(np.asarray(x) * (1 - f) + np.asarray(y) * f) for x, y in zip(a, b))
 
 
 def blade(hand, direction, length, width, mat="steel", guard="gold", grip="leather"):
@@ -30,18 +53,24 @@ def blade(hand, direction, length, width, mat="steel", guard="gold", grip="leath
     ]
 
 
-def arm_pose(frame, side, swing):
-    """Upper-arm and forearm directions. side=+1 right (weapon) arm, -1 left."""
-    kind, i = frame
-    if side > 0 and kind == "atk":
-        return [
-            (v(0.35, 0.75, -0.55), v(0.15, 0.95, -0.25), v(0.05, 0.9, -0.45)),
-            (v(0.45, 0.05, 0.9), v(0.15, 0.0, 1.0), v(-0.25, 0.05, 1.0)),
-            (v(-0.05, -0.45, 0.8), v(-0.55, -0.3, 0.7), v(-0.95, -0.25, 0.35)),
-        ][i]
+SWORD_SLASH = [
+    (v(0.35, 0.75, -0.55), v(0.15, 0.95, -0.25), v(0.05, 0.9, -0.45)),
+    (v(0.45, 0.05, 0.9), v(0.15, 0.0, 1.0), v(-0.25, 0.05, 1.0)),
+    (v(-0.05, -0.45, 0.8), v(-0.55, -0.3, 0.7), v(-0.95, -0.25, 0.35)),
+]
+
+
+def arm_pose(frame, side, swing, spec=None):
+    """Upper-arm, forearm and weapon directions. side=+1 right (weapon) arm, -1 left."""
+    kind = frame[0]
+    spec = spec or {}
+    if kind == "atk":
+        keys = spec.get("atk_right", SWORD_SLASH) if side > 0 else spec.get("atk_left")
+        if keys:
+            return _keys(frame, keys)
     up = v(0.18 * side, -math.cos(swing * 0.7), math.sin(swing * 0.7))
     fore = v(0.08 * side, -math.cos(swing * 0.7 + 0.5), math.sin(swing * 0.7 + 0.5))
-    weapon = v(0.05 * side, 0.15, 1.0)
+    weapon = spec.get("rest_weapon", v(0.05, 0.15, 1.0)) * v(side, 1, 1)
     return up, fore, weapon
 
 
@@ -49,12 +78,19 @@ def humanoid(frame, spec):
     """Generic biped. `spec` controls proportions, materials and gear."""
     s = spec.get("scale", 1.0)
     swing, lift = _walk(frame)
-    kind, ai = frame
-    twist = {0: -0.35, 1: 0.15, 2: 0.45}[ai] if kind == "atk" else 0.0
+    kind, ai, an = _frame(frame)
+    attacking = kind == "atk"
+    twist = _keys(frame, spec.get("atk_twist", [-0.35, 0.15, 0.45])) if attacking else 0.0
+    lunge = _keys(frame, spec.get("atk_lunge", [0.0, 0.0])) * s if attacking else 0.0
     tw = rot_y(twist)
     bob = -0.015 * (1 - lift) * s
+    if kind == "idle" and ai == 1:
+        bob += 0.008 * s  # breathing in
     hip_y = spec.get("hip", 0.48) * s + bob
+    lean = rot_x(spec.get("lean", 0.0) + (_keys(frame, spec.get("atk_lean", [0.0, 0.0])) if attacking else 0.0))
     prims = []
+    if spec.get("under"):
+        prims.extend(spec["under"](s, swing, frame))
 
     # Legs.
     for side in (1, -1):
@@ -72,8 +108,11 @@ def humanoid(frame, spec):
             prims.append(ellipsoid(foot + v(0, 0.01, 0.04) * s, v(0.055, 0.04, 0.09) * s, spec["boot"]))
 
     # Torso, built around the hips and twisted for attacks.
+    pivot = v(0, hip_y, 0)
+
     def T(p):
-        return tw @ (np.asarray(p, dtype=np.float32)) + v(0, bob, 0)
+        q = lean @ (np.asarray(p, dtype=np.float32) - pivot) + pivot
+        return tw @ q + v(0, bob, lunge)
 
     torso_c = T(v(0, spec.get("chest", 0.66), 0) * s)
     prims.append(ellipsoid(torso_c, v(*spec.get("torso_r", (0.17, 0.2, 0.12))) * s, spec["torso"], rot=tw.T))
@@ -82,10 +121,10 @@ def humanoid(frame, spec):
     sh_y = spec.get("shoulder", 0.78)
     for side in (1, -1):
         shoulder = T(v(0.18 * side * spec.get("width", 1.0), sh_y, 0) * s)
-        up, fore, weapon = arm_pose(frame, side, -swing * side)
-        up = tw @ norm(up)
-        fore = tw @ norm(fore)
-        weapon = tw @ norm(weapon)
+        up, fore, weapon = arm_pose(frame, side, -swing * side, spec)
+        up = tw @ (lean @ norm(up))
+        fore = tw @ (lean @ norm(fore))
+        weapon = tw @ (lean @ norm(weapon))
         elbow = shoulder + up * 0.2 * s
         hand = elbow + fore * 0.19 * s
         prims.append(capsule(shoulder, elbow, spec.get("arm_r", 0.05) * s, spec["upper_arm"]))
