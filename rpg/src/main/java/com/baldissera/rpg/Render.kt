@@ -269,6 +269,8 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
         while (bi < bbs.size && bbs[bi].y < y + 1f) drawBillboard(bbs[bi++])
     }
 
+    if (!g.dead) drawHeroSilhouette(g, cam, a)
+
     for (pr in g.projectiles) {
         val c = Offset(cam.sx(pr.x), cam.sy(pr.y) - t * 0.4f)
         val r = pr.radius * t
@@ -413,6 +415,33 @@ private fun DrawScope.drawFlame(cx: Float, cy: Float, size: Float, time: Float, 
 
 // ---------------------------------------------------------------- billboards
 
+/** Sprite column and row for the hero's current pose and facing. */
+private fun heroFrame(p: Player): Pair<Int, Int> {
+    var row = dirRow(p.faceX, p.faceY)
+    val col = when {
+        p.whirl > 0f -> {
+            row = (row + ((1f - p.whirl / 0.45f) * 16f).toInt()) % 8
+            6
+        }
+        p.swing > 0f -> 5 + ((1f - p.swing / p.swingTime) * 3f).toInt().coerceIn(0, 2)
+        p.cast > 0f -> 6
+        p.moving -> 1 + (p.walk.toInt() % 4)
+        else -> 0
+    }
+    return col to row
+}
+
+/** A faint outline of the hero on top of whatever stands in front, so he is never lost behind walls or a crowd. */
+private fun DrawScope.drawHeroSilhouette(g: Game, cam: Camera, a: Assets) {
+    val p = g.player
+    val d = g.dungeon
+    val behindWall = d.tile(floorInt(p.x), floorInt(p.y) + 1) == WALL && p.y - floorInt(p.y) > 0.2f
+    val crowded = g.enemies.any { it.y > p.y && it.y - p.y < 1.3f && abs(it.x - p.x) < 0.8f }
+    if (!behindWall && !crowded) return
+    val (col, row) = heroFrame(p)
+    drawSprite(a.hero(p.weaponKind), col, row, cam.sx(p.x), cam.sy(p.y), cam.t, scale = CHAR_SCALE, alpha = 0.35f, filter = ghostTint)
+}
+
 private fun DrawScope.drawPlayer(g: Game, cam: Camera, a: Assets) {
     val p = g.player
     val t = cam.t
@@ -428,17 +457,7 @@ private fun DrawScope.drawPlayer(g: Game, cam: Camera, a: Assets) {
         drawCircle(GOLD.copy(alpha = 1f - k), t * (0.4f + k * 1.8f), Offset(cx, cy - t * 0.3f), style = Stroke(t * 0.08f))
     }
 
-    var row = dirRow(p.faceX, p.faceY)
-    val col = when {
-        p.whirl > 0f -> {
-            row = (row + ((1f - p.whirl / 0.45f) * 16f).toInt()) % 8
-            6
-        }
-        p.swing > 0f -> 5 + ((1f - p.swing / p.swingTime) * 3f).toInt().coerceIn(0, 2)
-        p.cast > 0f -> 6
-        p.moving -> 1 + (p.walk.toInt() % 4)
-        else -> 0
-    }
+    val (col, row) = heroFrame(p)
 
     if (p.swing > 0f || p.whirl > 0f) {
         val r = t * 0.8f

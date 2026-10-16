@@ -1253,7 +1253,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         shake = max(shake, 0.4f)
         sfx.hurt()
         texts += FloatText(player.x, player.y - 1.2f, "-${dmg.roundToInt()}", HURT_COLOR)
-        burst(player.x, player.y, Color(0xFFB71C1C), 8)
+        burst(player.x, player.y + 0.1f, Color(0xFF8E1B1B), 4)
         if (player.hp <= 0f) {
             if (player.has(Power.PHOENIX) && !player.phoenixUsed) {
                 player.phoenixUsed = true
