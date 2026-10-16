@@ -9,7 +9,6 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -164,7 +163,7 @@ fun RpgScreen(
 
         when {
             !started -> TitleScreen(
-                game,
+                game, frame,
                 onContinue = { started = true },
                 onNew = {
                     game.newGame()
@@ -863,16 +862,31 @@ private fun ShopRow(
 }
 
 @Composable
-private fun BoxScope.Backdrop() {
-    Box(Modifier.matchParentSizeCompat().background(Brush.verticalGradient(listOf(Color(0xCC000000), Color(0x88200606), Color(0xEE000000)))))
-}
-
-private fun Modifier.matchParentSizeCompat() = this.fillMaxSize()
-
 @Composable
-private fun TitleScreen(game: Game, onContinue: () -> Unit, onNew: () -> Unit) {
+private fun TitleScreen(game: Game, frame: Long, onContinue: () -> Unit, onNew: () -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Backdrop()
+        // The village glows through a vignette while embers drift up from below.
+        Canvas(Modifier.fillMaxSize()) {
+            drawRect(
+                Brush.radialGradient(
+                    listOf(Color(0x77000000), Color(0xC0080202), Color(0xF2000000)),
+                    center = Offset(size.width / 2f, size.height * 0.42f), radius = size.maxDimension * 0.62f,
+                ),
+            )
+            val t = frame / 60f
+            for (i in 0 until 46) {
+                val seed = i * 7919
+                val fx = ((seed * 31) % 1000) / 1000f
+                val speed = 0.04f + ((seed / 7) % 100) / 1000f
+                val k = ((t * speed + ((seed / 13) % 1000) / 1000f) % 1f)
+                val x = size.width * fx + sin(t * 0.8f + i) * size.width * 0.03f
+                val y = size.height * (1.05f - k * 1.1f)
+                val a = (1f - k) * (0.35f + 0.65f * (((seed / 3) % 10) / 10f))
+                val r = size.width * (0.003f + ((seed / 11) % 5) * 0.0012f)
+                drawCircle(Color(0xFFFF8A3D).copy(alpha = a * 0.35f), r * 3.5f, Offset(x, y))
+                drawCircle(Color(0xFFFFD08A).copy(alpha = a), r, Offset(x, y))
+            }
+        }
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(
                 "SKYGGERNES\nDYB",
@@ -882,6 +896,7 @@ private fun TitleScreen(game: Game, onContinue: () -> Unit, onNew: () -> Unit) {
                     fontWeight = FontWeight.Black, shadow = Shadow(Color(0xFFFF3D00), Offset(0f, 0f), 28f),
                 ),
             )
+            Text("─── ✦ ───", color = bronze, fontSize = 16.sp)
             Text("Stig ned i mørket. Find skattene. Overlev.", color = parchment.copy(alpha = 0.8f), fontFamily = FontFamily.Serif, fontSize = 15.sp)
             Spacer(Modifier.height(10.dp))
             if (game.hasSave) GothicButton("Fortsæt — niveau ${game.player.level}, dybde ${game.deepest}", onContinue)
