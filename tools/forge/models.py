@@ -3,7 +3,7 @@ import math
 
 import numpy as np
 
-from sdf import (box, capsule, cylinder, ellipsoid, frame_from, norm, octa, rot_x, rot_y, rot_z,
+from sdf import (box, capsule, cylinder, ellipsoid, frame_from, group, norm, octa, rot_x, rot_y, rot_z,
                  sphere, torus, v)
 
 # Animation frames used by every directional sprite sheet (columns of the atlas).
@@ -102,8 +102,11 @@ def humanoid(frame, spec):
         shin_dir = v(0, -math.cos(a - bend), math.sin(a - bend))
         foot = knee + shin_dir * 0.22 * s
         foot[1] = max(foot[1], 0.03 * s)
-        prims.append(capsule(hip, knee, spec.get("thigh_r", 0.06) * s, spec["thigh"]))
-        prims.append(capsule(knee, foot, spec.get("shin_r", 0.05) * s, spec["shin"]))
+        tr = spec.get("thigh_r", 0.06) * s
+        sr = spec.get("shin_r", 0.05) * s
+        # Tapered limbs that blend softly at the joints read as bodies rather than stacked tubes.
+        prims.append(capsule(hip, knee, tr, spec["thigh"], rb=tr * 0.8, op="smooth", k=0.02 * s))
+        prims.append(capsule(knee, foot, sr * 1.05, spec["shin"], rb=sr * 0.72, op="smooth", k=0.02 * s))
         if spec.get("boot"):
             prims.append(ellipsoid(foot + v(0, 0.01, 0.04) * s, v(0.055, 0.04, 0.09) * s, spec["boot"]))
 
@@ -115,7 +118,10 @@ def humanoid(frame, spec):
         return tw @ q + v(0, bob, lunge)
 
     torso_c = T(v(0, spec.get("chest", 0.66), 0) * s)
-    prims.append(ellipsoid(torso_c, v(*spec.get("torso_r", (0.17, 0.2, 0.12))) * s, spec["torso"], rot=tw.T))
+    tr3 = v(*spec.get("torso_r", (0.17, 0.2, 0.12))) * s
+    # Chest broader than the waist, merged into the hips.
+    prims.append(ellipsoid(torso_c + T(v(0, 0.035, 0) * s) - T(v(0, 0, 0)), tr3 * v(1.0, 0.82, 1.0), spec["torso"], rot=tw.T, op="smooth", k=0.03 * s))
+    prims.append(ellipsoid(T(v(0, hip_y / s * 0.5 + spec.get("chest", 0.66) * 0.5 - 0.02, 0) * s), tr3 * v(0.78, 0.6, 0.9), spec["torso"], rot=tw.T, op="smooth", k=0.05 * s))
     prims.extend(spec.get("torso_extra", lambda T, s, swing: [])(T, s, swing))
 
     sh_y = spec.get("shoulder", 0.78)
@@ -127,8 +133,10 @@ def humanoid(frame, spec):
         weapon = tw @ (lean @ norm(weapon))
         elbow = shoulder + up * 0.2 * s
         hand = elbow + fore * 0.19 * s
-        prims.append(capsule(shoulder, elbow, spec.get("arm_r", 0.05) * s, spec["upper_arm"]))
-        prims.append(capsule(elbow, hand, spec.get("fore_r", 0.045) * s, spec["forearm"]))
+        ar = spec.get("arm_r", 0.05) * s
+        fr = spec.get("fore_r", 0.045) * s
+        prims.append(capsule(shoulder, elbow, ar, spec["upper_arm"], rb=ar * 0.82, op="smooth", k=0.02 * s))
+        prims.append(capsule(elbow, hand, fr * 1.05, spec["forearm"], rb=fr * 0.75, op="smooth", k=0.015 * s))
         prims.append(sphere(hand, spec.get("hand_r", 0.045) * s, spec["hand"]))
         if spec.get("pauldron"):
             prims.append(sphere(shoulder + v(0, 0.02, 0) * s, 0.085 * s * spec.get("pauldron_s", 1.0), spec["pauldron"]))
@@ -139,7 +147,7 @@ def humanoid(frame, spec):
     neck_base = T(v(0, sh_y + 0.02, 0) * s)
     head_c = T(v(0, spec.get("head_y", 0.92), spec.get("head_z", 0.0)) * s)
     prims.append(capsule(neck_base, head_c, 0.045 * s, spec.get("neck", spec["torso"])))
-    prims.extend(spec["head"](head_c, s, tw, swing))
+    prims.extend(spec["head"](head_c, s * spec.get("head_scale", 0.9), tw, swing))
     return prims
 
 
@@ -1163,13 +1171,26 @@ PROPS += [
 
 
 def _gable_roof(width, depth, base_y, rise, mat, overhang=0.15):
+    """A pitched roof laid in overlapping courses: bundled straw for thatch, rows of split tiles for slate."""
     half_w = width / 2 + overhang
     slope = math.atan2(rise, depth / 2)
     length = math.hypot(rise, depth / 2) + overhang
+    rows = 5 if mat == "thatch" else 9
     out = []
     for side in (1, -1):
         c = v(0, base_y + rise / 2, side * depth / 4)
-        out.append(box(c, v(half_w, 0.06, length / 2), mat, rot=rot_x(side * slope), rnd=0.02))
+        R = rot_x(side * slope)
+        courses = []
+        for r in range(rows):
+            z = (-0.5 + (r + 0.5) / rows) * length
+            lift = 0.035 if mat == "thatch" else 0.018
+            # Courses step outwards towards the eaves so each overlaps the one below it.
+            local = v(0, lift * (r % 2), z)
+            courses.append(box(c + R @ local, v(half_w, 0.06, length / rows * 0.62), mat, rot=R, rnd=0.025 if mat == "thatch" else 0.01))
+        if mat == "thatch":
+            out.append(group(courses, mat, k=0.03, disp=(26.0, 0.022, 2, 41 + side), scale=(1.0, 0.12, 0.12)))
+        else:
+            out.append(group(courses, mat, k=0.004, disp=(13.0, 0.012, 1, 43 + side), scale=(1.0, 0.04, 0.04)))
     out.append(capsule(v(-half_w, base_y + rise + 0.02, 0), v(half_w, base_y + rise + 0.02, 0), 0.07, mat))
     return out
 
@@ -1191,7 +1212,8 @@ def house_timber():
 
 
 def house_stone():
-    out = [box(v(0, 0.55, 0), v(1.4, 0.55, 0.9), "stone", rnd=0.02), box(v(0, 1.35, 0), v(1.35, 0.3, 0.86), "wood", rnd=0.01)]
+    out = [group([box(v(0, 0.55, 0), v(1.4, 0.55, 0.9), "stone", rnd=0.02)], "stone", disp=(9.0, 0.02, 3, 51)),
+           box(v(0, 1.35, 0), v(1.35, 0.3, 0.86), "wood", rnd=0.01)]
     for k in range(7):
         out.append(box(v(-1.2 + k * 0.4, 1.35, 0.87), v(0.03, 0.3, 0.02), "darkwood"))
     for x in (-1.36, 1.36):

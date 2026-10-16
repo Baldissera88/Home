@@ -26,40 +26,46 @@ DIRECTIONAL = {
     "spr_skeleton": (lambda f: M.humanoid(f, M.SKELETON), 128, 1.7, 0.86),
     "spr_skelking": (lambda f: M.humanoid(f, M.SKELETON_KING), 128, 1.8, 0.86),
     "spr_brute": (lambda f: M.humanoid(f, M.BRUTE), 160, 2.3, 0.86),
-    "spr_cultist": (M.cultist, 128, 1.7, 0.86),
-    "spr_spider": (M.spider, 128, 1.7, 0.8),
-    "spr_demon": (M.demon, 256, 3.4, 0.86),
+    "spr_cultist": (M.cultist, 192, 1.7, 0.86),
+    "spr_spider": (M.spider, 192, 1.7, 0.8),
+    "spr_demon": (M.demon, 384, 3.4, 0.86),
     "spr_bandit": (lambda f: M.humanoid(f, M.BANDIT), 128, 1.7, 0.86),
-    "spr_wolf": (M.wolf, 128, 1.7, 0.8),
+    "spr_wolf": (M.wolf, 192, 1.7, 0.8),
     "spr_villager_f": (lambda f: M.humanoid(f, M.VILLAGER_F), 128, 1.7, 0.86),
     "spr_villager_m": (lambda f: M.humanoid(f, M.VILLAGER_M), 128, 1.7, 0.86),
-    "spr_ghost": (M.ghost, 128, 1.7, 0.86),
-    "spr_imp": (M.imp, 96, 1.2, 0.86),
+    "spr_ghost": (M.ghost, 192, 1.7, 0.86),
+    "spr_imp": (M.imp, 144, 1.2, 0.86),
     "spr_goblin": (lambda f: M.humanoid(f, M.GOBLIN), 96, 1.3, 0.86),
 }
 # Humanoid monsters and villagers rendered with the smooth 16-frame layout (idle x2, walk x8, attack x6).
 SMOOTH = {
-    "spr_skeleton": (lambda f: M.humanoid(f, M.SKELETON), 128, 1.7, 0.86),
-    "spr_skelking": (lambda f: M.humanoid(f, M.SKELETON_KING), 144, 2.05, 0.86),
-    "spr_brute": (lambda f: M.humanoid(f, M.BRUTE), 160, 2.3, 0.86),
-    "spr_bandit": (lambda f: M.humanoid(f, M.BANDIT), 128, 1.7, 0.86),
-    "spr_goblin": (lambda f: M.humanoid(f, M.GOBLIN), 96, 1.3, 0.86),
-    "spr_villager_f": (lambda f: M.humanoid(f, M.VILLAGER_F), 128, 1.7, 0.86),
-    "spr_villager_m": (lambda f: M.humanoid(f, M.VILLAGER_M), 128, 1.7, 0.86),
+    "spr_skeleton": (lambda f: M.humanoid(f, M.SKELETON), 192, 1.7, 0.86),
+    "spr_skelking": (lambda f: M.humanoid(f, M.SKELETON_KING), 216, 2.05, 0.86),
+    "spr_brute": (lambda f: M.humanoid(f, M.BRUTE), 240, 2.3, 0.86),
+    "spr_bandit": (lambda f: M.humanoid(f, M.BANDIT), 192, 1.7, 0.86),
+    "spr_goblin": (lambda f: M.humanoid(f, M.GOBLIN), 144, 1.3, 0.86),
+    "spr_villager_f": (lambda f: M.humanoid(f, M.VILLAGER_F), 192, 1.7, 0.86),
+    "spr_villager_m": (lambda f: M.humanoid(f, M.VILLAGER_M), 192, 1.7, 0.86),
 }
 for _name in SMOOTH:
     DIRECTIONAL.pop(_name, None)
 
 STRIPS = {
-    "spr_slime": (M.slime, 96, 1.1, 0.82),
-    "spr_bat": (M.bat, 96, 1.3, 0.9),
-    "spr_merchant": (M.merchant, 128, 1.7, 0.86),
-    "spr_elder": (M.elder, 128, 1.7, 0.86),
-    "spr_smith": (lambda i: M.humanoid(M.FRAMES[[0, 5, 6, 7][i]], M.BLACKSMITH), 128, 1.7, 0.86),
+    "spr_slime": (M.slime, 144, 1.1, 0.82),
+    "spr_bat": (M.bat, 144, 1.3, 0.9),
+    "spr_merchant": (M.merchant, 192, 1.7, 0.86),
+    "spr_elder": (M.elder, 192, 1.7, 0.86),
+    "spr_smith": (lambda i: M.humanoid(M.FRAMES[[0, 5, 6, 7][i]], M.BLACKSMITH), 192, 1.7, 0.86),
 }
 
 
-HERO_CELL = 144
+HERO_CELL = 216
+PROP_CELL = 192
+PROPS_PER_ROW = 16
+WORLD_CELL = 240
+VILLAGE_CELL = 384
+# Sheets keep five facings (S, SE, E, NE, N); the game mirrors them for the other three.
+FACINGS = 5
 
 
 def _portrait_view():
@@ -86,13 +92,13 @@ def _render_cell(job):
         builder, cell, width, foot = STRIPS[name]
         return job, render(builder(a), cell, width, foot)
     if kind == "prop":
-        return job, render(M.PROPS[a][1](), 128, 1.3, 0.8)
+        return job, render(M.PROPS[a][1](), PROP_CELL, 1.3, 0.8)
     if kind == "village":
-        return job, render(M.VILLAGE[a][1](), 256, 4.4, 0.86)
+        return job, render(M.VILLAGE[a][1](), VILLAGE_CELL, 4.4, 0.86)
     if kind == "tree":
         return job, render(F.TREES[a][1](), F.TREE_CELL, F.TREE_WIDTH, F.TREE_FOOT, step=0.6, iters=160)
     if kind == "world":
-        return job, render(M.WORLD[a][1](), 160, 2.6, 0.88)
+        return job, render(M.WORLD[a][1](), WORLD_CELL, 2.6, 0.88)
     if kind == "icon":
         e = math.radians(25)
         view = norm((0, -math.sin(e), -math.cos(e)))
@@ -178,41 +184,29 @@ def main():
     for name, (_, cell, _, _) in DIRECTIONAL.items():
         if only and name not in only:
             continue
-        sheet = np.zeros((cell * 8, cell * 8, 4), dtype=np.uint8)
-        for d in range(8):
-            src = d if d <= 4 else 8 - d
+        sheet = np.zeros((cell * FACINGS, cell * 8, 4), dtype=np.uint8)
+        for d in range(FACINGS):
             for f in range(8):
-                img = results[("dir", name, f, src)]
-                if d > 4:
-                    img = img[:, ::-1]
-                sheet[d * cell:(d + 1) * cell, f * cell:(f + 1) * cell] = img
+                sheet[d * cell:(d + 1) * cell, f * cell:(f + 1) * cell] = results[("dir", name, f, d)]
         Image.fromarray(sheet).save(f"{OUT}/{name}.png", optimize=True)
     for name, (_, cell, _, _) in SMOOTH.items():
         if ("smooth", name, 0, 0) not in results:
             continue
         n = len(M.HERO_FRAMES)
-        sheet = np.zeros((cell * 8, cell * n, 4), dtype=np.uint8)
-        for d in range(8):
-            src = d if d <= 4 else 8 - d
+        sheet = np.zeros((cell * FACINGS, cell * n, 4), dtype=np.uint8)
+        for d in range(FACINGS):
             for f in range(n):
-                img = results[("smooth", name, f, src)]
-                if d > 4:
-                    img = img[:, ::-1]
-                sheet[d * cell:(d + 1) * cell, f * cell:(f + 1) * cell] = img
+                sheet[d * cell:(d + 1) * cell, f * cell:(f + 1) * cell] = results[("smooth", name, f, d)]
         Image.fromarray(sheet).save(f"{OUT}/{name}.png", optimize=True)
     if not only or "heroes" in only:
         n = len(M.HERO_FRAMES)
         for name in H.SHEETS:
             if ("hero", name, 0, 0) not in results:
                 continue
-            sheet = np.zeros((HERO_CELL * 8, HERO_CELL * n, 4), dtype=np.uint8)
-            for d in range(8):
-                src = d if d <= 4 else 8 - d
+            sheet = np.zeros((HERO_CELL * FACINGS, HERO_CELL * n, 4), dtype=np.uint8)
+            for d in range(FACINGS):
                 for f in range(n):
-                    img = results[("hero", name, f, src)]
-                    if d > 4:
-                        img = img[:, ::-1]
-                    sheet[d * HERO_CELL:(d + 1) * HERO_CELL, f * HERO_CELL:(f + 1) * HERO_CELL] = img
+                    sheet[d * HERO_CELL:(d + 1) * HERO_CELL, f * HERO_CELL:(f + 1) * HERO_CELL] = results[("hero", name, f, d)]
             Image.fromarray(sheet).save(f"{OUT}/spr_{name}.png", optimize=True)
         for name in H.PORTRAITS:
             Image.fromarray(results[("portrait", name, 0, 0)]).save(f"{OUT}/portrait_{name}.png", optimize=True)
@@ -222,8 +216,13 @@ def main():
         strip = np.concatenate([results[("strip", name, i, 0)] for i in range(4)], axis=1)
         Image.fromarray(strip).save(f"{OUT}/{name}.png", optimize=True)
     if not only or "props" in only:
-        strip = np.concatenate([results[("prop", "props", i, 0)] for i in range(len(M.PROPS))], axis=1)
-        Image.fromarray(strip).save(f"{OUT}/spr_props.png", optimize=True)
+        cells = [results[("prop", "props", i, 0)] for i in range(len(M.PROPS))]
+        rows = (len(cells) + PROPS_PER_ROW - 1) // PROPS_PER_ROW
+        grid = np.zeros((PROP_CELL * rows, PROP_CELL * PROPS_PER_ROW, 4), dtype=np.uint8)
+        for i, c in enumerate(cells):
+            r, k = divmod(i, PROPS_PER_ROW)
+            grid[r * PROP_CELL:(r + 1) * PROP_CELL, k * PROP_CELL:(k + 1) * PROP_CELL] = c
+        Image.fromarray(grid).save(f"{OUT}/spr_props.png", optimize=True)
     if not only or "icons" in only:
         strip = np.concatenate([results[("icon", "icons", i, 0)] for i in range(len(M.ICONS))], axis=1)
         Image.fromarray(strip).save(f"{OUT}/spr_icons.png", optimize=True)

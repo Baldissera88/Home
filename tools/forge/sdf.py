@@ -65,7 +65,7 @@ MATERIALS = {
     "rune_blue": ((0.3, 0.7, 1.0), 0.0, 1.5, 0.0),
     "portal": ((1.0, 0.25, 0.08), 0.0, 1.9, 0.0),
     "plaster": ((0.84, 0.78, 0.66), 0.0, 0.0, 0.18),
-    "thatch": ((0.62, 0.49, 0.26), 0.0, 0.0, 0.55),
+    "thatch": ((0.52, 0.42, 0.24), 0.0, 0.0, 0.5),
     "slate": ((0.28, 0.30, 0.35), 0.2, 0.0, 0.25),
     "coal": ((1.0, 0.42, 0.1), 0.0, 1.3, 0.3),
     "cloth_white": ((0.88, 0.86, 0.80), 0.0, 0.0, 0.12),
@@ -337,6 +337,148 @@ def _hash_noise(p):
     return n - np.floor(n)
 
 
+# ---------------------------------------------------------------- physically based shading
+
+PBR = True
+KEY_COL = v(1.0, 0.92, 0.80) * 1.4
+SKY_COL = v(0.50, 0.60, 0.80)
+GROUND_COL = v(0.30, 0.26, 0.20)
+FILL_COL = v(0.30, 0.38, 0.55)
+HORIZON = v(0.86, 0.82, 0.74)
+ZENITH = v(0.40, 0.55, 0.86)
+
+
+def _mat_props(name):
+    """(roughness, bump strength, bump frequency, subsurface, sheen) guessed from the material's name."""
+    rgb, metal, emit, grain = MATERIALS[name]
+    if emit > 0:
+        return 1.0, 0.0, 30.0, 0.0, 0.0
+    if name in ("steel", "gold", "glass", "coins"):
+        return 0.28, 0.04, 40.0, 0.0, 0.0
+    if name in ("darksteel", "chitin", "chitin_red"):
+        return 0.38, 0.06, 40.0, 0.0, 0.0
+    if name.startswith("skin") or name in ("orc", "orc_dark", "demon", "demon_dark"):
+        return 0.5, 0.08, 45.0, 1.0, 0.0
+    if name.startswith("cloth") or name.startswith("robe") or name in ("parchment",):
+        return 0.9, 0.25, 70.0, 0.0, 1.0
+    if "leather" in name or name in ("cork",):
+        return 0.6, 0.35, 35.0, 0.0, 0.0
+    if name.startswith("hair") or name.startswith("beard") or name.startswith("fur"):
+        return 0.75, 0.5, 60.0, 0.3, 0.6
+    if name in ("bone", "bone_dark", "horn"):
+        return 0.6, 0.3, 25.0, 0.2, 0.0
+    if name in ("rust",):
+        return 0.8, 0.5, 30.0, 0.0, 0.0
+    if "leaf" in name or name in ("needles", "pine", "moss", "moss_rock", "thatch"):
+        return 0.8, 0.4, 30.0, 0.5, 0.2
+    if "bark" in name or "wood" in name:
+        return 0.85, 0.6, 18.0, 0.0, 0.0
+    if name in ("stone", "darkstone", "granite", "slate", "plaster", "clay"):
+        return 0.9, 0.55, 20.0, 0.0, 0.0
+    if name.startswith("slime"):
+        return 0.15, 0.05, 20.0, 0.8, 0.0
+    return 0.7 - 0.4 * metal, 0.2, 30.0, 0.0, 0.0
+
+
+def _env(d):
+    """Sky-and-ground radiance seen along directions d (N, 3), with the sun's disc."""
+    y = d[:, 1:2]
+    sky = HORIZON + (ZENITH - HORIZON) * np.clip(y, 0, 1) ** 0.6
+    ground = HORIZON * 0.55 + (v(0.16, 0.13, 0.10) - HORIZON * 0.55) * np.clip(-y, 0, 1) ** 0.5
+    col = np.where(y > 0, sky, ground)
+    sun = np.clip(d @ KEY, 0, 1)[:, None] ** 120 * 5.0
+    return col + sun * KEY_COL
+
+
+def _aces(x):
+    return np.clip((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0, 1)
+
+
+def _shade(p, nrm, mat, ao, sh, view, ry):
+    pm = p @ ry
+    names = MAT_NAMES
+    props = np.array([_mat_props(n) for n in names], dtype=np.float32)
+    rough = props[mat, 0]
+    bump = props[mat, 1]
+    bfreq = props[mat, 2]
+    sss = props[mat, 3]
+    sheen = props[mat, 4]
+
+    # Surface colour: smooth blotches plus a fine speckle.
+    grain = MAT_GRAIN[mat]
+    blotch = fbm3(pm * 9.0, 3, 5)
+    speck = _hash_noise(pm)
+    noise = blotch * 0.7 + speck * 0.3
+    for name, freq in SMOOTH_GRAIN.items():
+        sel = np.nonzero(mat == MAT_INDEX[name])[0]
+        if sel.size:
+            noise[sel] = fbm3(pm[sel] * freq, 3, 7) * 0.8 + speck[sel] * 0.2
+    base = MAT_RGB[mat] * (1.0 + grain[:, None] * (noise[:, None] - 0.5) * 2.0)
+    base = np.clip(base, 0, 1)
+
+    # Bump mapping from the gradient of a noise field (in model space, turned back to the view).
+    sel = np.nonzero(bump > 0.01)[0]
+    if sel.size:
+        q = pm[sel] * bfreq[sel, None]
+        e = 0.35
+        n0 = fbm3(q, 2, 13)
+        g = np.stack([fbm3(q + v(e, 0, 0), 2, 13) - n0, fbm3(q + v(0, e, 0), 2, 13) - n0, fbm3(q + v(0, 0, e), 2, 13) - n0], 1) / e
+        g = g @ ry.T  # model space -> world space
+        nn = nrm[sel]
+        g -= (g * nn).sum(1, keepdims=True) * nn
+        nn = nn - g * bump[sel, None] * 0.6
+        nrm = nrm.copy()
+        nrm[sel] = nn / (np.linalg.norm(nn, axis=1, keepdims=True) + 1e-9)
+
+    V = -view
+    L = KEY
+    ndl = np.clip(nrm @ L, 0, 1)
+    wrap = np.clip((nrm @ L + 0.3) / 1.3, 0, 1)
+    ndl_d = ndl * (1 - sss * 0.6) + wrap * sss * 0.6
+    ndv = np.clip(nrm @ V, 1e-3, 1)
+    metal = MAT_METAL[mat]
+    emit = MAT_EMIT[mat]
+
+    up = nrm[:, 1:2]
+    ambient = (SKY_COL * (0.5 + 0.5 * up) + GROUND_COL * (0.5 - 0.5 * up)) * 0.42 * ao[:, None] ** 1.5 \
+        + FILL_COL * np.clip(nrm @ FILL, 0, 1)[:, None] * 0.25 * ao[:, None]
+    shadow = sh[:, None]
+    direct = KEY_COL * ndl_d[:, None] * (shadow * 0.85 + 0.15 * sss[:, None])
+    diffuse = base * (1 - metal[:, None]) * (direct + ambient)
+    # Warm scattering where light bleeds through skin and leaves.
+    diffuse += base * sss[:, None] * np.clip(1 - np.abs(nrm @ L), 0, 1)[:, None] ** 2 * v(0.25, 0.08, 0.04) * shadow
+
+    # GGX specular from the sun.
+    H = L + V
+    H = H / np.linalg.norm(H)
+    ndh = np.clip(nrm @ H, 0, 1)
+    a = np.maximum(rough * rough, 0.02)
+    a2 = a * a
+    D = a2 / (math.pi * (ndh * ndh * (a2 - 1) + 1) ** 2)
+    k = a / 2
+    G = (ndl / (ndl * (1 - k) + k)) * (ndv / (ndv * (1 - k) + k))
+    vdh = float(np.clip(V @ H, 0, 1))
+    F0 = 0.04 * (1 - metal[:, None]) + base * metal[:, None]
+    F = F0 + (1 - F0) * (1 - vdh) ** 5
+    spec = (D * G / (4 * ndv * np.maximum(ndl, 1e-3) + 1e-4) * ndl)[:, None] * F * KEY_COL * shadow
+    spec = np.minimum(spec, 4.0)
+
+    # Reflections of the sky: mirror-like on polished metal, a soft sheen elsewhere.
+    R = 2 * (nrm @ V)[:, None] * nrm - V
+    env = _env(R / (np.linalg.norm(R, axis=1, keepdims=True) + 1e-9))
+    env_blur = (SKY_COL + GROUND_COL) * 0.6
+    envc = env * (1 - rough[:, None]) + env_blur * rough[:, None]
+    Fr = F0 + (1 - F0) * ((1 - ndv) ** 5)[:, None] * (1 - rough[:, None]) ** 2
+    refl = envc * Fr * ao[:, None] * (0.35 + 0.65 * metal[:, None])
+
+    # Velvet-like sheen on cloth at grazing angles.
+    cloth = sheen[:, None] * ((1 - ndv) ** 3)[:, None] * 0.35 * (base + 0.2) * (0.5 + 0.5 * shadow)
+
+    col = diffuse + spec + refl + cloth
+    col = np.where(emit[:, None] > 0, base * (0.6 + emit[:, None] * 0.6) + col * 0.3, col)
+    return _aces(col * 0.9)
+
+
 def render(prims, size=128, width=1.6, foot=0.82, yaw=0.0, ss=2, view=None, up=None, step=0.85, iters=90):
     """Render a model to an RGBA uint8 image. `foot` is where y=0 lands, as a fraction from the top."""
     view = VIEW if view is None else view
@@ -395,32 +537,35 @@ def render(prims, size=128, width=1.6, foot=0.82, yaw=0.0, ss=2, view=None, up=N
             ts += np.clip(dh, 0.01, 0.08)
         sh = np.clip(sh, 0.0, 1.0)
 
-        base = MAT_RGB[mat]
-        grain = MAT_GRAIN[mat]
-        noise = _hash_noise(p @ ry)
-        pm = p @ ry
-        for name, freq in SMOOTH_GRAIN.items():
-            sel = np.nonzero(mat == MAT_INDEX[name])[0]
-            if sel.size:
-                noise[sel] = fbm3(pm[sel] * freq, 3, 7) * 0.8 + noise[sel] * 0.2
-        base = base * (1.0 + grain[:, None] * (noise[:, None] - 0.5) * 2.0)
-        metal = MAT_METAL[mat][:, None]
-        emit = MAT_EMIT[mat][:, None]
+        if PBR:
+            rgba[hi, :3] = _shade(p, nrm, mat, ao, sh, view, ry)
+        else:
+            base = MAT_RGB[mat]
+            grain = MAT_GRAIN[mat]
+            noise = _hash_noise(p @ ry)
+            pm = p @ ry
+            for name, freq in SMOOTH_GRAIN.items():
+                sel = np.nonzero(mat == MAT_INDEX[name])[0]
+                if sel.size:
+                    noise[sel] = fbm3(pm[sel] * freq, 3, 7) * 0.8 + noise[sel] * 0.2
+            base = base * (1.0 + grain[:, None] * (noise[:, None] - 0.5) * 2.0)
+            metal = MAT_METAL[mat][:, None]
+            emit = MAT_EMIT[mat][:, None]
 
-        diff = np.clip(nrm @ KEY, 0, 1)[:, None] * sh[:, None]
-        fill = np.clip(nrm @ FILL, 0, 1)[:, None]
-        sky = (0.55 + 0.45 * nrm[:, 1:2])
-        half = norm(KEY - view)
-        spec = np.clip(nrm @ half, 0, 1)[:, None] ** 40 * sh[:, None]
-        rim = np.clip(1.0 - np.abs(nrm @ view), 0, 1)[:, None] ** 3
+            diff = np.clip(nrm @ KEY, 0, 1)[:, None] * sh[:, None]
+            fill = np.clip(nrm @ FILL, 0, 1)[:, None]
+            sky = (0.55 + 0.45 * nrm[:, 1:2])
+            half = norm(KEY - view)
+            spec = np.clip(nrm @ half, 0, 1)[:, None] ** 40 * sh[:, None]
+            rim = np.clip(1.0 - np.abs(nrm @ view), 0, 1)[:, None] ** 3
 
-        col = base * (0.30 * sky * ao[:, None] + 1.05 * diff * (1 - 0.45 * metal)) \
-            + base * fill * v(0.25, 0.30, 0.45) \
-            + spec * (0.25 + 0.9 * metal) * (0.6 + 0.4 * base) \
-            + rim * 0.12 * ao[:, None]
-        col = np.where(emit > 0, base * (0.6 + emit * 0.6) + col * 0.3, col)
-        col = 1.0 - np.exp(-col * 1.35)
-        rgba[hi, :3] = col
+            col = base * (0.30 * sky * ao[:, None] + 1.05 * diff * (1 - 0.45 * metal)) \
+                + base * fill * v(0.25, 0.30, 0.45) \
+                + spec * (0.25 + 0.9 * metal) * (0.6 + 0.4 * base) \
+                + rim * 0.12 * ao[:, None]
+            col = np.where(emit > 0, base * (0.6 + emit * 0.6) + col * 0.3, col)
+            col = 1.0 - np.exp(-col * 1.35)
+            rgba[hi, :3] = col
         rgba[hi, 3] = 1.0
 
     img = rgba.reshape(n, n, 4)

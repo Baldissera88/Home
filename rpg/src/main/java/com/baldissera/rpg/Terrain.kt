@@ -29,6 +29,42 @@ object Mat {
     const val WATER = 7
 }
 
+/** Dungeon floor materials, in the order of the strips in each tex_floorset. */
+object DMat {
+    const val FLOOR = 0
+    const val RUBBLE = 1
+    const val LOOSE = 2
+    const val DAMP = 3
+}
+
+/** The texture set a level's ground is baked from. */
+enum class FloorSet(val tex: Int, val height: Int, val clutter: Int, val count: Int) {
+    WILDS(R.drawable.tex_terrain, R.drawable.tex_terrain_h, R.drawable.tex_clutter, Mat.TEXTURED),
+    CRYPT(R.drawable.tex_floorset_crypt, R.drawable.tex_floorset_crypt_h, R.drawable.tex_clutter_dungeon, 4),
+    CAVE(R.drawable.tex_floorset_cave, R.drawable.tex_floorset_cave_h, R.drawable.tex_clutter_dungeon, 4),
+    HELL(R.drawable.tex_floorset_hell, R.drawable.tex_floorset_hell_h, R.drawable.tex_clutter_dungeon, 4),
+    ;
+
+    companion object {
+        fun of(d: Dungeon) = when {
+            d.ground != null -> WILDS
+            d.biome == Biome.CAVE -> CAVE
+            d.biome == Biome.HELL -> HELL
+            else -> CRYPT
+        }
+    }
+}
+
+// Dungeon clutter sprites, in the order of tex_clutter_dungeon.
+private const val D_BONES = 0
+private const val D_SKULL = 1
+private const val D_RUBBLE = 2
+private const val D_RUBBLE_DARK = 3
+private const val D_SHROOMS = 4
+private const val D_CRYSTALS = 5
+private const val D_EMBERS = 6
+private const val D_SHARDS = 7
+
 /** Pixels per tile in baked terrain. */
 const val TERRAIN_PX = 128
 /** Tiles per side of a baked chunk. */
@@ -118,7 +154,7 @@ private fun tileNoise(x: Float, y: Float, scale: Float, seed: Int): Float {
 }
 
 /** Pixel data the terrain baker samples: material textures with height maps, clutter sprites and noise. */
-class TerrainSource(res: Resources) {
+class TerrainSource(res: Resources, val set: FloorSet) {
     val color: Array<IntArray>
     val height: Array<FloatArray>
     val clutter: Array<IntArray>
@@ -133,12 +169,12 @@ class TerrainSource(res: Resources) {
             inScaled = false
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
-        val tex = BitmapFactory.decodeResource(res, R.drawable.tex_terrain, opts)
-        color = Array(Mat.TEXTURED) { m -> IntArray(TEX * TEX).also { tex.getPixels(it, 0, TEX, m * TEX, 0, TEX, TEX) } }
+        val tex = BitmapFactory.decodeResource(res, set.tex, opts)
+        color = Array(set.count) { m -> IntArray(TEX * TEX).also { tex.getPixels(it, 0, TEX, m * TEX, 0, TEX, TEX) } }
         tex.recycle()
-        val hb = BitmapFactory.decodeResource(res, R.drawable.tex_terrain_h, opts)
+        val hb = BitmapFactory.decodeResource(res, set.height, opts)
         val row = IntArray(TEX * TEX)
-        height = Array(Mat.TEXTURED) { m ->
+        height = Array(set.count) { m ->
             hb.getPixels(row, 0, TEX, m * TEX, 0, TEX, TEX)
             // Centred on the material's mean so every material competes evenly at a border.
             var mean = 0f
@@ -149,7 +185,7 @@ class TerrainSource(res: Resources) {
             h
         }
         hb.recycle()
-        val cb = BitmapFactory.decodeResource(res, R.drawable.tex_clutter, opts)
+        val cb = BitmapFactory.decodeResource(res, set.clutter, opts)
         clutter = Array(cb.width / CLUTTER) { k -> IntArray(CLUTTER * CLUTTER).also { cb.getPixels(it, 0, CLUTTER, k * CLUTTER, 0, CLUTTER, CLUTTER) } }
         cb.recycle()
         val nx = tileableNoise(NOISE, 8, 3, 11)
@@ -167,12 +203,37 @@ class TerrainSource(res: Resources) {
 class TerrainMap(val d: Dungeon) {
     val w = d.w
     val h = d.h
+    val set = FloorSet.of(d)
     val mat = ByteArray(w * h)
     /** Water, or land touching water: the animated water surface is drawn beneath these tiles. */
     val wet = BooleanArray(w * h)
     val signature: Int
 
     init {
+        signature = if (d.ground != null) wilds() else dungeon()
+    }
+
+    /** Dungeons: the main floor broken up by rubble along the walls, patches of loose ground and damp spots. */
+    private fun dungeon(): Int {
+        var sig = 23 + set.ordinal * 7919
+        for (y in 0 until h) for (x in 0 until w) {
+            val i = y * w + x
+            val t = d.tiles[i]
+            sig = sig * 31 + t
+            var walls = 0
+            for (dy in -1..1) for (dx in -1..1) if (d.tile(x + dx, y + dy) == WALL) walls++
+            mat[i] = when {
+                t == WALL -> DMat.RUBBLE
+                walls > 0 && (hash(x, y, 77) and 0xFF) < 110 -> DMat.RUBBLE
+                tileNoise(x.toFloat(), y.toFloat(), 4.5f, 17 + set.ordinal) > 0.62f -> DMat.LOOSE
+                tileNoise(x.toFloat(), y.toFloat(), 3.5f, 29 + set.ordinal) > 0.65f -> DMat.DAMP
+                else -> DMat.FLOOR
+            }.toByte()
+        }
+        return sig
+    }
+
+    private fun wilds(): Int {
         val gr = d.ground ?: IntArray(w * h)
         val village = d.village
         val vcx = village?.cx ?: -100
@@ -216,7 +277,7 @@ class TerrainMap(val d: Dungeon) {
             }
         }
         for (i in 0 until w * h) if (mat[i].toInt() == Mat.WATER) wet[i] = true
-        signature = sig
+        return sig
     }
 
     private fun dxWater(d: Dungeon, x: Int, y: Int) =
@@ -363,6 +424,16 @@ private class TerrainBaker(private val src: TerrainSource, private val m: Terrai
     /** Darkens the ground under trees, rocks, buildings and cave mouths. */
     private fun occlusion(tx0: Int, ty0: Int) {
         val d = m.d
+        if (m.set != FloorSet.WILDS) {
+            // Soft contact shadow where floor meets wall; corners come out darker, as they should.
+            for (y in ty0 - 1..ty0 + TERRAIN_CHUNK) for (x in tx0 - 1..tx0 + TERRAIN_CHUNK) {
+                if (d.tile(x, y) != WALL) continue
+                var open = false
+                for (dy in -1..1) for (dx in -1..1) if (d.tile(x + dx, y + dy) != WALL) open = true
+                if (open) rect(tx0, ty0, x.toFloat(), y.toFloat(), x + 1f, y + 1f, 0.55f, 0.5f)
+            }
+            return
+        }
         for (y in ty0 - 2..ty0 + TERRAIN_CHUNK + 1) for (x in tx0 - 2..tx0 + TERRAIN_CHUNK + 1) {
             when (d.tile(x, y)) {
                 TREE -> ellipse(tx0, ty0, x + 0.5f, y + 0.78f, 0.75f, 0.42f, 0.42f)
@@ -415,6 +486,10 @@ private class TerrainBaker(private val src: TerrainSource, private val m: Terrai
 
     /** Grass tufts, flowers, pebbles, leaves and reeds, scattered by a hash of each tile. */
     private fun clutter(tx0: Int, ty0: Int) {
+        if (m.set != FloorSet.WILDS) {
+            dungeonClutter(tx0, ty0)
+            return
+        }
         val d = m.d
         val ground = d.ground
         for (y in ty0 - 1..ty0 + TERRAIN_CHUNK) for (x in tx0 - 1..tx0 + TERRAIN_CHUNK) {
@@ -462,6 +537,46 @@ private class TerrainBaker(private val src: TerrainSource, private val m: Terrai
                 }
                 Mat.MUD -> if (nearWater && next() < 0.5f) put(C_REEDS)
                 Mat.COBBLE -> if (next() < 0.06f) put(C_TUFT2)
+            }
+        }
+    }
+
+    private fun dungeonClutter(tx0: Int, ty0: Int) {
+        val d = m.d
+        for (y in ty0 - 1..ty0 + TERRAIN_CHUNK) for (x in tx0 - 1..tx0 + TERRAIN_CHUNK) {
+            if (x < 0 || y < 0 || x >= m.w || y >= m.h) continue
+            val t = d.tile(x, y)
+            if (t == WALL || t == STAIRS) continue
+            var h = hash(x, y, m.signature)
+            fun next(): Float {
+                h = h * 1664525 + 1013904223
+                return ((h ushr 8) and 0xFFFF) / 65535f
+            }
+            fun put(sprite: Int) {
+                val px = ((x + 0.15f + next() * 0.7f) * TERRAIN_PX).toInt() - CLUTTER / 2
+                val py = ((y + 0.15f + next() * 0.7f) * TERRAIN_PX).toInt() - CLUTTER / 2
+                stamp(src.clutter[sprite], px - tx0 * TERRAIN_PX, py - ty0 * TERRAIN_PX, next() < 0.5f)
+            }
+            val mat = m.at(x, y)
+            when (m.set) {
+                FloorSet.CRYPT -> when (mat) {
+                    DMat.FLOOR -> { if (next() < 0.03f) put(D_BONES); if (next() < 0.015f) put(D_SKULL); if (next() < 0.03f) put(D_RUBBLE) }
+                    DMat.RUBBLE -> { if (next() < 0.35f) put(D_RUBBLE); if (next() < 0.1f) put(D_BONES) }
+                    DMat.LOOSE -> { if (next() < 0.15f) put(D_BONES); if (next() < 0.05f) put(D_SKULL); if (next() < 0.1f) put(D_SHARDS) }
+                    else -> if (next() < 0.05f) put(D_RUBBLE)
+                }
+                FloorSet.CAVE -> when (mat) {
+                    DMat.FLOOR -> if (next() < 0.05f) put(D_RUBBLE_DARK)
+                    DMat.RUBBLE -> if (next() < 0.3f) put(D_RUBBLE_DARK)
+                    DMat.LOOSE -> { if (next() < 0.1f) put(D_RUBBLE_DARK); if (next() < 0.04f) put(D_BONES) }
+                    else -> { if (next() < 0.3f) put(D_SHROOMS); if (next() < 0.12f) put(D_CRYSTALS) }
+                }
+                else -> when (mat) {
+                    DMat.FLOOR -> { if (next() < 0.04f) put(D_EMBERS); if (next() < 0.03f) put(D_BONES) }
+                    DMat.RUBBLE -> { if (next() < 0.25f) put(D_RUBBLE_DARK); if (next() < 0.15f) put(D_EMBERS) }
+                    DMat.LOOSE -> if (next() < 0.25f) put(D_EMBERS)
+                    else -> if (next() < 0.04f) put(D_SKULL)
+                }
             }
         }
     }
@@ -568,10 +683,18 @@ class Terrain(private val res: Resources) {
         }
     }
 
-    private fun source(): TerrainSource = src ?: synchronized(this) { src ?: TerrainSource(res).also { src = it } }
+    /** The texture set for [set], loading it (and dropping any other) on first use. */
+    private fun source(set: FloorSet): TerrainSource {
+        src?.let { if (it.set == set) return it }
+        synchronized(this) {
+            src?.let { if (it.set == set) return it }
+            src = null
+            return TerrainSource(res, set).also { src = it }
+        }
+    }
 
     private fun bakeNow(m: TerrainMap, cx: Int, cy: Int): ImageBitmap {
-        val px = TerrainBaker(source(), m).bake(cx, cy)
+        val px = TerrainBaker(source(m.set), m).bake(cx, cy)
         return Bitmap.createBitmap(px, CHUNK_PX, CHUNK_PX, Bitmap.Config.ARGB_8888).asImageBitmap()
     }
 

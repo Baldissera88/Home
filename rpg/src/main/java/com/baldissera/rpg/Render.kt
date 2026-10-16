@@ -87,8 +87,26 @@ fun DrawScope.drawSprite(
     val left = (x - w / 2f).roundToInt()
     val h = w * squash
     val top = (y - s.foot * h).roundToInt()
+    var r = row
+    var c = col
+    // West-facing rows are the east-facing ones seen in a mirror.
+    val flip = s.mirrored && r > 4
+    if (flip) r = 8 - r
+    if (c >= s.perRow) {
+        r += c / s.perRow
+        c %= s.perRow
+    }
+    if (flip) {
+        withTransform({ this.scale(-1f, 1f, Offset(x, y)) }) {
+            drawImage(
+                s.image, IntOffset(c * s.cell, r * s.cell), IntSize(s.cell, s.cell),
+                IntOffset(left, top), IntSize(w.roundToInt(), h.roundToInt()), alpha = alpha, colorFilter = filter, filterQuality = FilterQuality.Medium,
+            )
+        }
+        return
+    }
     drawImage(
-        s.image, IntOffset(col * s.cell, row * s.cell), IntSize(s.cell, s.cell),
+        s.image, IntOffset(c * s.cell, r * s.cell), IntSize(s.cell, s.cell),
         IntOffset(left, top), IntSize(w.roundToInt(), h.roundToInt()), alpha = alpha, colorFilter = filter, filterQuality = FilterQuality.Medium,
     )
 }
@@ -112,6 +130,7 @@ private class NpcBB(val n: Npc) : Billboard {
 }
 
 private fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: TextStyles): List<LootLabel> {
+    a.prepare(g)
     val cam = cameraFor(g)
     val t = cam.t
     val d = g.dungeon
@@ -122,14 +141,14 @@ private fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styl
     val y0 = max(0, floorInt(cam.oy / t) - 1)
     val y1 = min(d.h - 1, floorInt((cam.oy + size.height) / t) + 2)
 
-    // Floor: dungeon flagstones, or baked overworld terrain over animated water.
+    // Floor: baked terrain (over animated water outdoors).
     val floorImg = a.floor(d.biome)
     val ground = d.ground
-    val tmap = if (ground != null) a.terrain.map(d) else null
+    val tmap = a.terrain.map(d)
     // Chunks still baking in the background are drawn tile by tile in the meantime.
     var missing: MutableList<Int>? = null
-    if (tmap != null) {
-        drawWaterSurface(g, a, cam, tmap, x0, x1, y0, y1)
+    run {
+        if (ground != null) drawWaterSurface(g, a, cam, tmap, x0, x1, y0, y1)
         val cx0 = x0 / TERRAIN_CHUNK
         val cx1 = x1 / TERRAIN_CHUNK
         val cy0 = y0 / TERRAIN_CHUNK
@@ -156,7 +175,7 @@ private fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styl
         val tp = cam.py(y.toFloat())
         val sz = IntSize(cam.px(x + 1f) - l, cam.py(y + 1f) - tp)
         val i = y * d.w + x
-        val legacy = tmap == null || missing?.contains((y / TERRAIN_CHUNK) * 4096 + x / TERRAIN_CHUNK) == true
+        val legacy = missing?.contains((y / TERRAIN_CHUNK) * 4096 + x / TERRAIN_CHUNK) == true
         if (tile == WATER) {
             if (!legacy) continue
             drawImage(a.water, IntOffset(waterFrame * 128, 0), IntSize(128, 128), IntOffset(l, tp), sz, filterQuality = FilterQuality.Medium)
@@ -182,6 +201,8 @@ private fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styl
             }
         }
         if (tile == STAIRS) drawStairs(l.toFloat(), tp.toFloat(), t, g.time)
+        // Baked chunks carry their own soft shadows along the walls.
+        if (!legacy) continue
         if (d.tile(x, y - 1) == WALL) {
             drawRect(
                 Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.65f), Color.Transparent), startY = tp.toFloat(), endY = tp + t * 0.55f),
@@ -325,6 +346,7 @@ private fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styl
 
     for (b in g.bolts) drawBolt(b, cam)
     if (g.inWorld && g.daylight > 0.35f) drawButterflies(g, cam, x0, x1, y0, y1)
+    if (!g.inWorld) drawDustMotes(g, cam, x0, x1, y0, y1)
     if (g.inWorld) drawCloudShadows(g, a, cam)
 
     drawFog(g, a, cam)
@@ -361,6 +383,25 @@ private fun DrawScope.drawGlows(g: Game) {
         else spill(pr.x, pr.y, t * 2f, pr.color.copy(alpha = 0.3f))
     }
     for (e in d.entrances) if (e.region == Region.HELL) spill(e.x + 0.5f, e.y + 0.2f, t * 3f * flicker(g.time, 5f), Color(0x55FF3D00))
+
+    // The light pillars over epic and better loot bloom, so they stand out even at night.
+    for (l in g.loot) {
+        val item = (l.kind as? LootKind.Gear)?.item ?: continue
+        if (item.rarity < Rarity.EPIC || l.flying) continue
+        val cx = cam.sx(l.x)
+        val gy = cam.sy(l.y)
+        if (cx < -t || cx > size.width + t || gy < -t || gy > size.height + t * 4) continue
+        val pulse = 0.8f + 0.2f * sin(g.time * 2.4f + l.phase)
+        val hgt = t * (if (item.rarity == Rarity.MYTHIC) 4.2f else 3.2f)
+        val w = t * 0.34f
+        val col = item.rarity.color
+        drawRect(
+            Brush.verticalGradient(listOf(Color.Transparent, col.copy(alpha = 0.14f * pulse), col.copy(alpha = 0.32f * pulse)), startY = gy - hgt, endY = gy),
+            Offset(cx - w / 2f, gy - hgt), Size(w, hgt), blendMode = BlendMode.Plus,
+        )
+        drawOval(Brush.radialGradient(listOf(col.copy(alpha = 0.45f * pulse), Color.Transparent), Offset(cx, gy), t * 0.6f),
+            Offset(cx - t * 0.6f, gy - t * 0.25f), Size(t * 1.2f, t * 0.5f), blendMode = BlendMode.Plus)
+    }
 }
 
 /** Damage numbers and other floating text, kept readable above the lighting. */
@@ -410,7 +451,9 @@ private fun DrawScope.drawWallTile(
         d.tile(x - 1, y + 1) != WALL || d.tile(x + 1, y + 1) != WALL
 
     if (nearFloor) {
-        drawImage(topImg, IntOffset(0, 0), IntSize(128, 128), IntOffset(l, tp - h), IntSize(r - l, bt - tp), filterQuality = FilterQuality.Medium)
+        // Rock tops span 4x4 tiles, sampled by position so no tile grid shows.
+        val src = if (topImg.width >= 512) IntOffset((x and 3) * 128, (y and 3) * 128) else IntOffset.Zero
+        drawImage(topImg, src, IntSize(128, 128), IntOffset(l, tp - h), IntSize(r - l, bt - tp), filterQuality = FilterQuality.Medium)
         if (d.tile(x, y - 1) != WALL) drawRect(Color.Black.copy(alpha = 0.5f), Offset(l.toFloat(), (tp - h).toFloat()), Size((r - l).toFloat(), t * 0.04f))
         if (d.tile(x - 1, y) != WALL) drawRect(Color.Black.copy(alpha = 0.35f), Offset(l.toFloat(), (tp - h).toFloat()), Size(t * 0.04f, (bt - tp).toFloat()))
         if (d.tile(x + 1, y) != WALL) drawRect(Color.Black.copy(alpha = 0.35f), Offset(r - t * 0.04f, (tp - h).toFloat()), Size(t * 0.04f, (bt - tp).toFloat()))
@@ -495,7 +538,7 @@ private fun DrawScope.drawSunShadows(g: Game, a: Assets, cam: Camera, x0: Int, x
     if (strength <= 0.02f) return
     val t = cam.t
     val d = g.dungeon
-    shadowLayer.alpha = 0.36f * strength
+    shadowLayer.alpha = 0.52f * strength
     drawIntoCanvas { it.saveLayer(Rect(Offset.Zero, size), shadowLayer) }
     // Shadows reach right and down, so look a little beyond the top and left of the view.
     for (y in max(0, y0 - 3)..min(d.h - 1, y1 + 1)) for (x in max(0, x0 - 4)..min(d.w - 1, x1 + 1)) {
@@ -943,6 +986,7 @@ fun DrawScope.drawScene(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
     drawLighting(g)
     drawIntoCanvas { it.restore() }
     drawGlows(g)
+    drawFireflies(g)
     drawLootLabels(labels)
     drawFloatingTexts(g, measurer, styles)
 }
@@ -1303,6 +1347,61 @@ private fun DrawScope.drawButterflies(g: Game, cam: Camera, x0: Int, x1: Int, y0
         drawOval(col, Offset(c.x - w, c.y - t * 0.04f), Size(w, t * 0.07f))
         drawOval(col, Offset(c.x, c.y - t * 0.04f), Size(w, t * 0.07f))
         drawLine(Color(0xFF3E2723).copy(alpha = fade), Offset(c.x, c.y - t * 0.035f), Offset(c.x, c.y + t * 0.03f), strokeWidth = t * 0.012f)
+    }
+}
+
+/** Specks of dust hanging in the air underground; the lighting decides where they can be seen. */
+private fun DrawScope.drawDustMotes(g: Game, cam: Camera, x0: Int, x1: Int, y0: Int, y1: Int) {
+    val t = cam.t
+    val d = g.dungeon
+    val hell = d.biome == Biome.HELL
+    for (y in y0..y1) for (x in x0..x1) {
+        if (d.tile(x, y) == WALL) continue
+        val h = cellHash(x * 3 + 7, y * 5 + 1)
+        if ((h and 3) != 0) continue
+        val ph = (h ushr 4 and 1023) / 163f
+        if (hell) {
+            // Embers drift up from the ground and burn out.
+            val k = ((g.time * 0.35f + ph) % 1f)
+            val ex = x + 0.5f + sin(g.time * 1.3f + ph * 3f) * 0.3f
+            val ey = y + 0.8f
+            val c = Offset(cam.sx(ex), cam.sy(ey) - k * t * 1.8f)
+            drawCircle(Color(0xFFFF8A3C).copy(alpha = (1f - k) * 0.9f), t * 0.018f * (1.3f - k), c)
+            continue
+        }
+        val mx = x + 0.5f + sin(g.time * 0.21f + ph) * 0.45f
+        val my = y + 0.5f + sin(g.time * 0.17f + ph * 1.7f) * 0.35f
+        val lift = t * (0.5f + 0.35f * sin(g.time * 0.3f + ph * 2.3f))
+        drawCircle(Color(0xFFEDE3CF).copy(alpha = 0.45f), t * 0.012f, Offset(cam.sx(mx), cam.sy(my) - lift))
+    }
+}
+
+/** Fireflies blinking over the grass on warm nights; they carry their own light. */
+private fun DrawScope.drawFireflies(g: Game) {
+    if (!g.inWorld) return
+    val night = ((0.42f - g.daylight) / 0.2f).coerceIn(0f, 1f) * (1f - g.rain)
+    if (night <= 0.02f) return
+    val cam = cameraFor(g)
+    val t = cam.t
+    val d = g.dungeon
+    val x0 = max(0, floorInt(cam.ox / t) - 1)
+    val x1 = min(d.w - 1, floorInt((cam.ox + size.width) / t) + 1)
+    val y0 = max(0, floorInt(cam.oy / t) - 1)
+    val y1 = min(d.h - 1, floorInt((cam.oy + size.height) / t) + 1)
+    for (y in y0..y1) for (x in x0..x1) {
+        val h = cellHash(x * 7 + 3, y * 11 + 5)
+        if ((h and 7) != 0) continue
+        val tile = d.tile(x, y)
+        if (tile == WATER || tile == WALL || tile == BLOCK) continue
+        val ph = (h ushr 5 and 1023) / 163f
+        val fx = x + 0.5f + sin(g.time * 0.5f + ph) * 0.8f + sin(g.time * 1.3f + ph * 2f) * 0.2f
+        val fy = y + 0.5f + sin(g.time * 0.4f + ph * 1.4f) * 0.6f
+        val blink = (sin(g.time * 2.2f + ph * 5f) * 0.5f + 0.5f).let { it * it }
+        val c = Offset(cam.sx(fx), cam.sy(fy) - t * (0.4f + 0.2f * sin(g.time * 0.9f + ph)))
+        val k = night * blink
+        if (k < 0.03f) continue
+        drawCircle(Brush.radialGradient(listOf(Color(0xFFD8FF6A).copy(alpha = 0.55f * k), Color.Transparent), c, t * 0.22f), t * 0.22f, c, blendMode = BlendMode.Plus)
+        drawCircle(Color(0xFFF4FFB0).copy(alpha = k), t * 0.022f, c)
     }
 }
 

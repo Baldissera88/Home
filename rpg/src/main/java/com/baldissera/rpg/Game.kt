@@ -2284,23 +2284,13 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         }
     }
 
-    /** Embers from the campfire / lava, fireflies at night and dust motes in torchlight. */
+    /** Embers rising from the campfire. Fireflies, motes and lava sparks are drawn by the renderer. */
     private fun ambientParticles() {
         if (particles.size > 400) return
         val fire = dungeon.props.firstOrNull { it.type == PropType.CAMPFIRE }
         if (fire != null && hypot(fire.x - player.x, fire.y - player.y) < 12f && rnd.nextFloat() < 0.5f) {
             particles += Particle(fire.x + (rnd.nextFloat() - 0.5f) * 0.4f, fire.y, (rnd.nextFloat() - 0.5f) * 0.3f, -0.2f,
                 Color(0xFFFFAB40), 0.03f, 1.5f, glow = true, gravity = -0.6f, z = 0.4f)
-        }
-        if (inWorld && daylight < 0.35f && rnd.nextFloat() < 0.2f) {
-            particles += Particle(player.x + (rnd.nextFloat() - 0.5f) * 9f, player.y + (rnd.nextFloat() - 0.5f) * 12f,
-                (rnd.nextFloat() - 0.5f) * 0.4f, (rnd.nextFloat() - 0.5f) * 0.4f, Color(0xFFCCFF90), 0.025f, 3f, glow = true, z = 0.7f)
-        } else if (dungeon.biome == Biome.HELL && rnd.nextFloat() < 0.3f) {
-            particles += Particle(player.x + (rnd.nextFloat() - 0.5f) * 9f, player.y + (rnd.nextFloat() - 0.4f) * 12f,
-                (rnd.nextFloat() - 0.5f) * 0.2f, -0.3f, Color(0xFFFF6E40), 0.025f, 2.5f, glow = true, gravity = -0.1f, z = 0.2f)
-        } else if (!inWorld && rnd.nextFloat() < 0.15f) {
-            particles += Particle(player.x + (rnd.nextFloat() - 0.5f) * 6f, player.y + (rnd.nextFloat() - 0.5f) * 6f,
-                (rnd.nextFloat() - 0.5f) * 0.15f, -0.05f, Color(0x88FFF3E0), 0.015f, 4f, glow = false, z = 0.6f)
         }
     }
 

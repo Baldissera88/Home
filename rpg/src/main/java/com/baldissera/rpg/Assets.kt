@@ -7,7 +7,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 
 /** A sheet of pre-rendered frames. Directional sheets have 8 rows (S, SE, E, NE, N, NW, W, SW). */
 class SpriteSheet(
-    val image: ImageBitmap,
+    private val loader: () -> ImageBitmap,
     val cell: Int,
     /** Width of one cell in world tiles. */
     val worldW: Float,
@@ -15,7 +15,20 @@ class SpriteSheet(
     val foot: Float,
     /** 16 columns (idle x2, walk x8, attack x6) instead of the classic 8 (idle, walk x4, attack x3). */
     val smooth: Boolean = false,
-)
+    /** Only five facings are stored (S, SE, E, NE, N); the three west-facing rows are drawn mirrored. */
+    val mirrored: Boolean = false,
+    /** Cells per row of the image, for long strips wrapped into a grid. */
+    val perRow: Int = Int.MAX_VALUE,
+) {
+    private var bitmap: ImageBitmap? = null
+
+    /** Decoded on first use, so only the sheets a level needs take memory. */
+    val image: ImageBitmap get() = bitmap ?: loader().also { bitmap = it }
+
+    fun release() {
+        bitmap = null
+    }
+}
 
 class Assets(private val res: Resources) {
     private val opts = BitmapFactory.Options().apply { inScaled = false }
@@ -40,7 +53,7 @@ class Assets(private val res: Resources) {
             HeroClass.ASSASSIN -> R.drawable.spr_hero_assassin
             HeroClass.SORCERESS -> R.drawable.spr_hero_sorceress
         }
-        return heroSheets.getOrPut(id) { SpriteSheet(load(id), 144, 1.9f, 0.9f) }
+        return heroSheets.getOrPut(id) { SpriteSheet({ load(id) }, 144, 1.9f, 0.9f) }
     }
 
     fun portrait(cls: HeroClass): ImageBitmap = portraits.getOrPut(cls) {
@@ -53,37 +66,37 @@ class Assets(private val res: Resources) {
             }
         )
     }
-    val wolf = SpriteSheet(load(R.drawable.spr_wolf), 128, 1.7f, 0.8f)
-    val bandit = SpriteSheet(load(R.drawable.spr_bandit), 128, 1.7f, 0.86f, smooth = true)
-    val world = SpriteSheet(load(R.drawable.spr_world), 160, 2.6f, 0.88f)
-    val trees = SpriteSheet(load(R.drawable.spr_trees), 320, 3.4f, 0.78f)
+    val wolf = SpriteSheet({ load(R.drawable.spr_wolf) }, 128, 1.7f, 0.8f)
+    val bandit = SpriteSheet({ load(R.drawable.spr_bandit) }, 128, 1.7f, 0.86f, smooth = true)
+    val world = SpriteSheet({ load(R.drawable.spr_world) }, 160, 2.6f, 0.88f)
+    val trees = SpriteSheet({ load(R.drawable.spr_trees) }, 320, 3.4f, 0.78f)
     val ground = load(R.drawable.tex_world_ground)
     val fog = load(R.drawable.tex_fog)
     val groundEdges = load(R.drawable.tex_ground_edges)
     val wallSkirts = load(R.drawable.tex_wall_skirts)
-    val ghost = SpriteSheet(load(R.drawable.spr_ghost), 128, 1.7f, 0.86f)
-    val imp = SpriteSheet(load(R.drawable.spr_imp), 96, 1.2f, 0.86f)
-    val goblin = SpriteSheet(load(R.drawable.spr_goblin), 96, 1.3f, 0.86f, smooth = true)
-    val village = SpriteSheet(load(R.drawable.spr_village), 256, 4.4f, 0.86f)
-    val smith = SpriteSheet(load(R.drawable.spr_smith), 128, 1.7f, 0.86f)
-    val elder = SpriteSheet(load(R.drawable.spr_elder), 128, 1.7f, 0.86f)
-    val villagerF = SpriteSheet(load(R.drawable.spr_villager_f), 128, 1.7f, 0.86f, smooth = true)
-    val villagerM = SpriteSheet(load(R.drawable.spr_villager_m), 128, 1.7f, 0.86f, smooth = true)
+    val ghost = SpriteSheet({ load(R.drawable.spr_ghost) }, 128, 1.7f, 0.86f)
+    val imp = SpriteSheet({ load(R.drawable.spr_imp) }, 96, 1.2f, 0.86f)
+    val goblin = SpriteSheet({ load(R.drawable.spr_goblin) }, 96, 1.3f, 0.86f, smooth = true)
+    val village = SpriteSheet({ load(R.drawable.spr_village) }, 256, 4.4f, 0.86f)
+    val smith = SpriteSheet({ load(R.drawable.spr_smith) }, 128, 1.7f, 0.86f)
+    val elder = SpriteSheet({ load(R.drawable.spr_elder) }, 128, 1.7f, 0.86f)
+    val villagerF = SpriteSheet({ load(R.drawable.spr_villager_f) }, 128, 1.7f, 0.86f, smooth = true)
+    val villagerM = SpriteSheet({ load(R.drawable.spr_villager_m) }, 128, 1.7f, 0.86f, smooth = true)
     val water = load(R.drawable.tex_water)
     val terrain = Terrain(res)
     val waterShaders by lazy {
         WaterShaders(BitmapFactory.decodeResource(res, R.drawable.tex_water_base, opts), BitmapFactory.decodeResource(res, R.drawable.tex_water_ripples, opts))
     }
-    val skeleton = SpriteSheet(load(R.drawable.spr_skeleton), 128, 1.7f, 0.86f, smooth = true)
-    val skelKing = SpriteSheet(load(R.drawable.spr_skelking), 144, 2.05f, 0.86f, smooth = true)
-    val brute = SpriteSheet(load(R.drawable.spr_brute), 160, 2.3f, 0.86f, smooth = true)
-    val cultist = SpriteSheet(load(R.drawable.spr_cultist), 128, 1.7f, 0.86f)
-    val spider = SpriteSheet(load(R.drawable.spr_spider), 128, 1.7f, 0.8f)
-    val demon = SpriteSheet(load(R.drawable.spr_demon), 256, 3.4f, 0.86f)
-    val slime = SpriteSheet(load(R.drawable.spr_slime), 96, 1.1f, 0.82f)
-    val bat = SpriteSheet(load(R.drawable.spr_bat), 96, 1.3f, 0.9f)
-    val merchant = SpriteSheet(load(R.drawable.spr_merchant), 128, 1.7f, 0.86f)
-    val props = SpriteSheet(load(R.drawable.spr_props), 128, 1.3f, 0.8f)
+    val skeleton = SpriteSheet({ load(R.drawable.spr_skeleton) }, 128, 1.7f, 0.86f, smooth = true)
+    val skelKing = SpriteSheet({ load(R.drawable.spr_skelking) }, 144, 2.05f, 0.86f, smooth = true)
+    val brute = SpriteSheet({ load(R.drawable.spr_brute) }, 160, 2.3f, 0.86f, smooth = true)
+    val cultist = SpriteSheet({ load(R.drawable.spr_cultist) }, 128, 1.7f, 0.86f)
+    val spider = SpriteSheet({ load(R.drawable.spr_spider) }, 128, 1.7f, 0.8f)
+    val demon = SpriteSheet({ load(R.drawable.spr_demon) }, 256, 3.4f, 0.86f)
+    val slime = SpriteSheet({ load(R.drawable.spr_slime) }, 96, 1.1f, 0.82f)
+    val bat = SpriteSheet({ load(R.drawable.spr_bat) }, 96, 1.3f, 0.9f)
+    val merchant = SpriteSheet({ load(R.drawable.spr_merchant) }, 128, 1.7f, 0.86f)
+    val props = SpriteSheet({ load(R.drawable.spr_props) }, 128, 1.3f, 0.8f)
     val icons = load(R.drawable.spr_icons)
     val decals = load(R.drawable.tex_decals)
 
@@ -103,6 +116,26 @@ class Assets(private val res: Resources) {
     fun floor(b: Biome) = floorTex.getValue(b)
     fun wall(b: Biome) = wallTex.getValue(b)
     fun top(b: Biome) = topTex.getValue(b)
+
+    private val characterSheets
+        get() = listOf(wolf, bandit, ghost, imp, goblin, smith, elder, villagerF, villagerM, skeleton, skelKing, brute, cultist, spider, demon, slime, bat, merchant)
+    private var trimmedFor: Dungeon? = null
+
+    /**
+     * On entering a level, frees the character sheets nobody there uses and decodes the ones they do,
+     * while the screen is still fading in.
+     */
+    fun prepare(g: Game) {
+        if (trimmedFor === g.dungeon) return
+        trimmedFor = g.dungeon
+        val keep = HashSet<SpriteSheet>()
+        for (e in g.enemies) keep += enemySprite(e.type).first
+        if (g.inWorld) keep += listOf(villagerF, villagerM, smith, elder, merchant)
+        val hero = hero(g.player.heroClass, g.player.weaponKind)
+        for (sheet in characterSheets) if (sheet !in keep) sheet.release()
+        for (sheet in heroSheets.values) if (sheet !== hero) sheet.release()
+        for (sheet in keep) sheet.image
+    }
 
     /** Sprite sheet, extra scale and whether the sheet has 8 facing rows. */
     fun enemySprite(t: EnemyType): Triple<SpriteSheet, Float, Boolean> = when (t) {

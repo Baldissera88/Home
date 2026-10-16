@@ -622,6 +622,329 @@ CLUTTER = [
 ]
 
 
+# ---------------------------------------------------------------- dungeon floor sets
+# Each biome gets four materials: its main floor, rubble along the walls, loose ground and a damp/exotic patch.
+
+
+def _from_texture(rgb, blur=1.5):
+    """Height for an existing pre-lit floor texture: its blurred luminance."""
+    lum = rgb @ np.array([0.3, 0.55, 0.15])
+    h = _wrap_blur(lum, blur)
+    return (h - h.min()) / max(h.max() - h.min(), 1e-6)
+
+
+def _angular_stones(cv, r, count, size_range, tint, hbase=0.7, mask=None):
+    """Broken, angular chunks of stone (fewer vertices than pebbles)."""
+    n = SIZE * SS
+    for _ in range(count):
+        x, y = r.random() * n, r.random() * n
+        if mask is not None and r.random() > mask[int(y / SS) % SIZE, int(x / SS) % SIZE]:
+            continue
+        s_ = r.uniform(*size_range) * SS
+        k = r.integers(4, 7)
+        ang = np.sort(r.uniform(0, 2 * math.pi, k))
+        rad = s_ * r.uniform(0.6, 1.2, k)
+        pts = np.stack([x + np.cos(ang) * rad, y + np.sin(ang) * rad * 0.8], 1)
+        col = np.array(tint) * r.uniform(0.7, 1.15)
+        cv.poly(pts + np.array([s_ * 0.3, s_ * 0.35]), col * 0.5, hbase * 0.4)
+        cv.poly(pts, col, hbase * r.uniform(0.85, 1.15))
+
+
+def crypt_rubble(seed=30):
+    r = np.random.default_rng(seed)
+    base = _palette(fbm(SIZE, SIZE, 8, 4, seed), [(0, (0.17, 0.16, 0.14)), (1, (0.30, 0.28, 0.25))])
+    cv = Canvas(base, fbm(SIZE, SIZE, 24, 2, seed + 1) * 0.15)
+    _pebbles(cv, r, 900, (0.8, 1.8), (0.36, 0.34, 0.31), 0.35)
+    _angular_stones(cv, r, 260, (3, 9), (0.42, 0.40, 0.37), 0.7)
+    _angular_stones(cv, r, 40, (10, 18), (0.40, 0.38, 0.35), 0.9)
+    rgb, h = cv.result()
+    return _macro(light_up(rgb, h, bump=5.0, ao_radius=3.0, ao_strength=2.2, shadow_len=10, ambient=0.42), seed, 0.06), h
+
+
+def _bone_bits(cv, r, count, scale=1.0):
+    n = SIZE * SS
+    for _ in range(count):
+        x, y = r.random() * n, r.random() * n
+        a = r.random() * math.pi
+        L = r.uniform(5, 14) * SS * scale
+        w = r.uniform(1.4, 2.4) * SS * scale
+        col = np.array((0.74, 0.70, 0.60)) * r.uniform(0.75, 1.05)
+        dx, dy = math.cos(a) * L / 2, math.sin(a) * L / 2
+        nx, ny = -math.sin(a) * w / 2, math.cos(a) * w / 2
+        cv.poly([(x - dx + nx, y - dy + ny), (x + dx + nx, y + dy + ny), (x + dx - nx, y + dy - ny), (x - dx - nx, y - dy - ny)], col, 0.6)
+        cv.ellipse(x - dx, y - dy, w * 0.9, w * 0.8, a, col, 0.62, segs=8)
+        cv.ellipse(x + dx, y + dy, w * 0.9, w * 0.8, a, col, 0.62, segs=8)
+
+
+def crypt_dirt(seed=31):
+    r = np.random.default_rng(seed)
+    base = _palette(fbm(SIZE, SIZE, 6, 5, seed), [(0, (0.14, 0.11, 0.08)), (0.6, (0.24, 0.19, 0.13)), (1, (0.31, 0.25, 0.18))])
+    cv = Canvas(base, fbm(SIZE, SIZE, 20, 3, seed + 1) * 0.25)
+    _pebbles(cv, r, 500, (0.8, 2.0), (0.34, 0.30, 0.25), 0.45)
+    _bone_bits(cv, r, 60)
+    rgb, h = cv.result()
+    return _macro(light_up(rgb, h, bump=4.0, ao_radius=2.0, ao_strength=1.8, shadow_len=6, ambient=0.45), seed, 0.06), h
+
+
+def crypt_moss(seed=32, flag=None):
+    """Damp flagstones taken over by moss, with dark puddles."""
+    rgb0 = flag
+    moss = fbm(SIZE, SIZE, 7, 4, seed)
+    m = np.clip((moss - 0.45) * 3.5, 0, 1)
+    tuft = fbm(SIZE, SIZE, 60, 2, seed + 1)
+    moss_col = _palette(tuft, [(0, (0.10, 0.17, 0.06)), (1, (0.25, 0.36, 0.11))])
+    rgb = rgb0 * (1 - m[..., None] * 0.85) + moss_col * m[..., None] * 0.85
+    pud = np.clip((fbm(SIZE, SIZE, 5, 3, seed + 2) - 0.66) * 12, 0, 1)
+    rgb = rgb * (1 - pud[..., None] * 0.7) + np.array([0.08, 0.09, 0.10]) * pud[..., None] * 0.7
+    h = _from_texture(rgb0) * (1 - m) * 0.6 + (m * 0.5 + tuft * 0.3 * m) - pud * 0.3
+    return np.clip(rgb, 0, 1), np.clip(h, 0, 1)
+
+
+def cave_gravel(seed=40):
+    r = np.random.default_rng(seed)
+    base = _palette(fbm(SIZE, SIZE, 10, 4, seed), [(0, (0.15, 0.12, 0.09)), (1, (0.27, 0.22, 0.16))])
+    cv = Canvas(base, fbm(SIZE, SIZE, 30, 2, seed + 1) * 0.15)
+    _pebbles(cv, r, 2600, (0.8, 2.2), (0.40, 0.34, 0.27), 0.5)
+    _pebbles(cv, r, 260, (2.5, 5.5), (0.44, 0.38, 0.30), 0.75)
+    rgb, h = cv.result()
+    return _macro(light_up(rgb, h, bump=5.0, ao_radius=2.0, ao_strength=2.2, shadow_len=7, ambient=0.42), seed, 0.06), h
+
+
+def cave_mud(seed=41):
+    rgb, h = mud(seed)
+    return np.clip(rgb * np.array([0.92, 0.9, 0.95]), 0, 1), h
+
+
+def cave_lichen(seed=42, rock=None):
+    lich = fbm(SIZE, SIZE, 8, 4, seed)
+    m = np.clip((lich - 0.42) * 3.0, 0, 1)
+    spots = fbm(SIZE, SIZE, 70, 2, seed + 1)
+    col = _palette(spots, [(0, (0.09, 0.20, 0.17)), (1, (0.22, 0.42, 0.33))])
+    rgb = rock * (1 - m[..., None] * 0.8) + col * m[..., None] * 0.8
+    glow = (np.random.default_rng(seed).random((SIZE, SIZE)) > 0.9985) * m
+    glow = np.clip(_wrap_blur(glow.astype(float), 1.2) * 9, 0, 1)
+    rgb = rgb + glow[..., None] * np.array([0.35, 0.95, 0.85])
+    h = _from_texture(rock) * 0.7 + m * 0.3
+    return np.clip(rgb, 0, 1), np.clip(h, 0, 1)
+
+
+def hell_ash(seed=50):
+    r = np.random.default_rng(seed)
+    base = _palette(fbm(SIZE, SIZE, 7, 5, seed), [(0, (0.08, 0.07, 0.07)), (0.6, (0.20, 0.18, 0.17)), (1, (0.32, 0.29, 0.27))])
+    cv = Canvas(base, fbm(SIZE, SIZE, 20, 3, seed + 1) * 0.3)
+    _pebbles(cv, r, 700, (0.8, 2.0), (0.12, 0.10, 0.10), 0.5)
+    rgb, h = cv.result()
+    rgb = light_up(rgb, h, bump=3.0, ao_radius=2.0, ao_strength=1.5, shadow_len=5, ambient=0.5)
+    ember = (np.random.default_rng(seed + 2).random((SIZE, SIZE)) > 0.996).astype(float)
+    ember = np.clip(_wrap_blur(ember, 1.0) * 6, 0, 1)
+    rgb = rgb * (1 - ember[..., None]) + ember[..., None] * np.array([1.0, 0.45, 0.08])
+    return np.clip(rgb, 0, 1), h
+
+
+def hell_obsidian(seed=51):
+    """Glassy black rock: sharp facets with cold sheen and the red glow of lava reflected in them."""
+    yy, xx = np.mgrid[0:SIZE, 0:SIZE].astype(float)
+    cells = 9
+    r = np.random.default_rng(seed)
+    pts = (np.stack(np.meshgrid(np.arange(cells), np.arange(cells)), -1).reshape(-1, 2) + r.uniform(0.1, 0.9, (cells * cells, 2))) / cells
+    uv = np.stack([(xx + 0.5) / SIZE, (yy + 0.5) / SIZE], -1)
+    best = np.full((SIZE, SIZE), 9.0)
+    second = np.full((SIZE, SIZE), 9.0)
+    cid = np.zeros((SIZE, SIZE), dtype=int)
+    for i, p_ in enumerate(pts):
+        for ox in (-1, 0, 1):
+            for oy in (-1, 0, 1):
+                d = np.linalg.norm(uv - (p_ + np.array([ox, oy])), axis=-1)
+                closer = d < best
+                second = np.where(closer, best, np.minimum(second, d))
+                cid = np.where(closer, i, cid)
+                best = np.where(closer, d, best)
+    edge = np.clip((second - best) * cells / 0.15, 0, 1)
+    tilt = r.uniform(-1, 1, (len(pts), 2))[cid]
+    sheen = np.clip(0.5 + 0.5 * (tilt[..., 0] * -0.6 + tilt[..., 1] * -0.5), 0, 1) ** 3
+    rgb = np.array([0.04, 0.035, 0.045]) + sheen[..., None] * np.array([0.16, 0.16, 0.20]) * edge[..., None]
+    red = np.clip(0.5 + 0.5 * (tilt[..., 0] * 0.7 + tilt[..., 1] * 0.6), 0, 1) ** 4
+    rgb += red[..., None] * np.array([0.16, 0.03, 0.01])
+    rgb *= (0.55 + 0.45 * edge)[..., None]
+    rgb += (fbm(SIZE, SIZE, 30, 2, seed + 4)[..., None] - 0.5) * 0.03
+    h = edge * 0.8 + sheen * 0.2
+    return np.clip(rgb, 0, 1), h
+
+
+def hell_scorched(seed=52):
+    big = fbm(SIZE, SIZE, 5, 5, seed)
+    fine = fbm(SIZE, SIZE, 40, 2, seed + 1)
+    rgb = _palette(big * 0.8 + fine * 0.2, [(0, (0.16, 0.07, 0.05)), (0.6, (0.30, 0.14, 0.09)), (1, (0.40, 0.20, 0.12))])
+    crack = fbm(SIZE, SIZE, 12, 4, seed + 2)
+    lines = np.exp(-((crack - 0.5) ** 2) / 0.0005)
+    rgb *= (1 - lines * 0.75)[..., None]
+    h = big * 0.4 + fine * 0.1 - lines * 0.3
+    rgb = light_up(rgb, h, bump=5.0, ao_radius=2.0, ao_strength=1.6, shadow_len=5, ambient=0.45)
+    rgb += (lines * np.clip((fbm(SIZE, SIZE, 4, 2, seed + 3) - 0.55) * 4, 0, 1))[..., None] * np.array([0.6, 0.15, 0.02])
+    return np.clip(rgb, 0, 1), np.clip(h, 0, 1)
+
+
+def dungeon_sets():
+    """{biome: [(rgb, height) x 4]}: main floor, rubble, loose ground, damp or exotic patches."""
+    import textures as T
+    flag = np.clip(T.floor_crypt_big(100), 0, 1)
+    cave = np.clip(T.floor_cave_natural(100), 0, 1)
+    hell = np.clip(T.floor_hell_big(100), 0, 1)
+    return {
+        "crypt": [(flag, _from_texture(flag)), crypt_rubble(), crypt_dirt(), crypt_moss(flag=flag)],
+        "cave": [(cave, _from_texture(cave)), cave_gravel(), cave_mud(), cave_lichen(rock=cave)],
+        "hell": [(hell, _from_texture(hell)), hell_scorched(), hell_ash(), hell_obsidian()],
+    }
+
+
+def dungeon_clutter_bones(seed):
+    r = np.random.default_rng(seed)
+    sp = Sprite()
+    c = sp.n / 2
+    col = (0.80, 0.76, 0.66)
+    for _ in range(5):
+        x, y = c + r.normal(0, 26), c + r.normal(0, 18)
+        a = r.random() * math.pi
+        L, w = r.uniform(30, 60), r.uniform(6, 9)
+        dx, dy = math.cos(a) * L / 2, math.sin(a) * L / 2
+        nx, ny = -math.sin(a) * w / 2, math.cos(a) * w / 2
+        sh = np.array(col) * r.uniform(0.8, 1.0)
+        sp.poly([(x - dx + nx, y - dy + ny), (x + dx + nx, y + dy + ny), (x + dx - nx, y + dy - ny), (x - dx - nx, y - dy - ny)], sh, sh_off=(4, 4))
+        for ex, ey in ((x - dx, y - dy), (x + dx, y + dy)):
+            sp.ellipse(ex + nx * 0.6, ey + ny * 0.6, w * 0.75, w * 0.65, a, sh, sh_off=(4, 4))
+            sp.ellipse(ex - nx * 0.6, ey - ny * 0.6, w * 0.75, w * 0.65, a, sh, sh_off=(4, 4))
+    return sp.result()
+
+
+def dungeon_clutter_skull(seed):
+    r = np.random.default_rng(seed)
+    sp = Sprite()
+    c = sp.n / 2
+    col = np.array((0.82, 0.78, 0.68))
+    sp.ellipse(c, c, 34, 28, 0, col * 0.9, sh_off=(9, 8))
+    sp.ellipse(c, c - 6, 30, 22, 0, col, shadow=False)
+    sp.ellipse(c - 12, c + 4, 8, 7, 0, (0.08, 0.06, 0.05), shadow=False)
+    sp.ellipse(c + 12, c + 4, 8, 7, 0, (0.08, 0.06, 0.05), shadow=False)
+    sp.poly([(c - 3, c + 14), (c + 3, c + 14), (c, c + 8)], (0.1, 0.08, 0.06), shadow=False)
+    sp.ellipse(c, c + 26, 18, 7, 0, col * 0.85, shadow=False)
+    for k in range(5):
+        sp.poly([(c - 12 + k * 6, c + 22), (c - 9 + k * 6, c + 22), (c - 9 + k * 6, c + 30), (c - 12 + k * 6, c + 30)], col * 1.05, shadow=False)
+    return sp.result()
+
+
+def dungeon_clutter_rubble(seed, tint=(0.42, 0.40, 0.37)):
+    r = np.random.default_rng(seed)
+    sp = Sprite()
+    c = sp.n / 2
+    for _ in range(r.integers(5, 9)):
+        x, y = c + r.normal(0, 30), c + r.normal(0, 20)
+        k = r.integers(4, 7)
+        ang = np.sort(r.uniform(0, 2 * math.pi, k))
+        rad = r.uniform(10, 26) * r.uniform(0.7, 1.2, k)
+        pts = list(zip(x + np.cos(ang) * rad, y + np.sin(ang) * rad * 0.75))
+        col = np.array(tint) * r.uniform(0.75, 1.15)
+        sp.poly(pts, col * 0.8, sh_off=(8, 7))
+        top = [(px - (px - x) * 0.25 - 3, py - (py - y) * 0.25 - 4) for px, py in pts]
+        sp.poly(top, np.minimum(col * 1.15, 1), shadow=False)
+    return sp.result()
+
+
+def dungeon_clutter_glowshrooms(seed):
+    r = np.random.default_rng(seed)
+    sp = Sprite()
+    c = sp.n / 2
+    for _ in range(r.integers(4, 7)):
+        x, y = c + r.normal(0, 24), c + 18 + r.normal(0, 12)
+        h = r.uniform(14, 34)
+        rad = r.uniform(9, 16)
+        sp.poly([(x - 3, y), (x + 3, y), (x + 2, y - h), (x - 2, y - h)], (0.6, 0.85, 0.9), sh_off=(8, 5))
+        sp.ellipse(x, y - h, rad, rad * 0.6, 0, (0.25, 0.85, 0.95), sh_off=(10, 6))
+        sp.ellipse(x - rad * 0.2, y - h - rad * 0.15, rad * 0.6, rad * 0.32, 0, (0.75, 1.0, 1.0), shadow=False)
+    return sp.result()
+
+
+def dungeon_clutter_crystals(seed):
+    r = np.random.default_rng(seed)
+    sp = Sprite()
+    c = sp.n / 2
+    for _ in range(r.integers(3, 6)):
+        x, y = c + r.normal(0, 20), c + 30 + r.normal(0, 8)
+        h = r.uniform(30, 70)
+        w = r.uniform(8, 14)
+        lean = r.normal(0, 10)
+        col = np.array((0.35, 0.75, 1.0)) * r.uniform(0.8, 1.1)
+        sp.poly([(x - w, y), (x + w, y), (x + w * 0.6 + lean, y - h * 0.8), (x + lean, y - h), (x - w * 0.6 + lean, y - h * 0.8)], col * 0.7, sh_off=(14, 6))
+        sp.poly([(x, y), (x + w, y), (x + w * 0.6 + lean, y - h * 0.8), (x + lean, y - h)], np.minimum(col * 1.3, 1), shadow=False)
+    return sp.result()
+
+
+def dungeon_clutter_embers(seed):
+    r = np.random.default_rng(seed)
+    sp = Sprite()
+    c = sp.n / 2
+    for _ in range(9):
+        x, y = c + r.normal(0, 30), c + r.normal(0, 20)
+        rad = r.uniform(6, 16)
+        sp.ellipse(x, y, rad, rad * 0.7, r.random() * 3, (0.10, 0.08, 0.08), sh_off=(5, 4))
+        sp.ellipse(x - rad * 0.2, y - rad * 0.15, rad * 0.45, rad * 0.3, 0, (1.0, 0.45, 0.08), shadow=False)
+    return sp.result()
+
+
+def dungeon_clutter_shards(seed):
+    r = np.random.default_rng(seed)
+    sp = Sprite()
+    c = sp.n / 2
+    for _ in range(7):
+        x, y = c + r.normal(0, 28), c + r.normal(0, 20)
+        a = r.random() * 6.28
+        rad = r.uniform(8, 18)
+        pts = [(x + math.cos(a + k * 2.1) * rad * r.uniform(0.6, 1.1), y + math.sin(a + k * 2.1) * rad * 0.7) for k in range(3)]
+        col = np.array((0.55, 0.32, 0.20)) * r.uniform(0.8, 1.1)
+        sp.poly(pts, col, sh_off=(4, 4))
+    return sp.result()
+
+
+DUNGEON_CLUTTER = [
+    ("bones", lambda: dungeon_clutter_bones(60)),
+    ("skull", lambda: dungeon_clutter_skull(61)),
+    ("rubble", lambda: dungeon_clutter_rubble(62)),
+    ("rubble_dark", lambda: dungeon_clutter_rubble(63, (0.20, 0.15, 0.13))),
+    ("glowshrooms", lambda: dungeon_clutter_glowshrooms(64)),
+    ("crystals", lambda: dungeon_clutter_crystals(65)),
+    ("embers", lambda: dungeon_clutter_embers(66)),
+    ("shards", lambda: dungeon_clutter_shards(67)),
+]
+
+
+def wall_top(seed, base):
+    """The top of a wall seen from above: an uneven mass of dark rock, a few deep fissures (512 px, 4x4 tiles)."""
+    n = SIZE
+    big = fbm(n, n, 4, 5, seed)
+    mid = fbm(n, n, 12, 4, seed + 1)
+    ridged = 1 - np.abs(fbm(n, n, 8, 4, seed + 2) - 0.5) * 2
+    height = big * 0.5 + mid * 0.3 + ridged ** 3 * 0.35
+    crack_n = fbm(n, n, 6, 4, seed + 3)
+    fissure = np.exp(-((crack_n - 0.5) ** 2) / 0.0007) * np.clip((fbm(n, n, 3, 2, seed + 4) - 0.4) * 3, 0, 1)
+    height -= fissure * 0.35
+    albedo = np.array(base) * (0.65 + 0.7 * mid)[..., None] * (1 - fissure * 0.8)[..., None]
+    rgb = light_up(albedo, height, bump=7.0, ao_radius=4.0, ao_strength=1.8, shadow_len=12, ambient=0.38)
+    return np.clip(rgb, 0, 1)
+
+
+def build_dungeons(out_dir):
+    for biome, base in (("crypt", (0.19, 0.18, 0.17)), ("cave", (0.21, 0.16, 0.12)), ("hell", (0.18, 0.10, 0.08))):
+        top = (wall_top(70 + len(biome), base) * 255 + 0.5).astype(np.uint8)
+        Image.fromarray(top).save(f"{out_dir}/tex_{biome}_top.png", optimize=True)
+    for biome, mats in dungeon_sets().items():
+        strip = (np.clip(np.concatenate([m[0] for m in mats], axis=1), 0, 1) * 255 + 0.5).astype(np.uint8)
+        Image.fromarray(strip).save(f"{out_dir}/tex_floorset_{biome}.jpg", quality=92, subsampling=0)
+        hstrip = (np.clip(np.concatenate([m[1] for m in mats], axis=1), 0, 1) * 255 + 0.5).astype(np.uint8)
+        Image.fromarray(hstrip, "L").save(f"{out_dir}/tex_floorset_{biome}_h.png", optimize=True)
+        print("floorset", biome, flush=True)
+    atlas = np.concatenate([fn() for _, fn in DUNGEON_CLUTTER], axis=1)
+    Image.fromarray(atlas).save(f"{out_dir}/tex_clutter_dungeon.png", optimize=True)
+
+
 def water_base(seed=20):
     """Deep water colour with broad, slow swells (tileable)."""
     big = fbm(SIZE, SIZE, 3, 4, seed)
@@ -666,4 +989,7 @@ def build(out_dir):
 
 if __name__ == "__main__":
     import sys
-    build(sys.argv[1] if len(sys.argv) > 1 else ".")
+    if len(sys.argv) > 2 and sys.argv[2] == "dungeons":
+        build_dungeons(sys.argv[1])
+    else:
+        build(sys.argv[1] if len(sys.argv) > 1 else ".")
