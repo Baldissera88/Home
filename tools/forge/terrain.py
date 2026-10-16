@@ -742,33 +742,18 @@ def hell_ash(seed=50):
 
 
 def hell_obsidian(seed=51):
-    """Glassy black rock: sharp facets with cold sheen and the red glow of lava reflected in them."""
-    yy, xx = np.mgrid[0:SIZE, 0:SIZE].astype(float)
-    cells = 9
-    r = np.random.default_rng(seed)
-    pts = (np.stack(np.meshgrid(np.arange(cells), np.arange(cells)), -1).reshape(-1, 2) + r.uniform(0.1, 0.9, (cells * cells, 2))) / cells
-    uv = np.stack([(xx + 0.5) / SIZE, (yy + 0.5) / SIZE], -1)
-    best = np.full((SIZE, SIZE), 9.0)
-    second = np.full((SIZE, SIZE), 9.0)
-    cid = np.zeros((SIZE, SIZE), dtype=int)
-    for i, p_ in enumerate(pts):
-        for ox in (-1, 0, 1):
-            for oy in (-1, 0, 1):
-                d = np.linalg.norm(uv - (p_ + np.array([ox, oy])), axis=-1)
-                closer = d < best
-                second = np.where(closer, best, np.minimum(second, d))
-                cid = np.where(closer, i, cid)
-                best = np.where(closer, d, best)
-    edge = np.clip((second - best) * cells / 0.15, 0, 1)
-    tilt = r.uniform(-1, 1, (len(pts), 2))[cid]
-    sheen = np.clip(0.5 + 0.5 * (tilt[..., 0] * -0.6 + tilt[..., 1] * -0.5), 0, 1) ** 3
-    rgb = np.array([0.04, 0.035, 0.045]) + sheen[..., None] * np.array([0.16, 0.16, 0.20]) * edge[..., None]
-    red = np.clip(0.5 + 0.5 * (tilt[..., 0] * 0.7 + tilt[..., 1] * 0.6), 0, 1) ** 4
-    rgb += red[..., None] * np.array([0.16, 0.03, 0.01])
-    rgb *= (0.55 + 0.45 * edge)[..., None]
-    rgb += (fbm(SIZE, SIZE, 30, 2, seed + 4)[..., None] - 0.5) * 0.03
-    h = edge * 0.8 + sheen * 0.2
-    return np.clip(rgb, 0, 1), h
+    """Glassy black rock in frozen flows: smooth swells with sharp glints and the red of lava reflected in them."""
+    flow = fbm(SIZE, SIZE, 4, 4, seed)
+    ridge = 1 - np.abs(fbm(SIZE, SIZE, 4, 3, seed + 1) - 0.5) * 2
+    height = flow * 0.8 + ridge ** 6 * 0.35
+    albedo = np.ones((SIZE, SIZE, 3)) * np.array([0.05, 0.045, 0.055])
+    lit = light_up(albedo, height, bump=9.0, ao_radius=3.0, ao_strength=1.5, shadow_len=6, ambient=0.6)
+    gx = np.roll(height, -1, axis=1) - np.roll(height, 1, axis=1)
+    gy = np.roll(height, -1, axis=0) - np.roll(height, 1, axis=0)
+    glint = np.clip((-gx * 0.6 - gy * 0.55) * 40, 0, 1) ** 3
+    red = np.clip((gx * 0.7 + gy * 0.6) * 30, 0, 1) ** 2
+    rgb = lit + glint[..., None] * np.array([0.17, 0.17, 0.20]) + red[..., None] * np.array([0.14, 0.025, 0.01])
+    return np.clip(rgb, 0, 1), np.clip(height, 0, 1)
 
 
 def hell_scorched(seed=52):
