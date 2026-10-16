@@ -26,59 +26,59 @@ const val INVENTORY_SIZE = 24
 const val STASH_SIZE = 40
 /** Reach of a burning champion's eruption, in tiles. */
 const val BURN_RADIUS = 2.3f
-private val CHAMPION_FIRST = listOf("Grum", "Blod", "Aske", "Rust", "Skygge", "Rå", "Frost", "Galde", "Mørke", "Ben")
-private val CHAMPION_LAST = listOf("tand", "klo", "brand", "hjerte", "kløver", "æder", "skjold", "øje", "hug", "vrede")
+private val CHAMPION_FIRST = listOf("Grim", "Blood", "Ash", "Rust", "Shadow", "Gore", "Frost", "Bile", "Dusk", "Bone")
+private val CHAMPION_LAST = listOf("fang", "claw", "brand", "heart", "cleaver", "maw", "hide", "eye", "hack", "wrath")
 
 /** Base items per slot: name and icon (which also decides the weapon type). */
 private val bases = mapOf(
     Slot.WEAPON to listOf(
-        "Sværd" to Icons.SWORD, "Bredsværd" to Icons.SWORD, "Økse" to Icons.AXE, "Stridsøkse" to Icons.AXE,
-        "Stridshammer" to Icons.MACE, "Morgenstjerne" to Icons.MACE, "Dolk" to Icons.DAGGER, "Kniv" to Icons.DAGGER,
-        "Spyd" to Icons.SPEAR, "Hellebard" to Icons.SPEAR, "Stav" to Icons.STAFF, "Troldmandsstav" to Icons.STAFF,
+        "Sword" to Icons.SWORD, "Broadsword" to Icons.SWORD, "Axe" to Icons.AXE, "Battle Axe" to Icons.AXE,
+        "Warhammer" to Icons.MACE, "Morning Star" to Icons.MACE, "Dagger" to Icons.DAGGER, "Kris" to Icons.DAGGER,
+        "Spear" to Icons.SPEAR, "Halberd" to Icons.SPEAR, "Staff" to Icons.STAFF, "Wizard Staff" to Icons.STAFF,
     ),
-    Slot.OFFHAND to listOf("Rundskjold" to Icons.SHIELD, "Tårnskjold" to Icons.SHIELD, "Buckler" to Icons.SHIELD),
-    Slot.HELM to listOf("Hjelm" to Icons.HELM, "Stormhjelm" to Icons.HELM, "Hætte" to Icons.HOOD, "Læderhætte" to Icons.HOOD),
-    Slot.ARMOR to listOf("Ringbrynje" to Icons.ARMOR, "Pladerustning" to Icons.ARMOR, "Læderbrynje" to Icons.LEATHER, "Jægerdragt" to Icons.LEATHER),
-    Slot.GLOVES to listOf("Handsker" to Icons.GLOVES, "Jernhandsker" to Icons.GLOVES),
-    Slot.BOOTS to listOf("Støvler" to Icons.BOOTS, "Jernstøvler" to Icons.BOOTS),
+    Slot.OFFHAND to listOf("Round Shield" to Icons.SHIELD, "Tower Shield" to Icons.SHIELD, "Buckler" to Icons.SHIELD),
+    Slot.HELM to listOf("Helm" to Icons.HELM, "Great Helm" to Icons.HELM, "Hood" to Icons.HOOD, "Leather Cap" to Icons.HOOD),
+    Slot.ARMOR to listOf("Chainmail" to Icons.ARMOR, "Plate Armor" to Icons.ARMOR, "Leather Armor" to Icons.LEATHER, "Hunter's Garb" to Icons.LEATHER),
+    Slot.GLOVES to listOf("Gloves" to Icons.GLOVES, "Gauntlets" to Icons.GLOVES),
+    Slot.BOOTS to listOf("Boots" to Icons.BOOTS, "Iron Boots" to Icons.BOOTS),
     Slot.AMULET to listOf("Amulet" to Icons.AMULET, "Talisman" to Icons.AMULET),
-    Slot.RING to listOf("Ring" to Icons.RING, "Runering" to Icons.RING),
+    Slot.RING to listOf("Ring" to Icons.RING, "Rune Ring" to Icons.RING),
 )
 private val legendaryNames = mapOf(
-    Slot.WEAPON to listOf("Mjølner", "Gram", "Tyrfing", "Dainsleif", "Hofud"),
-    Slot.OFFHAND to listOf("Svalins Skjold", "Asgårds Mur"),
-    Slot.HELM to listOf("Odins Øje", "Tordenhjelmen"),
-    Slot.ARMOR to listOf("Ymers Hud", "Fafners Skæl"),
-    Slot.GLOVES to listOf("Tyrs Greb", "Jarngreipr"),
-    Slot.BOOTS to listOf("Sleipners Spor", "Vidars Sko"),
-    Slot.AMULET to listOf("Brisingamen", "Nornernes Tråd"),
-    Slot.RING to listOf("Draupner", "Andvaranaut"),
+    Slot.WEAPON to listOf("Mjölnir", "Gram", "Tyrfing", "Dáinsleif", "Hofud"),
+    Slot.OFFHAND to listOf("Svalin's Shield", "Wall of Asgard"),
+    Slot.HELM to listOf("Odin's Eye", "The Thunder Helm"),
+    Slot.ARMOR to listOf("Ymir's Hide", "Fafnir's Scales"),
+    Slot.GLOVES to listOf("Tyr's Grip", "Járngreipr"),
+    Slot.BOOTS to listOf("Sleipnir's Stride", "Vidar's Shoes"),
+    Slot.AMULET to listOf("Brísingamen", "Thread of the Norns"),
+    Slot.RING to listOf("Draupnir", "Andvaranaut"),
 )
 private val mythicNames = mapOf(
-    Slot.WEAPON to listOf("Gungnir", "Ragnarok", "Surts Flammesværd"),
-    Slot.OFFHAND to listOf("Yggdrasils Bark"),
-    Slot.HELM to listOf("Allfaders Krone"),
-    Slot.ARMOR to listOf("Jormungandrs Skæl"),
-    Slot.GLOVES to listOf("Fenrirs Lænke"),
-    Slot.BOOTS to listOf("Bifrosts Skridt"),
-    Slot.AMULET to listOf("Mimers Kilde"),
-    Slot.RING to listOf("Evighedens Ring"),
+    Slot.WEAPON to listOf("Gungnir", "Ragnarök", "Surtr's Flaming Sword"),
+    Slot.OFFHAND to listOf("Bark of Yggdrasil"),
+    Slot.HELM to listOf("Crown of the Allfather"),
+    Slot.ARMOR to listOf("Scales of Jörmungandr"),
+    Slot.GLOVES to listOf("Fenrir's Chain"),
+    Slot.BOOTS to listOf("Bifröst Stride"),
+    Slot.AMULET to listOf("Mimir's Well"),
+    Slot.RING to listOf("Ring of Eternity"),
 )
-private val prefixes = listOf("Dragens", "Skyggernes", "Kongens", "Ulvens", "Stormens", "Blodets", "Ravnens", "Isens", "Ildens", "Jættens")
-private val suffixes = listOf("af Asgård", "af Nordlyset", "af Midgård", "fra Udgård", "af Valhal", "fra Niflheim", "af Muspelheim")
+private val prefixes = listOf("Dragon", "Shadow", "Kingly", "Wolf", "Storm", "Blood", "Raven", "Frost", "Ember", "Giant")
+private val suffixes = listOf("of Asgard", "of the Northern Lights", "of Midgard", "of Utgard", "of Valhalla", "of Niflheim", "of Muspelheim")
 
 private val villagerLines = listOf(
-    "Pas på ulvene ved søen!", "Godt at se dig, helt.", "Smeden kan gøre dit våben stærkere.",
-    "Den Ældste har arbejde til dig.", "Krypten er fuld af skeletter…", "Jeg hørte en trold i skoven mod sydøst.",
-    "Købmanden har nye varer.", "Om natten kommer der flere monstre.", "Har du set Helvedes port mod syd?",
-    "Min mand gik ned i hulerne og kom aldrig hjem.",
+    "Beware the wolves by the lake!", "Good to see you, hero.", "The blacksmith can make your weapon stronger.",
+    "The Elder has work for you.", "The crypt is crawling with skeletons…", "I heard a troll in the forest to the south-east.",
+    "The merchant has new wares.", "More monsters come out at night.", "Have you seen the Gate of Hell to the south?",
+    "My husband went down into the caves and never came home.",
 )
 
 val QUESTS = listOf(
-    "Rens Krypten" to "Besejr Knoglekongen på dybde 3 (Krypten, nordvest for landsbyen)",
-    "Hulernes dronning" to "Besejr Edderkoppedronningen på dybde 6 (Hulerne, mod øst)",
-    "Helvedes port" to "Besejr Dæmonherren på dybde 9 (Helvedes port, mod syd)",
-    "Bryd mørket" to "Besejr Skyggekongen på dybde 10",
+    "Cleanse the Crypt" to "Defeat the Skeleton King at depth 3 (the Crypt, north-west of the village)",
+    "Queen of the Caves" to "Defeat the Spider Queen at depth 6 (the Caves, to the east)",
+    "The Gate of Hell" to "Defeat the Demon Lord at depth 9 (the Gate of Hell, to the south)",
+    "Break the Darkness" to "Defeat the Shadow King at depth 10",
 )
 private val questBosses = listOf(EnemyType.SKELETON_KING, EnemyType.SPIDER_QUEEN, EnemyType.DEMON_LORD, EnemyType.SHADOW_KING)
 
@@ -186,9 +186,9 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         (it.kind == NpcKind.SMITH || it.kind == NpcKind.ELDER) && hypot(player.x - it.x, player.y - it.y) < 1.7f
     }
     val areaTitle: String get() = when {
-        inVillage -> "Landsbyen"
-        inWorld -> "Landet — område ${zoneLevel(player.x, player.y)}"
-        else -> "${dungeon.biome.title} — dybde $floor"
+        inVillage -> "The Village"
+        inWorld -> "The Wilds — zone ${zoneLevel(player.x, player.y)}"
+        else -> "${dungeon.biome.title} — depth $floor"
     }
     val potionPrice: Int get() = 20 + max(1, deepest) * 6
 
@@ -259,7 +259,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             if (bountyOffers.isEmpty()) rollBounties()
             populateWorld()
             placeWorldShards()
-            showMessage("Landsbyen — et øjebliks fred", Color(0xFFFFE0A3))
+            showMessage("The Village — a moment of peace", Color(0xFFFFE0A3))
         } else {
             val pool = spawnPool()
             for (room in dungeon.rooms) {
@@ -276,9 +276,9 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             val bossType = bossFor(floor)
             if (bossType != null) {
                 enemies += Enemy(bossType, dungeon.exit.cx + 0.5f, dungeon.exit.cy - 0.5f, floor)
-                showMessage("${dungeon.biome.title} — dybde $floor\n${bossType.label} venter…", HURT_COLOR)
+                showMessage("${dungeon.biome.title} — depth $floor\n${bossType.label} awaits…", HURT_COLOR)
             } else {
-                showMessage("${dungeon.biome.title} — dybde $floor", Color.White)
+                showMessage("${dungeon.biome.title} — depth $floor", Color.White)
             }
         }
         save()
@@ -466,8 +466,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         player.hearts = 0
         player.skills.clear()
         player.skills.putAll(mapOf(Skill.FIREBALL to 1, Skill.WHIRL to 1, Skill.NOVA to 0, Skill.CHAIN to 0))
-        player.equipment[Slot.WEAPON] = Item(Slot.WEAPON, "Rustent sværd", Rarity.COMMON, Icons.SWORD, 1, damage = 2)
-        player.equipment[Slot.OFFHAND] = Item(Slot.OFFHAND, "Gammelt rundskjold", Rarity.COMMON, Icons.SHIELD, 1, armor = 2)
+        player.equipment[Slot.WEAPON] = Item(Slot.WEAPON, "Rusty Sword", Rarity.COMMON, Icons.SWORD, 1, damage = 2)
+        player.equipment[Slot.OFFHAND] = Item(Slot.OFFHAND, "Old Round Shield", Rarity.COMMON, Icons.SHIELD, 1, armor = 2)
         player.hp = player.maxHp
         player.mana = player.maxMana
         deepest = 0
@@ -484,7 +484,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         dead = false
         player.hp = player.maxHp
         enterFloor(0)
-        showMessage("Du vågner ved lejrbålet… (−$lost guld)", GOLD)
+        showMessage("You wake by the campfire… (−$lost gold)", GOLD)
     }
 
     fun townPortal() {
@@ -508,7 +508,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     private fun enterRegion(e: Entrance) {
         if (questStage < e.region.quest) {
-            if (messageTimer <= 0f) showMessage("${e.region.title} er låst — ${e.region.lockText}", HURT_COLOR)
+            if (messageTimer <= 0f) showMessage("${e.region.title} is sealed — ${e.region.lockText}", HURT_COLOR)
             return
         }
         val target = if (deepest >= e.region.firstFloor) {
@@ -677,7 +677,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                     n.faceY = (player.y - n.y) / dp
                 }
             } else if (dp < 3f && n.say == null && rnd.nextFloat() < dt * 0.25f) {
-                n.say = if (n.kind == NpcKind.SMITH) "Brug for skarpere stål?" else if (bounty?.done == true) "Du har gjort det! Kom og hent din løn." else "Jeg har en opgave til dig, eventyrer."
+                n.say = if (n.kind == NpcKind.SMITH) "Need sharper steel?" else if (bounty?.done == true) "You did it! Come and collect your reward." else "I have a task for you, adventurer."
                 n.sayTime = 3f
             }
         }
@@ -755,7 +755,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         when (dungeon.tile(tx, ty)) {
             ENTRANCE -> dungeon.entrances.firstOrNull { it.x == tx && it.y == ty }?.let { enterRegion(it) }
             STAIRS -> if (boss != null) {
-                if (messageTimer <= 0f) showMessage("Besejr ${boss!!.type.label} først!", HURT_COLOR)
+                if (messageTimer <= 0f) showMessage("Defeat ${boss!!.type.label} first!", HURT_COLOR)
             } else {
                 sfx.stairs()
                 enterFloor(floor + 1)
@@ -847,18 +847,18 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         if (dead) return
         val lvl = p.skills[skill] ?: 0
         if (lvl <= 0) {
-            showMessage("Lær ${skill.label} under ✨ Færdigheder", skill.color)
+            showMessage("Learn ${skill.label} under ✨ Skills", skill.color)
             return
         }
         if (!skillReady(skill)) return
         val chainTarget = if (skill == Skill.CHAIN) nearestEnemy(6.5f) else null
         if (skill == Skill.CHAIN && chainTarget == null) {
-            texts += FloatText(p.x, p.y - 1.4f, "Intet mål", LIGHTNING)
+            texts += FloatText(p.x, p.y - 1.4f, "No target", LIGHTNING)
             return
         }
         val cost = if (skill == Skill.WHIRL && p.has(Power.STORM)) 0f else skill.mana
         if (p.mana < cost) {
-            showMessage("Ikke nok mana", Color(0xFF64B5F6))
+            showMessage("Not enough mana", Color(0xFF64B5F6))
             return
         }
         p.mana -= cost
@@ -944,8 +944,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         val p = player
         if (dead) return
         when {
-            p.potions <= 0 -> showMessage("Ingen eliksirer — køb flere i landsbyen", HURT_COLOR)
-            p.hp >= p.maxHp -> showMessage("Du har fuldt liv", Color.White)
+            p.potions <= 0 -> showMessage("No potions — buy more in the village", HURT_COLOR)
+            p.hp >= p.maxHp -> showMessage("You are at full health", Color.White)
             else -> {
                 p.potions--
                 p.hp = min(p.maxHp, p.hp + p.maxHp * 0.5f)
@@ -1105,7 +1105,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         bounty = b
         bountyOffers.remove(b)
         sfx.equip()
-        showMessage("Dusør: dræb ${b.need} ${b.type.label.lowercase()}", GOLD)
+        showMessage("Bounty: slay ${b.need} ${b.type.plural}", GOLD)
         save()
     }
 
@@ -1172,7 +1172,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             dropGear(pr.x + (it - 0.5f) * 0.7f, pr.y + 0.6f, makeItem(ilvl(), Rarity.MAGIC, false))
         }
         if (rnd.nextFloat() < 0.4f) loot += pop(Loot(pr.x, pr.y + 0.3f, LootKind.Potion))
-        showMessage("Skattekiste!", GOLD)
+        showMessage("Treasure chest!", GOLD)
     }
 
     private fun useShrine(pr: Prop) {
@@ -1181,7 +1181,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 player.hp = player.maxHp
                 player.mana = player.maxMana
                 sfx.levelUp()
-                showMessage("Helligdommen helbreder dig", Color(0xFF80DEEA))
+                showMessage("The shrine heals you", Color(0xFF80DEEA))
             }
             return
         }
@@ -1191,7 +1191,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         player.buffTime = 60f
         sfx.levelUp()
         ring(pr.x, pr.y, 0.3f, b.color, 36, 4f)
-        showMessage("Helligdom — ${b.label} i 60 sek.", b.color)
+        showMessage("Shrine — ${b.label} for 60 s", b.color)
     }
 
     // ---------------------------------------------------------------- combat
@@ -1213,7 +1213,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         if (e.shield > 0f) {
             e.aggro = true
             if (e.flash <= 0f) {
-                texts += FloatText(e.x, e.y - 1f, "Immun", Affix.SHIELDED.color)
+                texts += FloatText(e.x, e.y - 1f, "Immune", Affix.SHIELDED.color)
                 burst(e.x, e.y - 0.4f, Affix.SHIELDED.color, 5, glow = true)
                 e.flash = 0.12f
             }
@@ -1241,7 +1241,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     private fun hurtPlayer(raw: Float, from: Enemy? = null) {
         if (player.dodge > 0f) {
-            texts += FloatText(player.x, player.y - 1.2f, "Undveg!", Color(0xFFB0BEC5))
+            texts += FloatText(player.x, player.y - 1.2f, "Dodged!", Color(0xFFB0BEC5))
             return
         }
         if (from != null) championHit(from, raw)
@@ -1260,7 +1260,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 player.hp = player.maxHp * 0.5f
                 ring(player.x, player.y, 0.3f, Color(0xFFFF9100), 50, 5f)
                 sfx.levelUp()
-                showMessage("Føniks! Du rejser dig af asken", Color(0xFFFF9100))
+                showMessage("Phoenix! You rise from the ashes", Color(0xFFFF9100))
                 return
             }
             player.hp = 0f
@@ -1284,8 +1284,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         bounty?.let { b ->
             if (b.type == e.type && !b.done) {
                 b.got++
-                if (b.done) showMessage("Dusør fuldført! Gå til Den Ældste i landsbyen", GOLD)
-                else texts += FloatText(player.x, player.y - 1.8f, "${b.got}/${b.need} ${b.type.label.lowercase()}", GOLD)
+                if (b.done) showMessage("Bounty complete! Return to the Elder in the village", GOLD)
+                else texts += FloatText(player.x, player.y - 1.8f, "${b.got}/${b.need} ${b.type.plural}", GOLD)
             }
         }
         gainXp(e.xp)
@@ -1294,10 +1294,10 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             val idx = questBosses.indexOf(e.type)
             if (idx >= 0 && idx == questStage) {
                 questStage++
-                showMessage("${e.type.label} er besejret!\nOpgave fuldført: ${QUESTS[idx].first}", GOLD)
+                showMessage("${e.type.label} is defeated!\nQuest complete: ${QUESTS[idx].first}", GOLD)
                 if (questStage == QUESTS.size) victory = true
             } else {
-                showMessage("${e.type.label} er besejret!", GOLD)
+                showMessage("${e.type.label} is defeated!", GOLD)
             }
             shake = 1f
             burst(e.x, e.y, GOLD, 70, glow = true)
@@ -1317,7 +1317,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             p.mana = p.maxMana
             levelFlash = 1.2f
             sfx.levelUp()
-            showMessage("Niveau ${p.level}! +1 færdighedspoint ✨", GOLD)
+            showMessage("Level ${p.level}! +1 skill point ✨", GOLD)
             ring(p.x, p.y, 0.3f, GOLD, 40, 4f)
             save()
         }
@@ -1400,9 +1400,9 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         val name = keepName ?: when (rarity) {
             Rarity.MYTHIC -> mythicNames.getValue(s).random(rnd)
             Rarity.LEGENDARY -> legendaryNames.getValue(s).random(rnd)
-            Rarity.EPIC -> "${prefixes.random(rnd)} ${base.lowercase()} ${suffixes.random(rnd)}"
+            Rarity.EPIC -> "${prefixes.random(rnd)} $base ${suffixes.random(rnd)}"
             Rarity.COMMON -> base
-            else -> "${prefixes.random(rnd)} ${base.lowercase()}"
+            else -> "${prefixes.random(rnd)} $base"
         }
         val m = rarity.mult
         fun v(b: Float) = (b * m * (0.8f + rnd.nextFloat() * 0.4f)).roundToInt().coerceAtLeast(1)
@@ -1459,12 +1459,12 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             is LootKind.Gold -> {
                 p.gold += kind.amount
                 sfx.coin()
-                texts += FloatText(p.x, p.y - 1.3f, "+${kind.amount} guld", GOLD)
+                texts += FloatText(p.x, p.y - 1.3f, "+${kind.amount} gold", GOLD)
             }
             LootKind.Potion -> {
                 p.potions++
                 sfx.coin()
-                texts += FloatText(p.x, p.y - 1.3f, "+1 eliksir", Color(0xFFFF5370))
+                texts += FloatText(p.x, p.y - 1.3f, "+1 potion", Color(0xFFFF5370))
             }
             is LootKind.Shard -> {
                 shardsFound += kind.key
@@ -1474,10 +1474,10 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                     p.hearts = n / 4
                     p.hp = p.maxHp
                     sfx.levelUp()
-                    showMessage("Et nyt hjerte! +${HEART_LIFE.toInt()} liv for altid", HEART)
+                    showMessage("A new heart! +${HEART_LIFE.toInt()} max life", HEART)
                 } else {
                     sfx.potion()
-                    showMessage("Livsfragment fundet (${n % 4}/4)", HEART)
+                    showMessage("Heart fragment found (${n % 4}/4)", HEART)
                 }
                 save()
             }
@@ -1486,13 +1486,13 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 if (p.equipment[item.slot] == null) {
                     p.equipment[item.slot] = item
                     sfx.equip()
-                    showMessage("Udstyret: ${item.name}", item.rarity.color)
+                    showMessage("Equipped: ${item.name}", item.rarity.color)
                 } else if (p.inventory.size < INVENTORY_SIZE) {
                     p.inventory += item
                     sfx.coin()
                     showMessage("${item.rarity.label}: ${item.name}${if (isUpgrade(item)) "  ⬆" else ""}", item.rarity.color)
                 } else {
-                    if (messageTimer <= 0f) showMessage("Tasken er fuld — sælg noget", HURT_COLOR)
+                    if (messageTimer <= 0f) showMessage("Your bag is full — sell something", HURT_COLOR)
                     return false
                 }
                 save()

@@ -128,10 +128,10 @@ fun RpgScreen(
             if (overlay == Overlay.NONE) {
                 val npc = game.nearNpc
                 when {
-                    game.nearMerchant -> GothicButton("💰 Handl med købmanden", { overlay = Overlay.SHOP }, Modifier.align(Alignment.Center).offset(y = 90.dp))
-                    game.nearStash -> GothicButton("🗝 Åbn din kiste", { overlay = Overlay.STASH }, Modifier.align(Alignment.Center).offset(y = 90.dp))
-                    npc?.kind == NpcKind.SMITH -> GothicButton("⚒ Tal med smeden", { overlay = Overlay.SMITH }, Modifier.align(Alignment.Center).offset(y = 90.dp))
-                    npc?.kind == NpcKind.ELDER -> GothicButton("📜 Tal med Den Ældste", { overlay = Overlay.ELDER }, Modifier.align(Alignment.Center).offset(y = 90.dp))
+                    game.nearMerchant -> GothicButton("💰 Trade with the merchant", { overlay = Overlay.SHOP }, Modifier.align(Alignment.Center).offset(y = 90.dp))
+                    game.nearStash -> GothicButton("🗝 Open your stash", { overlay = Overlay.STASH }, Modifier.align(Alignment.Center).offset(y = 90.dp))
+                    npc?.kind == NpcKind.SMITH -> GothicButton("⚒ Talk to the blacksmith", { overlay = Overlay.SMITH }, Modifier.align(Alignment.Center).offset(y = 90.dp))
+                    npc?.kind == NpcKind.ELDER -> GothicButton("📜 Talk to the Elder", { overlay = Overlay.ELDER }, Modifier.align(Alignment.Center).offset(y = 90.dp))
                 }
             }
             game.bossIntro?.let { name ->
@@ -142,7 +142,7 @@ fun RpgScreen(
                 ) {
                     Text(name.uppercase(), color = Color(0xFFFF5252), fontSize = 34.sp, textAlign = TextAlign.Center,
                         style = serifBold.copy(fontWeight = FontWeight.Black, shadow = Shadow(Color(0xFF7F0000), Offset.Zero, 24f)))
-                    Text("— forbereder sig på kamp —", color = parchment.copy(alpha = 0.8f), fontSize = 14.sp, fontFamily = FontFamily.Serif)
+                    Text("— prepares for battle —", color = parchment.copy(alpha = 0.8f), fontSize = 14.sp, fontFamily = FontFamily.Serif)
                 }
             }
             game.message?.let { msg ->
@@ -198,7 +198,7 @@ private fun Hud(game: Game, assets: Assets, onOpen: (Overlay) -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(game.areaTitle, color = parchment, fontSize = 16.sp, style = serifBold, textAlign = TextAlign.Center)
-                Text("Niveau ${p.level}", color = GOLD, fontSize = 13.sp, fontWeight = FontWeight.Bold, style = TextStyle(shadow = textShadow))
+                Text("Level ${p.level}", color = GOLD, fontSize = 13.sp, fontWeight = FontWeight.Bold, style = TextStyle(shadow = textShadow))
                 Box(
                     Modifier.padding(top = 3.dp).fillMaxWidth(0.85f).height(6.dp)
                         .background(Color(0xAA000000), RoundedCornerShape(3.dp))
@@ -214,7 +214,7 @@ private fun Hud(game: Game, assets: Assets, onOpen: (Overlay) -> Unit) {
                 }
                 game.bounty?.let { b ->
                     Text(
-                        if (b.done) "📜 Dusør klar — gå til Den Ældste" else "📜 ${b.type.label}: ${b.got}/${b.need}",
+                        if (b.done) "📜 Bounty done — see the Elder" else "📜 ${b.type.label}: ${b.got}/${b.need}",
                         color = if (b.done) GOLD else parchment, fontSize = 11.sp, style = TextStyle(shadow = textShadow),
                     )
                 }
@@ -543,7 +543,7 @@ private fun ItemDetail(item: Item, compare: Item?) {
             .border(1.dp, item.rarity.color.copy(alpha = 0.7f), RoundedCornerShape(8.dp)).padding(10.dp)
     ) {
         Text(item.name, color = item.rarity.color, fontSize = 18.sp, style = serifBold)
-        Text("${item.rarity.label} ${item.slot.label.lowercase()} · niveau ${item.level}", color = parchment.copy(alpha = 0.7f), fontSize = 12.sp)
+        Text("${item.rarity.label} ${item.slot.label.lowercase()} · level ${item.level}", color = parchment.copy(alpha = 0.7f), fontSize = 12.sp)
         item.weaponKind?.let { k -> Text("${k.label}: ${k.blurb}", color = Color(0xFFB0BEC5), fontSize = 12.sp) }
         Spacer(Modifier.height(4.dp))
         val keys = (item.stats().map { it.first } + (compare?.stats()?.map { it.first } ?: emptyList())).distinct()
@@ -573,27 +573,27 @@ private fun InventoryScreen(game: Game, assets: Assets, tick: Int, onClose: () -
     tick.let { }
     val p = game.player
     var selected by remember { mutableStateOf<Item?>(null) }
-    DarkPanel("Helten", onClose) {
+    DarkPanel("Hero", onClose) {
         Row(Modifier.width(310.dp)) {
             Column(Modifier.weight(1f)) {
-                StatLine("Niveau", "${p.level}")
-                StatLine("Liv", "${p.hp.toInt()}/${p.maxHp.toInt()}")
+                StatLine("Level", "${p.level}")
+                StatLine("Life", "${p.hp.toInt()}/${p.maxHp.toInt()}")
                 StatLine("Mana", "${p.mana.toInt()}/${p.maxMana.toInt()}")
-                StatLine("Skade", "${p.damage}")
+                StatLine("Damage", "${p.damage}")
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                StatLine("Rustning", "${p.armorValue}")
-                StatLine("Kritisk", "${p.critChance}%")
-                StatLine("Livsdræn", "${p.lifeSteal}%")
-                StatLine("Magi", "+${p.spellBonus}%")
-                StatLine("Angrebsfart", "+${p.attackSpeed}%")
-                StatLine("Guldfund", "+${p.goldFind}%")
-                StatLine("Guld", "${p.gold}")
+                StatLine("Armor", "${p.armorValue}")
+                StatLine("Critical", "${p.critChance}%")
+                StatLine("Life steal", "${p.lifeSteal}%")
+                StatLine("Spell", "+${p.spellBonus}%")
+                StatLine("Attack speed", "+${p.attackSpeed}%")
+                StatLine("Gold find", "+${p.goldFind}%")
+                StatLine("Gold", "${p.gold}")
             }
         }
-        Text("Udrustning", color = parchment, fontSize = 15.sp, style = serifBold)
-        Text("Våben: ${p.weaponKind.label} — ${p.weaponKind.blurb}", color = Color(0xFFB0BEC5), fontSize = 12.sp)
+        Text("Equipment", color = parchment, fontSize = 15.sp, style = serifBold)
+        Text("Weapon: ${p.weaponKind.label} — ${p.weaponKind.blurb}", color = Color(0xFFB0BEC5), fontSize = 12.sp)
         for (row in Slot.entries.chunked(4)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (slot in row) {
@@ -603,11 +603,11 @@ private fun InventoryScreen(game: Game, assets: Assets, tick: Int, onClose: () -
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Taske (${p.inventory.size}/$INVENTORY_SIZE)", color = parchment, fontSize = 15.sp, style = serifBold)
-            SmallButton("Sortér") { game.sortInventory(); selected = null }
-            SmallButton("Sælg skrald") { game.sellJunk(); selected = null }
+            Text("Bag (${p.inventory.size}/$INVENTORY_SIZE)", color = parchment, fontSize = 15.sp, style = serifBold)
+            SmallButton("Sort") { game.sortInventory(); selected = null }
+            SmallButton("Sell junk") { game.sellJunk(); selected = null }
         }
-        if (p.inventory.isEmpty()) Text("Tom — dræb monstre og åbn kister", color = Color.Gray, fontSize = 13.sp)
+        if (p.inventory.isEmpty()) Text("Empty — slay monsters and open chests", color = Color.Gray, fontSize = 13.sp)
         for (row in p.inventory.chunked(6)) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (item in row) ItemIcon(item, assets, 46.dp, selected = item === selected, upgrade = game.isUpgrade(item)) { selected = item }
@@ -619,8 +619,8 @@ private fun InventoryScreen(game: Game, assets: Assets, tick: Int, onClose: () -
             ItemDetail(item, if (isEquipped) null else equipped)
             if (!isEquipped) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    GothicButton("Tag på", { game.equip(item); selected = item }, wide = false)
-                    GothicButton("Sælg (${item.sellPrice} 💰)", { game.sell(item); selected = null }, wide = false)
+                    GothicButton("Equip", { game.equip(item); selected = item }, wide = false)
+                    GothicButton("Sell (${item.sellPrice} 💰)", { game.sell(item); selected = null }, wide = false)
                 }
             }
         }
@@ -640,7 +640,7 @@ private fun SmallButton(label: String, onClick: () -> Unit) {
 @Composable
 private fun RarityLegend() {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Sjældenhed", color = parchment.copy(alpha = 0.6f), fontSize = 11.sp)
+        Text("Rarity", color = parchment.copy(alpha = 0.6f), fontSize = 11.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             for (r in Rarity.entries) Text(r.label, color = r.color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
         }
@@ -659,9 +659,9 @@ private fun StatLine(label: String, value: String) {
 private fun SkillsScreen(game: Game, tick: Int, onClose: () -> Unit) {
     tick.let { }
     val p = game.player
-    DarkPanel("Færdigheder", onClose) {
+    DarkPanel("Skills", onClose) {
         Text(
-            if (p.skillPoints > 0) "Du har ${p.skillPoints} point at bruge" else "Du får et point for hvert nyt niveau",
+            if (p.skillPoints > 0) "You have ${p.skillPoints} points to spend" else "You gain a point every level",
             color = if (p.skillPoints > 0) GOLD else parchment.copy(alpha = 0.7f), fontSize = 14.sp,
         )
         for (s in Skill.entries) {
@@ -675,9 +675,9 @@ private fun SkillsScreen(game: Game, tick: Int, onClose: () -> Unit) {
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text("${s.label}  ${"★".repeat(lvl)}${"☆".repeat(5 - lvl)}", color = s.color, fontSize = 16.sp, style = serifBold)
-                    Text(if (lvl > 0) s.describe(lvl) else "Ikke lært endnu. ${s.describe(1)}", color = parchment, fontSize = 12.sp)
-                    if (lvl in 1..4) Text("Næste: ${s.describe(lvl + 1)}", color = Color.Gray, fontSize = 11.sp)
-                    Text("Mana: ${s.mana.toInt()} · Ventetid: ${s.cooldown}s", color = Color(0xFF64B5F6), fontSize = 11.sp)
+                    Text(if (lvl > 0) s.describe(lvl) else "Not learned yet. ${s.describe(1)}", color = parchment, fontSize = 12.sp)
+                    if (lvl in 1..4) Text("Next: ${s.describe(lvl + 1)}", color = Color.Gray, fontSize = 11.sp)
+                    Text("Mana: ${s.mana.toInt()} · Cooldown: ${s.cooldown}s", color = Color(0xFF64B5F6), fontSize = 11.sp)
                 }
                 if (p.skillPoints > 0 && lvl < 5) {
                     Text(
@@ -692,9 +692,9 @@ private fun SkillsScreen(game: Game, tick: Int, onClose: () -> Unit) {
 
 @Composable
 private fun QuestScreen(game: Game, onClose: () -> Unit) {
-    DarkPanel("Opgaver", onClose) {
+    DarkPanel("Quests", onClose) {
         Text(
-            "Et mørke stiger op fra dybet under lejren. Fire herskere vogter vejen til Skyggekongens trone.",
+            "A darkness rises from the depths beneath the village. Four rulers guard the path to the Shadow King's throne.",
             color = parchment.copy(alpha = 0.85f), fontSize = 13.sp, fontFamily = FontFamily.Serif, modifier = Modifier.width(300.dp),
         )
         for ((i, q) in QUESTS.withIndex()) {
@@ -720,15 +720,15 @@ private fun QuestScreen(game: Game, onClose: () -> Unit) {
             Text("❤", color = HEART, fontSize = 22.sp)
             Spacer(Modifier.width(8.dp))
             Column {
-                Text("Livsfragmenter ${shards % 4}/4", color = HEART, fontSize = 15.sp, style = serifBold)
+                Text("Heart Fragments ${shards % 4}/4", color = HEART, fontSize = 15.sp, style = serifBold)
                 Text(
-                    "Fire fragmenter giver et nyt hjerte (+${HEART_LIFE.toInt()} liv). Ekstra hjerter: ${game.player.hearts}. " +
-                        "Der gemmer sig ét på hver dybde og flere ude i vildmarken.",
+                    "Four fragments grant a new heart (+${HEART_LIFE.toInt()} life). Extra hearts: ${game.player.hearts}. " +
+                        "One hides on every depth, and more out in the wilds.",
                     color = parchment.copy(alpha = 0.8f), fontSize = 12.sp,
                 )
             }
         }
-        Text("Dybeste: ${game.deepest}", color = parchment.copy(alpha = 0.6f), fontSize = 12.sp)
+        Text("Deepest: ${game.deepest}", color = parchment.copy(alpha = 0.6f), fontSize = 12.sp)
     }
 }
 
@@ -755,20 +755,20 @@ private fun StashScreen(game: Game, assets: Assets, onClose: () -> Unit) {
     var selected by remember { mutableStateOf<Item?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
     refresh.let { }
-    DarkPanel("Din kiste", onClose) {
-        Text("Det du lægger her, er i sikkerhed.", color = parchment.copy(alpha = 0.8f), fontSize = 13.sp, fontFamily = FontFamily.Serif)
-        StashGrid(game, assets, "🗝 Kisten", game.stash, STASH_SIZE, selected) { selected = it }
-        StashGrid(game, assets, "🎒 Tasken", p.inventory, INVENTORY_SIZE, selected) { selected = it }
+    DarkPanel("Your Stash", onClose) {
+        Text("Whatever you leave here stays safe.", color = parchment.copy(alpha = 0.8f), fontSize = 13.sp, fontFamily = FontFamily.Serif)
+        StashGrid(game, assets, "🗝 Stash", game.stash, STASH_SIZE, selected) { selected = it }
+        StashGrid(game, assets, "🎒 Bag", p.inventory, INVENTORY_SIZE, selected) { selected = it }
         selected?.let { item ->
             val inStash = item in game.stash
             ItemDetail(item, p.equipment[item.slot])
             if (inStash) {
-                GothicButton("Tag med", {
+                GothicButton("Take", {
                     if (game.fromStash(item)) selected = null
                     refresh++
                 }, enabled = p.inventory.size < INVENTORY_SIZE)
             } else if (item in p.inventory) {
-                GothicButton("Læg i kisten", {
+                GothicButton("Store", {
                     if (game.toStash(item)) selected = null
                     refresh++
                 }, enabled = game.stash.size < STASH_SIZE)
@@ -785,20 +785,20 @@ private fun ShopScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Uni
     var lastGamble by remember { mutableStateOf<Item?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
     refresh.let { }
-    DarkPanel("Købmanden", onClose) {
-        Text("\"Hvad må det være, eventyrer?\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp)
-        Text("Du har 💰 ${p.gold}", color = GOLD, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    DarkPanel("The Merchant", onClose) {
+        Text("\"What'll it be, adventurer?\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp)
+        Text("You have 💰 ${p.gold}", color = GOLD, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            GothicButton("Køb", { tab = 0 }, wide = false, enabled = tab != 0)
-            GothicButton("Sælg", { tab = 1 }, wide = false, enabled = tab != 1)
-            GothicButton("🎲 Hasard", { tab = 2 }, wide = false, enabled = tab != 2)
+            GothicButton("Buy", { tab = 0 }, wide = false, enabled = tab != 0)
+            GothicButton("Sell", { tab = 1 }, wide = false, enabled = tab != 1)
+            GothicButton("🎲 Gamble", { tab = 2 }, wide = false, enabled = tab != 2)
         }
         if (tab == 2) {
             Text(
-                "Køb en ukendt genstand. Måske skrald… måske legendarisk!",
+                "Buy an unknown item. Maybe junk… maybe legendary!",
                 color = parchment.copy(alpha = 0.8f), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.width(300.dp),
             )
-            Text("Pris: ${game.gamblePrice()} 💰 pr. genstand", color = GOLD, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text("Price: ${game.gamblePrice()} 💰 per item", color = GOLD, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             for (row in Slot.entries.chunked(2)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (slot in row) {
@@ -810,7 +810,7 @@ private fun ShopScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Uni
                 }
             }
             lastGamble?.let { item ->
-                Text("Du fik:", color = parchment, fontSize = 13.sp)
+                Text("You got:", color = parchment, fontSize = 13.sp)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     ItemIcon(item, assets, 56.dp, upgrade = game.isUpgrade(item))
                     Spacer(Modifier.width(8.dp))
@@ -818,7 +818,7 @@ private fun ShopScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Uni
                 }
             }
         } else if (tab == 0) {
-            ShopRow(assets, null, "Livseliksir", "Helbreder halvdelen af dit liv", "${game.potionPrice} 💰", p.gold >= game.potionPrice) {
+            ShopRow(assets, null, "Healing Potion", "Restores half your life", "${game.potionPrice} 💰", p.gold >= game.potionPrice) {
                 game.buyPotion(); refresh++
             }
             for (item in game.stock.toList()) {
@@ -826,9 +826,9 @@ private fun ShopScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Uni
                     upgrade = game.isUpgrade(item)) { game.buy(item); refresh++ }
             }
         } else {
-            if (p.inventory.isEmpty()) Text("Din taske er tom", color = Color.Gray, fontSize = 13.sp)
+            if (p.inventory.isEmpty()) Text("Your bag is empty", color = Color.Gray, fontSize = 13.sp)
             for (item in p.inventory.toList()) {
-                ShopRow(assets, item, item.name, item.statLine(), "+${item.sellPrice} 💰", true, upgrade = game.isUpgrade(item), action = "Sælg") {
+                ShopRow(assets, item, item.name, item.statLine(), "+${item.sellPrice} 💰", true, upgrade = game.isUpgrade(item), action = "Sell") {
                     game.sell(item); refresh++
                 }
             }
@@ -839,7 +839,7 @@ private fun ShopScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Uni
 @Composable
 private fun ShopRow(
     assets: Assets, item: Item?, name: String, desc: String, price: String, enabled: Boolean,
-    upgrade: Boolean = false, action: String = "Køb", onClick: () -> Unit,
+    upgrade: Boolean = false, action: String = "Buy", onClick: () -> Unit,
 ) {
     Row(
         Modifier.width(320.dp).background(Color(0x44000000), RoundedCornerShape(8.dp)).padding(6.dp),
@@ -889,7 +889,7 @@ private fun TitleScreen(game: Game, frame: Long, onContinue: () -> Unit, onNew: 
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(
-                "SKYGGERNES\nDYB",
+                "SHADOW\nDEPTHS",
                 textAlign = TextAlign.Center,
                 style = TextStyle(
                     color = Color(0xFFE0B25A), fontSize = 50.sp, lineHeight = 54.sp, fontFamily = FontFamily.Serif,
@@ -897,13 +897,13 @@ private fun TitleScreen(game: Game, frame: Long, onContinue: () -> Unit, onNew: 
                 ),
             )
             Text("─── ✦ ───", color = bronze, fontSize = 16.sp)
-            Text("Stig ned i mørket. Find skattene. Overlev.", color = parchment.copy(alpha = 0.8f), fontFamily = FontFamily.Serif, fontSize = 15.sp)
+            Text("Descend into darkness. Claim the treasure. Survive.", color = parchment.copy(alpha = 0.8f), fontFamily = FontFamily.Serif, fontSize = 15.sp)
             Spacer(Modifier.height(10.dp))
-            if (game.hasSave) GothicButton("Fortsæt — niveau ${game.player.level}, dybde ${game.deepest}", onContinue)
-            GothicButton("Nyt eventyr", onNew)
+            if (game.hasSave) GothicButton("Continue — level ${game.player.level}, depth ${game.deepest}", onContinue)
+            GothicButton("New Adventure", onNew)
             Spacer(Modifier.height(6.dp))
             Text(
-                "Joystick: gå · ⚔️ hold for at angribe · 💨 undvig\n🔥 ildkugle · 🌀 hvirvelslag · ❄️ frostnova · ⚡ kædelyn\n🧪 eliksir · 🎒 udstyr · ✨ færdigheder · 📜 opgaver · 🏕️ hjem",
+                "Joystick: move · ⚔️ hold to attack · 💨 dodge\n🧪 potion · 🎒 gear · ✨ skills · 📜 quests · 🏕️ home",
                 color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp, textAlign = TextAlign.Center,
             )
         }
@@ -914,9 +914,9 @@ private fun TitleScreen(game: Game, frame: Long, onContinue: () -> Unit, onNew: 
 private fun DeathScreen(onRespawn: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Color(0xAA200000)), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("DU ER FALDET", color = Color(0xFFD32F2F), fontSize = 38.sp, style = serifBold.copy(fontWeight = FontWeight.Black))
-            Text("Mørket tog dig denne gang.", color = parchment, fontFamily = FontFamily.Serif)
-            GothicButton("Vågn op i lejren (−20% guld)", onRespawn)
+            Text("YOU HAVE FALLEN", color = Color(0xFFD32F2F), fontSize = 38.sp, style = serifBold.copy(fontWeight = FontWeight.Black))
+            Text("The darkness claimed you this time.", color = parchment, fontFamily = FontFamily.Serif)
+            GothicButton("Wake in the village (−20% gold)", onRespawn)
         }
     }
 }
@@ -925,15 +925,15 @@ private fun DeathScreen(onRespawn: () -> Unit) {
 private fun VictoryScreen(game: Game, onContinue: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Color(0xCC000000)), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.padding(24.dp)) {
-            Text("MØRKET ER BRUDT", color = GOLD, fontSize = 34.sp, textAlign = TextAlign.Center,
+            Text("THE DARKNESS IS BROKEN", color = GOLD, fontSize = 34.sp, textAlign = TextAlign.Center,
                 style = serifBold.copy(fontWeight = FontWeight.Black, shadow = Shadow(Color(0xFFFFD54F), Offset.Zero, 24f)))
             Text(
-                "Skyggekongen er faldet, og lyset vender tilbage til landet. Sangene om din bedrift vil blive sunget i generationer.",
+                "The Shadow King has fallen and light returns to the land. Songs of your deeds will be sung for generations.",
                 color = parchment, fontFamily = FontFamily.Serif, fontSize = 15.sp, textAlign = TextAlign.Center,
             )
-            Text("Niveau ${game.player.level} · ${game.player.gold} guld", color = GOLD, fontSize = 15.sp)
-            Text("Dybet fortsætter dog… og monstrene bliver kun stærkere.", color = Color.Gray, fontSize = 13.sp, textAlign = TextAlign.Center)
-            GothicButton("Fortsæt eventyret", onContinue)
+            Text("Level ${game.player.level} · ${game.player.gold} gold", color = GOLD, fontSize = 15.sp)
+            Text("Yet the depths go on… and the monsters only grow stronger.", color = Color.Gray, fontSize = 13.sp, textAlign = TextAlign.Center)
+            GothicButton("Continue the adventure", onContinue)
         }
     }
 }
@@ -989,8 +989,8 @@ private fun MapScreen(game: Game, onClose: () -> Unit) {
             Text(
                 buildAnnotatedString {
                     for ((label, color) in listOf(
-                        "dig" to GOLD, "indgang/trappe" to Color(0xFF4FC3F7), "kiste" to GOLD,
-                        "helligdom" to Color(0xFF00E5FF), "boss" to Color(0xFFFF1744),
+                        "you" to GOLD, "entrance/stairs" to Color(0xFF4FC3F7), "chest" to GOLD,
+                        "shrine" to Color(0xFF00E5FF), "boss" to Color(0xFFFF1744),
                     )) {
                         withStyle(SpanStyle(color = color)) { append("● ") }
                         append(label)
@@ -999,7 +999,7 @@ private fun MapScreen(game: Game, onClose: () -> Unit) {
                 },
                 color = parchment.copy(alpha = 0.7f), fontSize = 12.sp,
             )
-            Text("Tryk for at lukke", color = Color.Gray, fontSize = 12.sp)
+            Text("Tap to close", color = Color.Gray, fontSize = 12.sp)
         }
     }
 }
@@ -1011,11 +1011,11 @@ private fun SmithScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Un
     var selected by remember { mutableStateOf<Item?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
     refresh.let { }
-    DarkPanel("Smeden", onClose) {
-        Text("\"Vis mig dit grej. Jeg kan smede det om eller gøre det stærkere.\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp,
+    DarkPanel("The Blacksmith", onClose) {
+        Text("\"Show me your gear. I can reforge it or make it stronger.\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp,
             textAlign = TextAlign.Center, modifier = Modifier.width(300.dp))
-        Text("Du har 💰 ${p.gold}", color = GOLD, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-        Text("Udrustning", color = parchment, fontSize = 14.sp, style = serifBold)
+        Text("You have 💰 ${p.gold}", color = GOLD, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Text("Equipment", color = parchment, fontSize = 14.sp, style = serifBold)
         for (row in Slot.entries.chunked(4)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (slot in row) {
@@ -1024,7 +1024,7 @@ private fun SmithScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Un
                 }
             }
         }
-        if (p.inventory.isNotEmpty()) Text("Taske", color = parchment, fontSize = 14.sp, style = serifBold)
+        if (p.inventory.isNotEmpty()) Text("Bag", color = parchment, fontSize = 14.sp, style = serifBold)
         for (row in p.inventory.chunked(6)) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (item in row) ItemIcon(item, assets, 44.dp, selected = item === selected, upgrade = game.isUpgrade(item)) { selected = item }
@@ -1033,18 +1033,18 @@ private fun SmithScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Un
         selected?.let { item ->
             ItemDetail(item, null)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                GothicButton("Smed om (${game.reforgePrice(item)} 💰)", {
+                GothicButton("Reforge (${game.reforgePrice(item)} 💰)", {
                     game.reforge(item)?.let { selected = it }
                     refresh++
                 }, wide = false, enabled = p.gold >= game.reforgePrice(item))
-                GothicButton("Forbedr (${game.upgradePrice(item)} 💰)", {
+                GothicButton("Upgrade (${game.upgradePrice(item)} 💰)", {
                     game.upgrade(item)?.let { selected = it }
                     refresh++
                 }, wide = false, enabled = p.gold >= game.upgradePrice(item) && game.canUpgrade(item))
             }
-            Text("Smed om: nye tilfældige egenskaber, samme sjældenhed.\nForbedr: +2 niveau og 15% stærkere egenskaber.",
+            Text("Reforge: new random properties, same rarity.\nUpgrade: +2 levels and 15% stronger properties.",
                 color = Color.Gray, fontSize = 11.sp, textAlign = TextAlign.Center)
-        } ?: Text("Vælg en genstand", color = Color.Gray, fontSize = 13.sp)
+        } ?: Text("Choose an item", color = Color.Gray, fontSize = 13.sp)
     }
 }
 
@@ -1054,24 +1054,24 @@ private fun ElderScreen(game: Game, tick: Int, onClose: () -> Unit) {
     var reward by remember { mutableStateOf<Item?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
     refresh.let { }
-    DarkPanel("Den Ældste", onClose) {
+    DarkPanel("The Elder", onClose) {
         val b = game.bounty
         when {
             b != null && b.done -> {
-                Text("\"Du har holdt dit ord. Her er din løn.\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp)
-                GothicButton("Modtag ${b.gold} 💰 + ${b.rarity.label.lowercase()} genstand", {
+                Text("\"You kept your word. Here is your reward.\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp)
+                GothicButton("Claim ${b.gold} 💰 + ${b.rarity.label.lowercase()} item", {
                     reward = game.claimBounty()
                     refresh++
                 })
             }
             b != null -> {
-                Text("\"Kom tilbage, når arbejdet er gjort.\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp)
-                Text("Dræb ${b.need} ${b.type.label.lowercase()}: ${b.got}/${b.need}", color = GOLD, fontSize = 16.sp, style = serifBold)
-                Text("Belønning: ${b.gold} 💰 og en ${b.rarity.label.lowercase()} genstand", color = b.rarity.color, fontSize = 13.sp)
-                GothicButton("Opgiv dusøren", { game.abandonBounty(); refresh++ }, wide = false)
+                Text("\"Come back when the work is done.\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp)
+                Text("Slay ${b.need} ${b.type.plural}: ${b.got}/${b.need}", color = GOLD, fontSize = 16.sp, style = serifBold)
+                Text("Reward: ${b.gold} 💰 and a ${b.rarity.label.lowercase()} item", color = b.rarity.color, fontSize = 13.sp)
+                GothicButton("Abandon bounty", { game.abandonBounty(); refresh++ }, wide = false)
             }
             else -> {
-                Text("\"Landet er fuld af farer. Hjælp os, og du skal blive belønnet.\"", color = parchment, fontFamily = FontFamily.Serif,
+                Text("\"The land is full of dangers. Help us, and you shall be rewarded.\"", color = parchment, fontFamily = FontFamily.Serif,
                     fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.width(300.dp))
                 for (offer in game.bountyOffers.toList()) {
                     Row(
@@ -1079,16 +1079,16 @@ private fun ElderScreen(game: Game, tick: Int, onClose: () -> Unit) {
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("Dræb ${offer.need} ${offer.type.label.lowercase()}", color = parchment, fontSize = 15.sp, style = serifBold)
-                            Text("${offer.gold} 💰 + ${offer.rarity.label.lowercase()} genstand", color = offer.rarity.color, fontSize = 12.sp)
+                            Text("Slay ${offer.need} ${offer.type.plural}", color = parchment, fontSize = 15.sp, style = serifBold)
+                            Text("${offer.gold} 💰 + ${offer.rarity.label.lowercase()} item", color = offer.rarity.color, fontSize = 12.sp)
                         }
-                        GothicButton("Tag", { game.acceptBounty(offer); refresh++ }, wide = false)
+                        GothicButton("Take", { game.acceptBounty(offer); refresh++ }, wide = false)
                     }
                 }
             }
         }
         reward?.let { item ->
-            Text("Du fik:", color = parchment, fontSize = 13.sp)
+            Text("You got:", color = parchment, fontSize = 13.sp)
             ItemDetail(item, game.player.equipment[item.slot])
         }
     }
@@ -1098,17 +1098,17 @@ private fun ElderScreen(game: Game, tick: Int, onClose: () -> Unit) {
 private fun SettingsScreen(music: Music, sfx: Sfx, settings: android.content.SharedPreferences, onClose: () -> Unit) {
     var musicOn by remember { mutableStateOf(music.enabled) }
     var sfxOn by remember { mutableStateOf(sfx.enabled) }
-    DarkPanel("Indstillinger", onClose) {
-        GothicButton(if (musicOn) "🎵 Musik: til" else "🎵 Musik: fra", {
+    DarkPanel("Settings", onClose) {
+        GothicButton(if (musicOn) "🎵 Music: on" else "🎵 Music: off", {
             musicOn = !musicOn
             music.enabled = musicOn
             settings.edit().putBoolean("music", musicOn).apply()
         })
-        GothicButton(if (sfxOn) "🔊 Lydeffekter: til" else "🔇 Lydeffekter: fra", {
+        GothicButton(if (sfxOn) "🔊 Sound effects: on" else "🔇 Sound effects: off", {
             sfxOn = !sfxOn
             sfx.enabled = sfxOn
             settings.edit().putBoolean("sfx", sfxOn).apply()
         })
-        Text("Spillet gemmes automatisk.", color = Color.Gray, fontSize = 12.sp)
+        Text("The game saves automatically.", color = Color.Gray, fontSize = 12.sp)
     }
 }

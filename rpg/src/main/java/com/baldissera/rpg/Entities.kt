@@ -8,17 +8,17 @@ import kotlin.random.Random
 // ---------------------------------------------------------------- items
 
 enum class Slot(val label: String) {
-    WEAPON("Våben"), OFFHAND("Skjold"), HELM("Hjelm"), ARMOR("Rustning"),
-    GLOVES("Handsker"), BOOTS("Støvler"), AMULET("Amulet"), RING("Ring"),
+    WEAPON("Weapon"), OFFHAND("Off-hand"), HELM("Helm"), ARMOR("Armor"),
+    GLOVES("Gloves"), BOOTS("Boots"), AMULET("Amulet"), RING("Ring"),
 }
 
 enum class Rarity(val label: String, val color: Color, val mult: Float) {
     COMMON("Normal", Color(0xFFD8D8D8), 1f),
-    MAGIC("Magisk", Color(0xFF6C8CFF), 1.4f),
-    RARE("Sjælden", Color(0xFFFFE066), 1.9f),
-    EPIC("Episk", Color(0xFFB266FF), 2.5f),
-    LEGENDARY("Legendarisk", Color(0xFFFF8C1A), 3.2f),
-    MYTHIC("Mytisk", Color(0xFFFF3D6E), 4.0f),
+    MAGIC("Magic", Color(0xFF6C8CFF), 1.4f),
+    RARE("Rare", Color(0xFFFFE066), 1.9f),
+    EPIC("Epic", Color(0xFFB266FF), 2.5f),
+    LEGENDARY("Legendary", Color(0xFFFF8C1A), 3.2f),
+    MYTHIC("Mythic", Color(0xFFFF3D6E), 4.0f),
 }
 
 /** Column in the item icon strip. The first nine keep their original positions. */
@@ -54,12 +54,12 @@ enum class WeaponKind(
     val arc: Float,
     val blurb: String,
 ) {
-    SWORD("Sværd", 0.42f, 1.35f, 1.0f, 0, 0, 4f, 0.3f, "Afbalanceret"),
-    AXE("Økse", 0.56f, 1.4f, 1.3f, 0, 0, 4f, 0.2f, "Langsom, +30% skade, bredt hug"),
-    MACE("Stridshammer", 0.5f, 1.3f, 1.2f, 0, 0, 8f, 0.3f, "+20% skade, slår fjender langt tilbage"),
-    DAGGER("Dolk", 0.28f, 1.15f, 0.75f, 12, 0, 2f, 0.4f, "Lynhurtig, +12% kritisk"),
-    SPEAR("Spyd", 0.5f, 1.95f, 1.05f, 0, 0, 5f, 0.6f, "Lang rækkevidde, smalt stød"),
-    STAFF("Stav", 0.5f, 1.4f, 0.7f, 0, 40, 4f, 0.3f, "Svagt slag, +40% magisk skade"),
+    SWORD("Sword", 0.42f, 1.35f, 1.0f, 0, 0, 4f, 0.3f, "Balanced"),
+    AXE("Axe", 0.56f, 1.4f, 1.3f, 0, 0, 4f, 0.2f, "Slow, +30% damage, wide swing"),
+    MACE("Mace", 0.5f, 1.3f, 1.2f, 0, 0, 8f, 0.3f, "+20% damage, knocks enemies far back"),
+    DAGGER("Dagger", 0.28f, 1.15f, 0.75f, 12, 0, 2f, 0.4f, "Lightning fast, +12% critical"),
+    SPEAR("Spear", 0.5f, 1.95f, 1.05f, 0, 0, 5f, 0.6f, "Long reach, narrow thrust"),
+    STAFF("Staff", 0.5f, 1.4f, 0.7f, 0, 40, 4f, 0.3f, "Weak blow, +40% spell damage"),
     ;
 
     companion object {
@@ -76,13 +76,13 @@ enum class WeaponKind(
 
 /** Special powers on legendary and mythic items. */
 enum class Power(val label: String, val text: String) {
-    THUNDER("Tordenkile", "20% chance for et lyn, der rammer op til 3 fjender"),
-    FROSTBITE("Frostbid", "15% chance for at fryse fjenden du rammer"),
-    PHOENIX("Føniks", "Genopstå med halvt liv én gang pr. område"),
-    INFERNO("Inferno", "Ildkugler deler sig i tre"),
-    VAMPIRE("Blodtørst", "Hvert drab giver 5% liv tilbage"),
-    GREED("Grådighed", "Dobbelt så meget guld fra monstre"),
-    STORM("Storm", "Hvirvelslag koster ingen mana"),
+    THUNDER("Thunderstrike", "20% chance to call lightning that strikes up to 3 enemies"),
+    FROSTBITE("Frostbite", "15% chance to freeze the enemy you hit"),
+    PHOENIX("Phoenix", "Rise again with half your life once per area"),
+    INFERNO("Inferno", "Fireballs split into three"),
+    VAMPIRE("Bloodthirst", "Every kill restores 5% life"),
+    GREED("Greed", "Twice as much gold from monsters"),
+    STORM("Storm", "Whirlwind costs no mana"),
 }
 
 class Item(
@@ -111,9 +111,9 @@ class Item(
     val weaponKind: WeaponKind? get() = if (slot == Slot.WEAPON) WeaponKind.ofIcon(icon) else null
 
     fun stats(): List<Pair<String, Int>> = listOf(
-        "skade" to damage, "rustning" to armor, "liv" to life, "% kritisk" to crit,
-        "mana" to mana, "% livsdræn" to lifeSteal, "% fart" to speed, "% magisk skade" to spell,
-        "% angrebsfart" to atkSpeed, "% mere guld" to goldFind,
+        "damage" to damage, "armor" to armor, "life" to life, "% critical" to crit,
+        "mana" to mana, "% life steal" to lifeSteal, "% speed" to speed, "% spell damage" to spell,
+        "% attack speed" to atkSpeed, "% more gold" to goldFind,
     ).filter { it.second != 0 }
 
     fun statLine(): String = stats().joinToString(", ") { "+${it.second} ${it.first}" }
@@ -129,7 +129,7 @@ class Item(
         fun fromJson(o: JSONObject?): Item? = runCatching {
             o!!
             Item(
-                Slot.valueOf(o.getString("slot")), o.getString("name"), Rarity.valueOf(o.getString("rarity")),
+                Slot.valueOf(o.getString("slot")), englishName(o.getString("name")), Rarity.valueOf(o.getString("rarity")),
                 o.getInt("icon"), o.optInt("level", 1),
                 o.optInt("damage"), o.optInt("armor"), o.optInt("life"), o.optInt("crit"),
                 o.optInt("mana"), o.optInt("lifeSteal"), o.optInt("speed"),
@@ -140,13 +140,53 @@ class Item(
     }
 }
 
+/** Item names from saves made while the game was in Danish, translated when loaded. */
+private val legacyNames = mapOf(
+    "Mjølner" to "Mjölnir", "Dainsleif" to "Dáinsleif", "Svalins Skjold" to "Svalin's Shield", "Asgårds Mur" to "Wall of Asgard",
+    "Odins Øje" to "Odin's Eye", "Tordenhjelmen" to "The Thunder Helm", "Ymers Hud" to "Ymir's Hide", "Fafners Skæl" to "Fafnir's Scales",
+    "Tyrs Greb" to "Tyr's Grip", "Jarngreipr" to "Járngreipr", "Sleipners Spor" to "Sleipnir's Stride", "Vidars Sko" to "Vidar's Shoes",
+    "Brisingamen" to "Brísingamen", "Nornernes Tråd" to "Thread of the Norns", "Draupner" to "Draupnir", "Ragnarok" to "Ragnarök",
+    "Surts Flammesværd" to "Surtr's Flaming Sword", "Yggdrasils Bark" to "Bark of Yggdrasil", "Allfaders Krone" to "Crown of the Allfather",
+    "Jormungandrs Skæl" to "Scales of Jörmungandr", "Fenrirs Lænke" to "Fenrir's Chain", "Bifrosts Skridt" to "Bifröst Stride",
+    "Mimers Kilde" to "Mimir's Well", "Evighedens Ring" to "Ring of Eternity", "Rustent sværd" to "Rusty Sword",
+    "Gammelt rundskjold" to "Old Round Shield",
+)
+private val legacyWords = mapOf(
+    "sværd" to "Sword", "bredsværd" to "Broadsword", "økse" to "Axe", "stridsøkse" to "Battle Axe", "stridshammer" to "Warhammer",
+    "morgenstjerne" to "Morning Star", "dolk" to "Dagger", "kniv" to "Kris", "spyd" to "Spear", "hellebard" to "Halberd",
+    "stav" to "Staff", "troldmandsstav" to "Wizard Staff", "rundskjold" to "Round Shield", "tårnskjold" to "Tower Shield",
+    "buckler" to "Buckler", "hjelm" to "Helm", "stormhjelm" to "Great Helm", "hætte" to "Hood", "læderhætte" to "Leather Cap",
+    "ringbrynje" to "Chainmail", "pladerustning" to "Plate Armor", "læderbrynje" to "Leather Armor", "jægerdragt" to "Hunter's Garb",
+    "handsker" to "Gloves", "jernhandsker" to "Gauntlets", "støvler" to "Boots", "jernstøvler" to "Iron Boots", "amulet" to "Amulet",
+    "talisman" to "Talisman", "ring" to "Ring", "runering" to "Rune Ring",
+    "Dragens" to "Dragon", "Skyggernes" to "Shadow", "Kongens" to "Kingly", "Ulvens" to "Wolf", "Stormens" to "Storm",
+    "Blodets" to "Blood", "Ravnens" to "Raven", "Isens" to "Frost", "Ildens" to "Ember", "Jættens" to "Giant",
+)
+private val legacySuffixes = mapOf(
+    "af Asgård" to "of Asgard", "af Nordlyset" to "of the Northern Lights", "af Midgård" to "of Midgard", "fra Udgård" to "of Utgard",
+    "af Valhal" to "of Valhalla", "fra Niflheim" to "of Niflheim", "af Muspelheim" to "of Muspelheim",
+)
+
+fun englishName(name: String): String {
+    legacyNames[name]?.let { return it }
+    var rest = name
+    var suffix = ""
+    for ((da, en) in legacySuffixes) if (rest.endsWith(" $da")) {
+        rest = rest.removeSuffix(" $da")
+        suffix = " $en"
+    }
+    val words = rest.split(" ")
+    if (words.none { it in legacyWords }) return name
+    return words.joinToString(" ") { legacyWords[it] ?: it } + suffix
+}
+
 // ---------------------------------------------------------------- skills
 
 enum class Skill(val label: String, val icon: String, val mana: Float, val cooldown: Float, val color: Color, val describe: (Int) -> String) {
-    FIREBALL("Ildkugle", "🔥", 12f, 0.35f, Color(0xFFFF7A1A), { l -> "Kaster en eksploderende ildkugle. ${160 + (l - 1) * 40}% skade." }),
-    WHIRL("Hvirvelslag", "🌀", 20f, 1.0f, Color(0xFF90CAF9), { l -> "Svinger våbnet hele vejen rundt. ${130 + (l - 1) * 30}% skade." }),
-    NOVA("Frostnova", "❄️", 25f, 6f, Color(0xFF80DEEA), { l -> "Fryser alle fjender tæt på i ${"%.1f".format(2f + l * 0.5f)} sek. ${100 + (l - 1) * 25}% skade." }),
-    CHAIN("Kædelyn", "⚡", 16f, 0.7f, Color(0xFF9FE7FF), { l -> "Et lyn springer mellem op til ${2 + l} fjender. ${110 + (l - 1) * 30}% skade." }),
+    FIREBALL("Fireball", "🔥", 12f, 0.35f, Color(0xFFFF7A1A), { l -> "Hurls an exploding ball of fire. ${160 + (l - 1) * 40}% damage." }),
+    WHIRL("Whirlwind", "🌀", 20f, 1.0f, Color(0xFF90CAF9), { l -> "Swing your weapon all the way around. ${130 + (l - 1) * 30}% damage." }),
+    NOVA("Frost Nova", "❄️", 25f, 6f, Color(0xFF80DEEA), { l -> "Freezes every nearby enemy for ${"%.1f".format(2f + l * 0.5f)} s. ${100 + (l - 1) * 25}% damage." }),
+    CHAIN("Chain Lightning", "⚡", 16f, 0.7f, Color(0xFF9FE7FF), { l -> "A bolt leaps between up to ${2 + l} enemies. ${110 + (l - 1) * 30}% damage." }),
 }
 
 /** An expanding shockwave ring on the ground. */
@@ -160,9 +200,9 @@ class Bolt(val x1: Float, val y1: Float, val x2: Float, val y2: Float, val seed:
 }
 
 enum class Buff(val label: String, val color: Color) {
-    MIGHT("Styrke: +50% skade", Color(0xFFFF7043)),
-    SWIFT("Hurtighed: +35% fart", Color(0xFF81C784)),
-    WARD("Beskyttelse: −40% skade", Color(0xFF64B5F6)),
+    MIGHT("Might: +50% damage", Color(0xFFFF7043)),
+    SWIFT("Haste: +35% speed", Color(0xFF81C784)),
+    WARD("Ward: −40% damage taken", Color(0xFF64B5F6)),
 }
 
 // ---------------------------------------------------------------- bodies
@@ -231,6 +271,7 @@ class Player : Body {
 
 enum class EnemyType(
     val label: String,
+    val plural: String,
     val hp: Int,
     val dmg: Int,
     val speed: Float,
@@ -243,34 +284,34 @@ enum class EnemyType(
     val boss: Boolean = false,
     val ranged: Boolean = false,
 ) {
-    SLIME("Slim", 22, 6, 1.1f, 0.3f, 8, 0.85f, 0.45f, 1.1f, 5f),
-    BAT("Flagermus", 14, 4, 2.8f, 0.24f, 7, 0.75f, 0.25f, 0.9f, 6f),
-    SKELETON("Skelet", 32, 8, 1.7f, 0.3f, 12, 1.0f, 0.45f, 1.2f, 6f),
-    SPIDER("Edderkop", 26, 7, 2.3f, 0.32f, 11, 0.9f, 0.35f, 1.0f, 6f),
-    CULTIST("Kultist", 28, 9, 1.5f, 0.3f, 16, 5.5f, 0.6f, 2.2f, 7f, ranged = true),
-    BRUTE("Ork-brute", 85, 16, 1.25f, 0.42f, 30, 1.2f, 0.7f, 1.8f, 6f),
-    WOLF("Ulv", 30, 7, 2.7f, 0.3f, 10, 0.95f, 0.3f, 1.0f, 7f),
-    BANDIT("Bandit", 38, 9, 2.0f, 0.3f, 14, 1.0f, 0.4f, 1.1f, 7f),
-    GHOST("Genfærd", 30, 9, 1.9f, 0.3f, 15, 1.0f, 0.45f, 1.2f, 7f),
-    IMP("Imp", 24, 8, 2.4f, 0.25f, 14, 5.0f, 0.5f, 1.8f, 7f, ranged = true),
-    GOBLIN("Goblin", 26, 7, 2.9f, 0.26f, 12, 0.9f, 0.3f, 0.9f, 7f),
-    TROLL("Skovtrolden", 950, 26, 1.4f, 0.6f, 420, 1.7f, 0.75f, 1.7f, 8f, boss = true),
-    SKELETON_KING("Knoglekongen", 520, 22, 1.6f, 0.5f, 260, 1.4f, 0.6f, 1.4f, 8f, boss = true),
-    SPIDER_QUEEN("Edderkoppedronningen", 700, 24, 1.8f, 0.6f, 360, 1.4f, 0.5f, 1.3f, 8f, boss = true),
-    DEMON_LORD("Dæmonherren", 900, 28, 1.5f, 0.7f, 480, 1.6f, 0.6f, 1.4f, 9f, boss = true),
-    SHADOW_KING("Skyggekongen", 1300, 34, 1.7f, 0.75f, 900, 1.7f, 0.55f, 1.3f, 10f, boss = true),
+    SLIME("Slime", "slimes", 22, 6, 1.1f, 0.3f, 8, 0.85f, 0.45f, 1.1f, 5f),
+    BAT("Bat", "bats", 14, 4, 2.8f, 0.24f, 7, 0.75f, 0.25f, 0.9f, 6f),
+    SKELETON("Skeleton", "skeletons", 32, 8, 1.7f, 0.3f, 12, 1.0f, 0.45f, 1.2f, 6f),
+    SPIDER("Spider", "spiders", 26, 7, 2.3f, 0.32f, 11, 0.9f, 0.35f, 1.0f, 6f),
+    CULTIST("Cultist", "cultists", 28, 9, 1.5f, 0.3f, 16, 5.5f, 0.6f, 2.2f, 7f, ranged = true),
+    BRUTE("Orc Brute", "orc brutes", 85, 16, 1.25f, 0.42f, 30, 1.2f, 0.7f, 1.8f, 6f),
+    WOLF("Wolf", "wolves", 30, 7, 2.7f, 0.3f, 10, 0.95f, 0.3f, 1.0f, 7f),
+    BANDIT("Bandit", "bandits", 38, 9, 2.0f, 0.3f, 14, 1.0f, 0.4f, 1.1f, 7f),
+    GHOST("Wraith", "wraiths", 30, 9, 1.9f, 0.3f, 15, 1.0f, 0.45f, 1.2f, 7f),
+    IMP("Imp", "imps", 24, 8, 2.4f, 0.25f, 14, 5.0f, 0.5f, 1.8f, 7f, ranged = true),
+    GOBLIN("Goblin", "goblins", 26, 7, 2.9f, 0.26f, 12, 0.9f, 0.3f, 0.9f, 7f),
+    TROLL("The Forest Troll", "forest trolls", 950, 26, 1.4f, 0.6f, 420, 1.7f, 0.75f, 1.7f, 8f, boss = true),
+    SKELETON_KING("The Skeleton King", "skeleton kings", 520, 22, 1.6f, 0.5f, 260, 1.4f, 0.6f, 1.4f, 8f, boss = true),
+    SPIDER_QUEEN("The Spider Queen", "spider queens", 700, 24, 1.8f, 0.6f, 360, 1.4f, 0.5f, 1.3f, 8f, boss = true),
+    DEMON_LORD("The Demon Lord", "demon lords", 900, 28, 1.5f, 0.7f, 480, 1.6f, 0.6f, 1.4f, 9f, boss = true),
+    SHADOW_KING("The Shadow King", "shadow kings", 1300, 34, 1.7f, 0.75f, 900, 1.7f, 0.55f, 1.3f, 10f, boss = true),
 }
 
 const val HEART_LIFE = 20f
 
 /** Champion modifiers, Diablo style: every elite rolls one or more. */
 enum class Affix(val label: String, val color: Color) {
-    FAST("Lynhurtig", Color(0xFF9CCC65)),
-    BURNING("Brændende", Color(0xFFFF7043)),
-    FROST("Isnende", Color(0xFF80D8FF)),
-    VAMPIRIC("Vampyrisk", Color(0xFFFF1744)),
-    SHIELDED("Skjoldet", Color(0xFFFFD54F)),
-    TELEPORT("Teleporterende", Color(0xFFB388FF)),
+    FAST("Fast", Color(0xFF9CCC65)),
+    BURNING("Burning", Color(0xFFFF7043)),
+    FROST("Frozen", Color(0xFF80D8FF)),
+    VAMPIRIC("Vampiric", Color(0xFFFF1744)),
+    SHIELDED("Shielding", Color(0xFFFFD54F)),
+    TELEPORT("Teleporter", Color(0xFFB388FF)),
 }
 
 class Enemy(
@@ -312,7 +353,7 @@ class Enemy(
     var blinkCd = 4f + Random.nextFloat() * 2f
     /** Burning champions erupt in flames when this reaches zero (the last 0.8 s are telegraphed). */
     var burnCd = 3f + Random.nextFloat() * 2f
-    val name: String get() = title ?: if (elite) "Champion ${type.label.lowercase()}" else type.label
+    val name: String get() = title ?: if (elite) "Champion ${type.label.removePrefix("The ")}" else type.label
     val affixText: String get() = affixes.joinToString(" · ") { it.label }
 }
 
@@ -392,7 +433,7 @@ enum class PropType(
 class Building(val sprite: Int, val x: Int, val y: Int, val w: Int, val h: Int, val light: Long = 0, val lightX: Float = 0.5f, val lightY: Float = 0.5f)
 
 enum class NpcKind(val title: String) {
-    SMITH("Smeden"), ELDER("Den Ældste"), VILLAGER_F("Landsbykvinde"), VILLAGER_M("Bonde"),
+    SMITH("The Blacksmith"), ELDER("The Elder"), VILLAGER_F("Villager"), VILLAGER_M("Farmer"),
 }
 
 class Npc(val kind: NpcKind, override var x: Float, override var y: Float) : Body {

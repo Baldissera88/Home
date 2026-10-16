@@ -599,7 +599,7 @@ private fun DrawScope.drawMerchant(g: Game, cam: Camera, a: Assets, measurer: Te
     drawSprite(a.merchant, (g.time * 2f).toInt() % 4, 0, cx, cy, t, scale = CHAR_SCALE)
     val c = Offset(cx + t * 0.24f, cy - t * 0.5f)
     drawCircle(Brush.radialGradient(listOf(Color(0x66FFB74D), Color.Transparent), c, t * 0.8f), t * 0.8f, c)
-    val label = measurer.measure("Købmanden", styles.label.copy(color = GOLD))
+    val label = measurer.measure("Merchant", styles.label.copy(color = GOLD))
     drawText(label, topLeft = Offset(cx - label.size.width / 2f, cy - t * 1.35f))
 }
 

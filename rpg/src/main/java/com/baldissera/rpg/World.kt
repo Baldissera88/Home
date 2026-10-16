@@ -33,10 +33,10 @@ enum class Biome(
     val darknessAlpha: Float,
     val torchChance: Float,
 ) {
-    OVERWORLD("Landet", "camp", Color(0xFF040A1C), 0.7f, 0f),
-    CRYPT("Krypten", "crypt", Color(0xFF020104), 0.88f, 0.12f),
-    CAVE("Hulerne", "cave", Color(0xFF010303), 0.88f, 0.08f),
-    HELL("Helvede", "hell", Color(0xFF1C0400), 0.8f, 0.08f),
+    OVERWORLD("The Wilds", "camp", Color(0xFF040A1C), 0.7f, 0f),
+    CRYPT("The Crypt", "crypt", Color(0xFF020104), 0.88f, 0.12f),
+    CAVE("The Caves", "cave", Color(0xFF010303), 0.88f, 0.08f),
+    HELL("Hell", "hell", Color(0xFF1C0400), 0.8f, 0.08f),
     ;
 
     companion object {
@@ -51,9 +51,9 @@ enum class Biome(
 
 /** A dungeon entrance in the overworld. [quest] is the number of story bosses needed to enter. */
 enum class Region(val title: String, val firstFloor: Int, val quest: Int, val sprite: Int, val lockText: String) {
-    CRYPT("Krypten", 1, 0, 10, ""),
-    CAVE("Hulerne", 4, 1, 11, "Besejr Knoglekongen i Krypten først"),
-    HELL("Helvedes port", 7, 2, 12, "Besejr Edderkoppedronningen i Hulerne først"),
+    CRYPT("The Crypt", 1, 0, 10, ""),
+    CAVE("The Caves", 4, 1, 11, "Defeat the Skeleton King in the Crypt first"),
+    HELL("The Gate of Hell", 7, 2, 12, "Defeat the Spider Queen in the Caves first"),
 }
 
 class Entrance(val x: Int, val y: Int, val region: Region)
