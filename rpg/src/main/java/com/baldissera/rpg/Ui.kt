@@ -736,11 +736,12 @@ private fun QuestScreen(game: Game, onClose: () -> Unit) {
 private fun StashGrid(game: Game, assets: Assets, title: String, items: List<Item>, capacity: Int, selected: Item?, onSelect: (Item?) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("$title  ${items.size}/$capacity", color = GOLD, fontSize = 14.sp, style = serifBold)
+        // Eight 32 dp slots with 3 dp gaps fit the 300 dp panel on the narrowest phones.
         for (row in 0 until (capacity + 7) / 8) {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                 for (c in 0 until 8) {
                     val item = items.getOrNull(row * 8 + c)
-                    ItemIcon(item, assets, 36.dp, selected = item != null && item === selected,
+                    ItemIcon(item, assets, 32.dp, selected = item != null && item === selected,
                         upgrade = item != null && game.isUpgrade(item)) { onSelect(item) }
                 }
             }
