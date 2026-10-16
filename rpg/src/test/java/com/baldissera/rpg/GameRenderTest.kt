@@ -192,7 +192,7 @@ class GameRenderTest {
             g.player.x = crystal.x + 1.2f
             g.player.y = crystal.y + 1.5f
         }
-        g.loot += Loot(g.player.x - 1.2f, g.player.y - 0.6f, LootKind.Shard("test"))
+        g.loot += Loot(g.player.x - 2.8f, g.player.y - 0.4f, LootKind.Shard("test"))
         step(g, 30)
         render(g, a, "13_cave_grotto")
 

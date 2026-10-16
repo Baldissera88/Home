@@ -661,15 +661,17 @@ def wall_skirt(seed, dark, light, ember=0.0, variant=0, w=128, h=64):
     base = h * 0.62
     rocks = []
     edge = np.random.default_rng(seed)
-    rocks.append((edge.uniform(-4, 4), base + edge.uniform(-2, 6), edge.uniform(10, 15), edge.uniform(6, 10), edge.random()))
-    rocks.append((edge.uniform(-8, 8), base + edge.uniform(4, 12), edge.uniform(3, 5), edge.uniform(2, 4), edge.random()))
+    # Small rocks across the tile edge, shared by all variants.
+    rocks.append((edge.uniform(-3, 3), base + edge.uniform(2, 8), edge.uniform(5, 8), edge.uniform(4, 6), edge.random()))
     r = np.random.default_rng(seed + 97 * (variant + 1))
-    for _ in range(int(r.integers(3, 6))):
-        rx = r.uniform(8, 16)
-        rocks.append((r.uniform(18 + rx, 110 - rx), base + r.uniform(-4, 8), rx, r.uniform(6, 11), r.random()))
-    for _ in range(int(r.integers(10, 18))):
-        rx = r.uniform(2.5, 6)
-        rocks.append((r.uniform(18 + rx, 110 - rx), base + r.uniform(0, 16), rx, r.uniform(2, 4.5), r.random()))
+    # Variants differ in how much has fallen: a big heap, a few boulders, scattered stones, almost nothing.
+    density = [1.0, 0.6, 0.35, 0.15][variant % 4]
+    for _ in range(int(round(1 + 3 * density))):
+        rx = r.uniform(12, 24) * (0.6 + 0.4 * density)
+        rocks.append((r.uniform(12 + rx * 0.6, 116 - rx * 0.6), base + r.uniform(-6, 10), rx, rx * r.uniform(0.55, 0.8), r.random()))
+    for _ in range(int(4 + 14 * density)):
+        rx = r.uniform(2.5, 7)
+        rocks.append((r.uniform(10, 118), base + r.uniform(-2, 20), rx, rx * r.uniform(0.6, 0.85), r.random()))
     rough = fbm(w, h, 24, 3, seed + 7)
     for cx, cy, rx, ry, tone_k in rocks:
         dx = (xx - cx + w / 2) % w - w / 2
