@@ -129,9 +129,9 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     var bounty: Bounty? = null
         private set
     var explored = BooleanArray(dungeon.w * dungeon.h)
+        private set
     /** Bumped whenever new tiles are revealed, so the map image is only rebuilt when it changes. */
     var exploredVersion = 0
-        private set
         private set
     var floor = 0
         private set
