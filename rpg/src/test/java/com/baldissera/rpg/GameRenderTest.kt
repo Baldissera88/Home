@@ -38,6 +38,10 @@ class GameRenderTest {
     private val ctx: Context = ApplicationProvider.getApplicationContext()
     private val outDir = File("build/screens").apply { mkdirs() }
 
+    init {
+        Terrain.synchronous = true
+    }
+
     private fun newGame(cls: HeroClass = HeroClass.KNIGHT): Game {
         val prefs = ctx.getSharedPreferences("test${System.nanoTime()}", Context.MODE_PRIVATE)
         return Game(Sfx(ctx), prefs).also { it.newGame(cls) }
@@ -62,10 +66,7 @@ class GameRenderTest {
         )
         val scope = CanvasDrawScope()
         val size = Size(w.toFloat(), h.toFloat())
-        scope.draw(density, LayoutDirection.Ltr, canvas, size) { drawWorld(g, a, measurer, styles) }
-        canvas.saveLayer(Rect(0f, 0f, w.toFloat(), h.toFloat()), Paint())
-        scope.draw(density, LayoutDirection.Ltr, canvas, size) { drawLighting(g) }
-        canvas.restore()
+        scope.draw(density, LayoutDirection.Ltr, canvas, size) { drawScene(g, a, measurer, styles) }
         val small = Bitmap.createScaledBitmap(image.asAndroidBitmap(), w * 3 / 4, h * 3 / 4, true)
         FileOutputStream(File(outDir, "$name.jpg")).use { small.compress(Bitmap.CompressFormat.JPEG, 70, it) }
     }

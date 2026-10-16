@@ -10,10 +10,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.lerp
@@ -120,9 +122,32 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
     val y0 = max(0, floorInt(cam.oy / t) - 1)
     val y1 = min(d.h - 1, floorInt((cam.oy + size.height) / t) + 2)
 
-    // Floor: dungeon flagstones, or grass, paths, sand and water outside.
+    // Floor: dungeon flagstones, or baked overworld terrain over animated water.
     val floorImg = a.floor(d.biome)
     val ground = d.ground
+    val tmap = if (ground != null) a.terrain.map(d) else null
+    // Chunks still baking in the background are drawn tile by tile in the meantime.
+    var missing: MutableList<Int>? = null
+    if (tmap != null) {
+        drawWaterSurface(g, a, cam, tmap, x0, x1, y0, y1)
+        val cx0 = x0 / TERRAIN_CHUNK
+        val cx1 = x1 / TERRAIN_CHUNK
+        val cy0 = y0 / TERRAIN_CHUNK
+        val cy1 = y1 / TERRAIN_CHUNK
+        for (cy in cy0..cy1) for (cx in cx0..cx1) {
+            val img = a.terrain.chunk(d, cx, cy)
+            if (img == null) {
+                (missing ?: mutableListOf<Int>().also { missing = it }) += cy * 4096 + cx
+                continue
+            }
+            val l = cam.px((cx * TERRAIN_CHUNK).toFloat())
+            val tp = cam.py((cy * TERRAIN_CHUNK).toFloat())
+            val r = cam.px(((cx + 1) * TERRAIN_CHUNK).toFloat())
+            val b = cam.py(((cy + 1) * TERRAIN_CHUNK).toFloat())
+            drawImage(img, IntOffset.Zero, IntSize(CHUNK_PX, CHUNK_PX), IntOffset(l, tp), IntSize(r - l, b - tp), filterQuality = FilterQuality.Medium)
+        }
+        a.terrain.endFrame(d, cx0, cy0, cx1, cy1)
+    }
     val waterFrame = (g.time * 1.2f).toInt() % 2
     for (y in y0..y1) for (x in x0..x1) {
         val tile = d.tile(x, y)
@@ -131,7 +156,9 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
         val tp = cam.py(y.toFloat())
         val sz = IntSize(cam.px(x + 1f) - l, cam.py(y + 1f) - tp)
         val i = y * d.w + x
+        val legacy = tmap == null || missing?.contains((y / TERRAIN_CHUNK) * 4096 + x / TERRAIN_CHUNK) == true
         if (tile == WATER) {
+            if (!legacy) continue
             drawImage(a.water, IntOffset(waterFrame * 128, 0), IntSize(128, 128), IntOffset(l, tp), sz, filterQuality = FilterQuality.Medium)
             if (d.tile(x, y - 1) != WATER) {
                 drawRect(
@@ -140,31 +167,19 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
                 )
             }
             if (ground != null) drawEdges(a, x, y, l, tp, sz, 2) { cx, cy -> d.tile(cx, cy) != WATER }
-            // Sun glints twinkling on open water.
-            if (g.inWorld && g.daylight > 0.3f) {
-                val h = cellHash(x, y)
-                for (k in 0..1) {
-                    val ph = sin(g.time * 2.2f + (h ushr (k * 8) and 255) * 0.05f)
-                    if (ph > 0.6f) {
-                        val gx = l + ((h ushr (k * 5)) and 127) / 127f * sz.width
-                        val gy = tp + ((h ushr (k * 7 + 3)) and 127) / 127f * sz.height
-                        val k2 = (ph - 0.6f) / 0.4f * g.daylight
-                        drawLine(Color.White.copy(alpha = 0.8f * k2), Offset(gx - t * 0.06f, gy), Offset(gx + t * 0.06f, gy), strokeWidth = t * 0.018f)
-                        drawLine(Color.White.copy(alpha = 0.5f * k2), Offset(gx, gy - t * 0.03f), Offset(gx, gy + t * 0.03f), strokeWidth = t * 0.012f)
-                    }
-                }
-            }
             continue
         }
-        if (ground != null) {
-            drawImage(a.ground, IntOffset(ground[i] * 128, 0), IntSize(128, 128), IntOffset(l, tp), sz, filterQuality = FilterQuality.Medium)
-            if (!grassy(d, x, y)) drawEdges(a, x, y, l, tp, sz, 0) { cx, cy -> grassy(d, cx, cy) }
-        } else {
-            // Dungeon floors are one large texture covering 4x4 tiles, sampled by position.
-            drawImage(floorImg, IntOffset((x and 3) * 128, (y and 3) * 128), IntSize(128, 128), IntOffset(l, tp), sz, filterQuality = FilterQuality.Medium)
-        }
-        if (tile == TREE || tile == ROCK) {
-            drawOval(Color.Black.copy(alpha = 0.35f), Offset(l + t * 0.08f, tp + t * 0.5f), Size(t * 0.84f, t * 0.42f))
+        if (legacy) {
+            if (ground != null) {
+                drawImage(a.ground, IntOffset(ground[i] * 128, 0), IntSize(128, 128), IntOffset(l, tp), sz, filterQuality = FilterQuality.Medium)
+                if (!grassy(d, x, y)) drawEdges(a, x, y, l, tp, sz, 0) { cx, cy -> grassy(d, cx, cy) }
+            } else {
+                // Dungeon floors are one large texture covering 4x4 tiles, sampled by position.
+                drawImage(floorImg, IntOffset((x and 3) * 128, (y and 3) * 128), IntSize(128, 128), IntOffset(l, tp), sz, filterQuality = FilterQuality.Medium)
+            }
+            if (tile == TREE || tile == ROCK) {
+                drawOval(Color.Black.copy(alpha = 0.35f), Offset(l + t * 0.08f, tp + t * 0.5f), Size(t * 0.84f, t * 0.42f))
+            }
         }
         if (tile == STAIRS) drawStairs(l.toFloat(), tp.toFloat(), t, g.time)
         if (d.tile(x, y - 1) == WALL) {
@@ -817,6 +832,17 @@ fun DrawScope.drawIcon(a: Assets, icon: Int, cx: Float, cy: Float, size: Float, 
     )
 }
 
+// ---------------------------------------------------------------- scene
+
+/** The world with its lighting on top: everything below the HUD. */
+fun DrawScope.drawScene(g: Game, a: Assets, measurer: TextMeasurer, styles: TextStyles) {
+    drawWorld(g, a, measurer, styles)
+    // Darkness and its light holes need a layer of their own, or the holes would erase the world below.
+    drawIntoCanvas { it.saveLayer(Rect(Offset.Zero, size), Paint()) }
+    drawLighting(g)
+    drawIntoCanvas { it.restore() }
+}
+
 // ---------------------------------------------------------------- lighting
 
 /** Darkness with light holes punched out; drawn into an offscreen layer. */
@@ -985,6 +1011,50 @@ private fun heartPath(c: Offset, s: Float) = Path().apply {
     cubicTo(c.x - s * 1.35f, c.y + s * 0.05f, c.x - s * 0.95f, c.y - s * 1.05f, c.x, c.y - s * 0.42f)
     cubicTo(c.x + s * 0.95f, c.y - s * 1.05f, c.x + s * 1.35f, c.y + s * 0.05f, c.x, c.y + s * 0.9f)
     close()
+}
+
+// ---------------------------------------------------------------- water
+
+/** Deep water with two layers of drifting ripples, drawn under the terrain wherever water shows through. */
+private fun DrawScope.drawWaterSurface(g: Game, a: Assets, cam: Camera, m: TerrainMap, x0: Int, x1: Int, y0: Int, y1: Int) {
+    val ws = a.waterShaders
+    ws.update(cam.ox, cam.oy, cam.t, g.time)
+    val t = cam.t
+    for (y in y0..y1) {
+        var x = x0
+        while (x <= x1) {
+            if (!m.wet[y * m.w + x]) {
+                x++
+                continue
+            }
+            var e = x
+            while (e + 1 <= x1 && m.wet[y * m.w + e + 1]) e++
+            val tl = Offset(cam.px(x.toFloat()).toFloat(), cam.py(y.toFloat()).toFloat())
+            val sz = Size(cam.px(e + 1f) - tl.x, cam.py(y + 1f) - tl.y)
+            drawRect(ws.base, tl, sz)
+            drawRect(ws.ripplesA, tl, sz, alpha = 0.5f)
+            drawRect(ws.ripplesB, tl, sz, alpha = 0.32f)
+            x = e + 1
+        }
+    }
+    // Sun glints twinkling on open water.
+    if (g.daylight <= 0.3f) return
+    for (y in y0..y1) for (x in x0..x1) {
+        if (m.d.tile(x, y) != WATER) continue
+        val l = cam.px(x.toFloat())
+        val tp = cam.py(y.toFloat())
+        val h = cellHash(x, y)
+        for (k in 0..1) {
+            val ph = sin(g.time * 2.2f + (h ushr (k * 8) and 255) * 0.05f)
+            if (ph > 0.6f) {
+                val gx = l + ((h ushr (k * 5)) and 127) / 127f * t
+                val gy = tp + ((h ushr (k * 7 + 3)) and 127) / 127f * t
+                val k2 = (ph - 0.6f) / 0.4f * g.daylight
+                drawLine(Color.White.copy(alpha = 0.8f * k2), Offset(gx - t * 0.06f, gy), Offset(gx + t * 0.06f, gy), strokeWidth = t * 0.018f)
+                drawLine(Color.White.copy(alpha = 0.5f * k2), Offset(gx, gy - t * 0.03f), Offset(gx, gy + t * 0.03f), strokeWidth = t * 0.012f)
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------- ground transitions

@@ -69,6 +69,10 @@ class Assets(private val res: Resources) {
     val villagerF = SpriteSheet(load(R.drawable.spr_villager_f), 128, 1.7f, 0.86f, smooth = true)
     val villagerM = SpriteSheet(load(R.drawable.spr_villager_m), 128, 1.7f, 0.86f, smooth = true)
     val water = load(R.drawable.tex_water)
+    val terrain = Terrain(res)
+    val waterShaders by lazy {
+        WaterShaders(BitmapFactory.decodeResource(res, R.drawable.tex_water_base, opts), BitmapFactory.decodeResource(res, R.drawable.tex_water_ripples, opts))
+    }
     val skeleton = SpriteSheet(load(R.drawable.spr_skeleton), 128, 1.7f, 0.86f, smooth = true)
     val skelKing = SpriteSheet(load(R.drawable.spr_skelking), 144, 2.05f, 0.86f, smooth = true)
     val brute = SpriteSheet(load(R.drawable.spr_brute), 160, 2.3f, 0.86f, smooth = true)

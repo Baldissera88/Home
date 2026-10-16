@@ -132,14 +132,7 @@ fun RpgScreen(
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         Canvas(Modifier.fillMaxSize()) {
             frame.let { }
-            drawWorld(game, assets, measurer, styles)
-        }
-        Canvas(Modifier.fillMaxSize()) {
-            frame.let { }
-            // Darkness and its light holes need a layer of their own, or the holes would erase the world below.
-            drawIntoCanvas { it.saveLayer(Rect(Offset.Zero, size), Paint()) }
-            drawLighting(game)
-            drawIntoCanvas { it.restore() }
+            drawScene(game, assets, measurer, styles)
             if (game.fade > 0f) drawRect(Color.Black.copy(alpha = game.fade * game.fade))
         }
 

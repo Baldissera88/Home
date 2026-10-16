@@ -27,6 +27,10 @@ import java.util.concurrent.TimeUnit
 class UiScreenTest {
     private val outDir = File("build/screens").apply { mkdirs() }
 
+    init {
+        Terrain.synchronous = true
+    }
+
     private fun shoot(name: String, overlay: Int, setup: (Game) -> Unit = {}) {
         // Space frames like a real 60 Hz display so idling renders a handful of frames, not hundreds.
         ShadowChoreographer.setFrameDelay(Duration.ofMillis(16))
