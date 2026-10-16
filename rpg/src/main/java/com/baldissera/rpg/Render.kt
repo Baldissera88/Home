@@ -139,6 +139,20 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
                 )
             }
             if (ground != null) drawEdges(a, x, y, l, tp, sz, 2) { cx, cy -> d.tile(cx, cy) != WATER }
+            // Sun glints twinkling on open water.
+            if (g.inWorld && g.daylight > 0.3f) {
+                val h = cellHash(x, y)
+                for (k in 0..1) {
+                    val ph = sin(g.time * 2.2f + (h ushr (k * 8) and 255) * 0.05f)
+                    if (ph > 0.6f) {
+                        val gx = l + ((h ushr (k * 5)) and 127) / 127f * sz.width
+                        val gy = tp + ((h ushr (k * 7 + 3)) and 127) / 127f * sz.height
+                        val k2 = (ph - 0.6f) / 0.4f * g.daylight
+                        drawLine(Color.White.copy(alpha = 0.8f * k2), Offset(gx - t * 0.06f, gy), Offset(gx + t * 0.06f, gy), strokeWidth = t * 0.018f)
+                        drawLine(Color.White.copy(alpha = 0.5f * k2), Offset(gx, gy - t * 0.03f), Offset(gx, gy + t * 0.03f), strokeWidth = t * 0.012f)
+                    }
+                }
+            }
             continue
         }
         if (ground != null) {
@@ -276,6 +290,8 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
     }
 
     for (b in g.bolts) drawBolt(b, cam)
+    if (g.inWorld && g.daylight > 0.35f) drawButterflies(g, cam, x0, x1, y0, y1)
+    if (g.inWorld) drawCloudShadows(g, a, cam)
     drawLootLabels(lootLabels)
 
     drawFog(g, a, cam)
@@ -907,6 +923,68 @@ private fun DrawScope.drawBolt(b: Bolt, cam: Camera) {
 }
 
 private val LIGHTNING_GLOW = Color(0xFF9FE7FF)
+
+// ---------------------------------------------------------------- wildlife and sky
+
+private fun cellHash(x: Int, y: Int): Int {
+    var h = x * 73856093 xor y * 19349663
+    h = h xor (h ushr 13)
+    h *= 0x5bd1e995
+    return h xor (h ushr 15)
+}
+
+private val BUTTERFLY_COLORS = listOf(Color(0xFFFFF176), Color(0xFFFFFFFF), Color(0xFFFFB74D), Color(0xFF81D4FA), Color(0xFFCE93D8))
+
+/** Butterflies flutter over some of the flower meadows by day, each tied to its own patch. */
+private fun DrawScope.drawButterflies(g: Game, cam: Camera, x0: Int, x1: Int, y0: Int, y1: Int) {
+    val d = g.dungeon
+    val ground = d.ground ?: return
+    val t = cam.t
+    val fade = ((g.daylight - 0.35f) / 0.2f).coerceIn(0f, 1f)
+    for (y in y0..y1) for (x in x0..x1) {
+        if (ground[y * d.w + x] != Ground.FLOWERS) continue
+        val h = cellHash(x, y)
+        if ((h and 3) != 0) continue
+        val ph = (h ushr 4 and 1023) / 163f
+        val bx = x + 0.5f + sin(g.time * 0.7f + ph) * 0.9f + sin(g.time * 1.9f + ph * 2f) * 0.25f
+        val by = y + 0.5f + sin(g.time * 0.5f + ph * 1.3f) * 0.6f
+        val lift = t * (0.45f + 0.15f * sin(g.time * 3.1f + ph))
+        val c = Offset(cam.sx(bx), cam.sy(by) - lift)
+        val col = BUTTERFLY_COLORS[(h ushr 12) % BUTTERFLY_COLORS.size].copy(alpha = fade)
+        val flap = abs(sin(g.time * 16f + ph * 5f))
+        val w = t * 0.07f * (0.25f + 0.75f * flap)
+        drawOval(Color.Black.copy(alpha = 0.18f * fade), Offset(c.x - t * 0.05f, c.y + lift - t * 0.02f), Size(t * 0.1f, t * 0.04f))
+        drawOval(col, Offset(c.x - w, c.y - t * 0.04f), Size(w, t * 0.07f))
+        drawOval(col, Offset(c.x, c.y - t * 0.04f), Size(w, t * 0.07f))
+        drawLine(Color(0xFF3E2723).copy(alpha = fade), Offset(c.x, c.y - t * 0.035f), Offset(c.x, c.y + t * 0.03f), strokeWidth = t * 0.012f)
+    }
+}
+
+private val cloudShadow = ColorFilter.tint(Color(0xFF0A1A10), BlendMode.SrcIn)
+
+/** Soft shadows of clouds drifting slowly across the land by day. */
+private fun DrawScope.drawCloudShadows(g: Game, a: Assets, cam: Camera) {
+    val strength = ((g.daylight - 0.3f) / 0.4f).coerceIn(0f, 1f) * (1f - g.rain * 0.6f) * 0.28f
+    if (strength <= 0.01f) return
+    val t = cam.t
+    val span = t * 11f
+    val ox = cam.ox + g.time * t * 0.55f
+    val oy = cam.oy + g.time * t * 0.2f
+    val startX = -((ox % span) + span) % span
+    val startY = -((oy % span) + span) % span
+    var y = startY
+    while (y < size.height) {
+        var x = startX
+        while (x < size.width) {
+            drawImage(
+                a.fog, IntOffset(0, 0), IntSize(256, 256), IntOffset(x.roundToInt(), y.roundToInt()),
+                IntSize(span.roundToInt() + 1, span.roundToInt() + 1), alpha = strength, colorFilter = cloudShadow,
+            )
+            x += span
+        }
+        y += span
+    }
+}
 
 // ---------------------------------------------------------------- weather
 
