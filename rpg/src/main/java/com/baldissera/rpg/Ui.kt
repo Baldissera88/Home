@@ -42,7 +42,11 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -110,9 +114,12 @@ fun RpgScreen(
             frame.let { }
             drawWorld(game, assets, measurer, styles)
         }
-        Canvas(Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }) {
+        Canvas(Modifier.fillMaxSize()) {
             frame.let { }
+            // Darkness and its light holes need a layer of their own, or the holes would erase the world below.
+            drawIntoCanvas { it.saveLayer(Rect(Offset.Zero, size), Paint()) }
             drawLighting(game)
+            drawIntoCanvas { it.restore() }
         }
 
         hudTick.let { }
@@ -343,6 +350,12 @@ private fun Controls(game: Game, modifier: Modifier) {
             Modifier.align(Alignment.BottomStart).offset(x = 104.dp, y = (-142).dp).graphicsLayer { alpha = if (dodgeReady) 1f else 0.45f },
             onPress = { game.dodge() },
         )
+        ActionButton(
+            "🧪", Color(0xFFFF5370), 50.dp,
+            Modifier.align(Alignment.BottomStart).offset(x = 30.dp, y = (-150).dp),
+            sub = "${game.player.potions}",
+            onPress = { game.drinkPotion() },
+        )
         Box(Modifier.align(Alignment.BottomEnd).size(236.dp, 210.dp)) {
             val attackC = Offset(236f - 48f, 210f - 48f)
             ActionButton(
@@ -361,12 +374,6 @@ private fun Controls(game: Game, modifier: Modifier) {
                 val c = Offset(attackC.x + cos(a).toFloat() * 104f, attackC.y + sin(a).toFloat() * 104f)
                 SkillButton(game, s, Modifier.at(c, 58f))
             }
-            ActionButton(
-                "🧪", Color(0xFFFF5370), 50.dp,
-                Modifier.at(Offset(28f, 184f), 50f),
-                sub = "${game.player.potions}",
-                onPress = { game.drinkPotion() },
-            )
         }
     }
 }
@@ -881,7 +888,7 @@ private fun TitleScreen(game: Game, onContinue: () -> Unit, onNew: () -> Unit) {
             GothicButton("Nyt eventyr", onNew)
             Spacer(Modifier.height(6.dp))
             Text(
-                "Joystick: gå · ⚔️ hold for at angribe\n🔥 ildkugle · 🌀 hvirvelslag · ❄️ frostnova · 🧪 eliksir\n🎒 udstyr · ✨ færdigheder · 📜 opgaver · 🏕️ portal hjem",
+                "Joystick: gå · ⚔️ hold for at angribe · 💨 undvig\n🔥 ildkugle · 🌀 hvirvelslag · ❄️ frostnova · ⚡ kædelyn\n🧪 eliksir · 🎒 udstyr · ✨ færdigheder · 📜 opgaver · 🏕️ hjem",
                 color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp, textAlign = TextAlign.Center,
             )
         }
@@ -964,7 +971,19 @@ private fun MapScreen(game: Game, onClose: () -> Unit) {
                 drawCircle(Color.White, cell * 2.2f, Offset(game.player.x * cell, game.player.y * cell))
                 drawCircle(GOLD, cell * 1.5f, Offset(game.player.x * cell, game.player.y * cell))
             }
-            Text("● dig   ● indgang/trappe   ● kiste   ● helligdom   ● boss", color = parchment.copy(alpha = 0.7f), fontSize = 12.sp)
+            Text(
+                buildAnnotatedString {
+                    for ((label, color) in listOf(
+                        "dig" to GOLD, "indgang/trappe" to Color(0xFF4FC3F7), "kiste" to GOLD,
+                        "helligdom" to Color(0xFF00E5FF), "boss" to Color(0xFFFF1744),
+                    )) {
+                        withStyle(SpanStyle(color = color)) { append("● ") }
+                        append(label)
+                        append("   ")
+                    }
+                },
+                color = parchment.copy(alpha = 0.7f), fontSize = 12.sp,
+            )
             Text("Tryk for at lukke", color = Color.Gray, fontSize = 12.sp)
         }
     }
