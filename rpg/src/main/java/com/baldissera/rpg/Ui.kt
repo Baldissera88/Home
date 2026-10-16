@@ -209,7 +209,7 @@ private fun Hud(game: Game, assets: Assets, onOpen: (Overlay) -> Unit) {
                             .background(Brush.horizontalGradient(listOf(Color(0xFF7C4DFF), Color(0xFFB388FF))), RoundedCornerShape(3.dp))
                     )
                 }
-                Text("🪙 ${p.gold}", color = GOLD, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp), style = TextStyle(shadow = textShadow))
+                Text("💰 ${p.gold}", color = GOLD, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp), style = TextStyle(shadow = textShadow))
                 p.buff?.let {
                     Text("${it.label} (${p.buffTime.toInt()}s)", color = it.color, fontSize = 11.sp, style = TextStyle(shadow = textShadow))
                 }
@@ -300,7 +300,7 @@ private fun Orb(fraction: Float, color: Color, label: String) {
 @Composable
 private fun Minimap(game: Game) {
     Canvas(
-        Modifier.size(104.dp).background(panel, RoundedCornerShape(8.dp)).border(1.dp, bronze, RoundedCornerShape(8.dp)).padding(4.dp)
+        Modifier.size(104.dp).background(Color(0xEB100C0A), RoundedCornerShape(8.dp)).border(1.dp, bronze, RoundedCornerShape(8.dp)).padding(4.dp)
     ) {
         val d = game.dungeon
         val cell = size.width / max(d.w, d.h)
@@ -621,7 +621,7 @@ private fun InventoryScreen(game: Game, assets: Assets, tick: Int, onClose: () -
             if (!isEquipped) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GothicButton("Tag på", { game.equip(item); selected = item }, wide = false)
-                    GothicButton("Sælg (${item.sellPrice} 🪙)", { game.sell(item); selected = null }, wide = false)
+                    GothicButton("Sælg (${item.sellPrice} 💰)", { game.sell(item); selected = null }, wide = false)
                 }
             }
         }
@@ -787,7 +787,7 @@ private fun ShopScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Uni
     refresh.let { }
     DarkPanel("Købmanden", onClose) {
         Text("\"Hvad må det være, eventyrer?\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp)
-        Text("Du har 🪙 ${p.gold}", color = GOLD, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Text("Du har 💰 ${p.gold}", color = GOLD, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             GothicButton("Køb", { tab = 0 }, wide = false, enabled = tab != 0)
             GothicButton("Sælg", { tab = 1 }, wide = false, enabled = tab != 1)
@@ -798,7 +798,7 @@ private fun ShopScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Uni
                 "Køb en ukendt genstand. Måske skrald… måske legendarisk!",
                 color = parchment.copy(alpha = 0.8f), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.width(300.dp),
             )
-            Text("Pris: ${game.gamblePrice()} 🪙 pr. genstand", color = GOLD, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text("Pris: ${game.gamblePrice()} 💰 pr. genstand", color = GOLD, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             for (row in Slot.entries.chunked(2)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (slot in row) {
@@ -818,17 +818,17 @@ private fun ShopScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Uni
                 }
             }
         } else if (tab == 0) {
-            ShopRow(assets, null, "Livseliksir", "Helbreder halvdelen af dit liv", "${game.potionPrice} 🪙", p.gold >= game.potionPrice) {
+            ShopRow(assets, null, "Livseliksir", "Helbreder halvdelen af dit liv", "${game.potionPrice} 💰", p.gold >= game.potionPrice) {
                 game.buyPotion(); refresh++
             }
             for (item in game.stock.toList()) {
-                ShopRow(assets, item, item.name, item.statLine(), "${item.buyPrice} 🪙", p.gold >= item.buyPrice && p.inventory.size < INVENTORY_SIZE,
+                ShopRow(assets, item, item.name, item.statLine(), "${item.buyPrice} 💰", p.gold >= item.buyPrice && p.inventory.size < INVENTORY_SIZE,
                     upgrade = game.isUpgrade(item)) { game.buy(item); refresh++ }
             }
         } else {
             if (p.inventory.isEmpty()) Text("Din taske er tom", color = Color.Gray, fontSize = 13.sp)
             for (item in p.inventory.toList()) {
-                ShopRow(assets, item, item.name, item.statLine(), "+${item.sellPrice} 🪙", true, upgrade = game.isUpgrade(item), action = "Sælg") {
+                ShopRow(assets, item, item.name, item.statLine(), "+${item.sellPrice} 💰", true, upgrade = game.isUpgrade(item), action = "Sælg") {
                     game.sell(item); refresh++
                 }
             }
@@ -999,7 +999,7 @@ private fun SmithScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Un
     DarkPanel("Smeden", onClose) {
         Text("\"Vis mig dit grej. Jeg kan smede det om eller gøre det stærkere.\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp,
             textAlign = TextAlign.Center, modifier = Modifier.width(300.dp))
-        Text("Du har 🪙 ${p.gold}", color = GOLD, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Text("Du har 💰 ${p.gold}", color = GOLD, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         Text("Udrustning", color = parchment, fontSize = 14.sp, style = serifBold)
         for (row in Slot.entries.chunked(4)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1018,11 +1018,11 @@ private fun SmithScreen(game: Game, assets: Assets, tick: Int, onClose: () -> Un
         selected?.let { item ->
             ItemDetail(item, null)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                GothicButton("Smed om (${game.reforgePrice(item)} 🪙)", {
+                GothicButton("Smed om (${game.reforgePrice(item)} 💰)", {
                     game.reforge(item)?.let { selected = it }
                     refresh++
                 }, wide = false, enabled = p.gold >= game.reforgePrice(item))
-                GothicButton("Forbedr (${game.upgradePrice(item)} 🪙)", {
+                GothicButton("Forbedr (${game.upgradePrice(item)} 💰)", {
                     game.upgrade(item)?.let { selected = it }
                     refresh++
                 }, wide = false, enabled = p.gold >= game.upgradePrice(item) && game.canUpgrade(item))
@@ -1044,7 +1044,7 @@ private fun ElderScreen(game: Game, tick: Int, onClose: () -> Unit) {
         when {
             b != null && b.done -> {
                 Text("\"Du har holdt dit ord. Her er din løn.\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp)
-                GothicButton("Modtag ${b.gold} 🪙 + ${b.rarity.label.lowercase()} genstand", {
+                GothicButton("Modtag ${b.gold} 💰 + ${b.rarity.label.lowercase()} genstand", {
                     reward = game.claimBounty()
                     refresh++
                 })
@@ -1052,7 +1052,7 @@ private fun ElderScreen(game: Game, tick: Int, onClose: () -> Unit) {
             b != null -> {
                 Text("\"Kom tilbage, når arbejdet er gjort.\"", color = parchment, fontFamily = FontFamily.Serif, fontSize = 14.sp)
                 Text("Dræb ${b.need} ${b.type.label.lowercase()}: ${b.got}/${b.need}", color = GOLD, fontSize = 16.sp, style = serifBold)
-                Text("Belønning: ${b.gold} 🪙 og en ${b.rarity.label.lowercase()} genstand", color = b.rarity.color, fontSize = 13.sp)
+                Text("Belønning: ${b.gold} 💰 og en ${b.rarity.label.lowercase()} genstand", color = b.rarity.color, fontSize = 13.sp)
                 GothicButton("Opgiv dusøren", { game.abandonBounty(); refresh++ }, wide = false)
             }
             else -> {
@@ -1065,7 +1065,7 @@ private fun ElderScreen(game: Game, tick: Int, onClose: () -> Unit) {
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text("Dræb ${offer.need} ${offer.type.label.lowercase()}", color = parchment, fontSize = 15.sp, style = serifBold)
-                            Text("${offer.gold} 🪙 + ${offer.rarity.label.lowercase()} genstand", color = offer.rarity.color, fontSize = 12.sp)
+                            Text("${offer.gold} 💰 + ${offer.rarity.label.lowercase()} genstand", color = offer.rarity.color, fontSize = 12.sp)
                         }
                         GothicButton("Tag", { game.acceptBounty(offer); refresh++ }, wide = false)
                     }
