@@ -436,10 +436,11 @@ private fun DrawScope.drawHeroSilhouette(g: Game, cam: Camera, a: Assets) {
     val p = g.player
     val d = g.dungeon
     val behindWall = d.tile(floorInt(p.x), floorInt(p.y) + 1) == WALL && p.y - floorInt(p.y) > 0.2f
-    val crowded = g.enemies.any { it.y > p.y && it.y - p.y < 1.3f && abs(it.x - p.x) < 0.8f }
+    // Only when a monster stands right in front of the hero's body, not merely nearby.
+    val crowded = g.enemies.any { it.y > p.y + 0.15f && it.y - p.y < 0.9f + 0.3f * it.size && abs(it.x - p.x) < 0.5f * it.size + 0.15f }
     if (!behindWall && !crowded) return
     val (col, row) = heroFrame(p)
-    drawSprite(a.hero(p.weaponKind), col, row, cam.sx(p.x), cam.sy(p.y), cam.t, scale = CHAR_SCALE, alpha = 0.35f, filter = ghostTint)
+    drawSprite(a.hero(p.weaponKind), col, row, cam.sx(p.x), cam.sy(p.y), cam.t, scale = CHAR_SCALE, alpha = 0.25f, filter = ghostTint)
 }
 
 private fun DrawScope.drawPlayer(g: Game, cam: Camera, a: Assets) {
