@@ -111,7 +111,7 @@ private class NpcBB(val n: Npc) : Billboard {
     override val y = n.y
 }
 
-fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: TextStyles) {
+private fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: TextStyles): List<LootLabel> {
     val cam = cameraFor(g)
     val t = cam.t
     val d = g.dungeon
@@ -218,6 +218,8 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
         )
     }
 
+    if (g.inWorld) drawSunShadows(g, a, cam, x0, x1, y0, y1)
+
     // Shockwaves from skills spread along the ground.
     for (w in g.waves) {
         val k = (w.age / w.life).coerceIn(0f, 1f)
@@ -244,7 +246,8 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
     for (n in d.npcs) if (n.y > y0 - 2 && n.y < y1 + 3) bbs += NpcBB(n)
     bbs.sortBy { it.y }
 
-    // Contact shadows go under everything.
+    // Contact shadows go under everything; softer when the sun casts proper shadows.
+    val contact = if (g.inWorld) 0.45f - 0.2f * sunShadowStrength(g) else 0.45f
     for (b in bbs) {
         val (sx, sy, r) = when (b) {
             is PlayerBB -> Triple(g.player.x, g.player.y, 0.32f)
@@ -256,7 +259,7 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
         if (r <= 0f) continue
         val cx = cam.sx(sx)
         val cy = cam.sy(sy)
-        drawOval(Color.Black.copy(alpha = 0.45f), Offset(cx - r * t, cy - r * t * 0.4f), Size(r * t * 2f, r * t * 0.8f))
+        drawOval(Color.Black.copy(alpha = contact), Offset(cx - r * t, cy - r * t * 0.4f), Size(r * t * 2f, r * t * 0.8f))
     }
 
     val lootLabels = ArrayList<LootLabel>()
@@ -323,12 +326,17 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
     for (b in g.bolts) drawBolt(b, cam)
     if (g.inWorld && g.daylight > 0.35f) drawButterflies(g, cam, x0, x1, y0, y1)
     if (g.inWorld) drawCloudShadows(g, a, cam)
-    drawLootLabels(lootLabels)
 
     drawFog(g, a, cam)
     if (g.rain > 0.02f) drawRain(g)
+    return lootLabels
+}
 
-    // Coloured light spill on top of the scene.
+/** Coloured haze around light sources, drawn over the lighting so fires and magic glow in the dark. */
+private fun DrawScope.drawGlows(g: Game) {
+    val cam = cameraFor(g)
+    val t = cam.t
+    val d = g.dungeon
     fun spill(x: Float, y: Float, radius: Float, color: Color) {
         val c = Offset(cam.sx(x), cam.sy(y))
         if (c.x < -radius || c.y < -radius || c.x > size.width + radius || c.y > size.height + radius) return
@@ -353,7 +361,11 @@ fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styles: Text
         else spill(pr.x, pr.y, t * 2f, pr.color.copy(alpha = 0.3f))
     }
     for (e in d.entrances) if (e.region == Region.HELL) spill(e.x + 0.5f, e.y + 0.2f, t * 3f * flicker(g.time, 5f), Color(0x55FF3D00))
+}
 
+/** Damage numbers and other floating text, kept readable above the lighting. */
+private fun DrawScope.drawFloatingTexts(g: Game, measurer: TextMeasurer, styles: TextStyles) {
+    val cam = cameraFor(g)
     for (ft in g.texts) {
         val layout = ft.layout ?: measurer.measure(ft.text, if (ft.big) styles.big else styles.small).also { ft.layout = it }
         val maxAge = if (ft.big) 1.3f else 1f
@@ -444,6 +456,91 @@ private fun DrawScope.drawFlame(cx: Float, cy: Float, size: Float, time: Float, 
     drawOval(Color(0xFFFF6D00), Offset(cx - fw / 2f, cy - fh), Size(fw, fh))
     drawOval(Color(0xFFFFC400), Offset(cx - fw * 0.3f, cy - fh * 0.78f), Size(fw * 0.6f, fh * 0.68f))
     drawOval(Color(0xFFFFF8E1), Offset(cx - fw * 0.15f, cy - fh * 0.45f), Size(fw * 0.3f, fh * 0.35f))
+}
+
+// ---------------------------------------------------------------- sun shadows
+
+private val sunShadowTint = ColorFilter.tint(Color(0xFF0C1407), BlendMode.SrcIn)
+private val shadowMatrix = androidx.compose.ui.graphics.Matrix()
+private val shadowLayer = Paint()
+
+/** Strength of daylight shadows: they fade at dusk, vanish at night and soften in the rain. */
+private fun sunShadowStrength(g: Game) = ((g.daylight - 0.22f) / 0.3f).coerceIn(0f, 1f) * (1f - g.rain * 0.7f)
+
+/**
+ * Projects a sprite onto the ground away from the sun: every pixel moves up and to the right in proportion
+ * to its height above the sprite's foot line at [y]. Long shadows in the morning and evening, short at noon.
+ */
+private fun DrawScope.castShadow(g: Game, s: SpriteSheet, col: Int, row: Int, x: Float, y: Float, t: Float, scale: Float) {
+    val low = 1f - g.daylight
+    val kx = 0.32f + 1.0f * low
+    val ky = 0.42f + 0.45f * low
+    val v = shadowMatrix.values
+    v.fill(0f)
+    v[0] = 1f
+    v[4] = -kx
+    v[12] = kx * y
+    v[5] = ky
+    v[13] = y * (1f - ky)
+    v[10] = 1f
+    v[15] = 1f
+    withTransform({ transform(shadowMatrix) }) {
+        drawSprite(s, col, row, x, y, t, scale = scale, filter = sunShadowTint)
+    }
+}
+
+/** Shadows of everything standing in the sun, gathered in one layer so overlaps never double up. */
+private fun DrawScope.drawSunShadows(g: Game, a: Assets, cam: Camera, x0: Int, x1: Int, y0: Int, y1: Int) {
+    val strength = sunShadowStrength(g)
+    if (strength <= 0.02f) return
+    val t = cam.t
+    val d = g.dungeon
+    shadowLayer.alpha = 0.36f * strength
+    drawIntoCanvas { it.saveLayer(Rect(Offset.Zero, size), shadowLayer) }
+    // Shadows reach up and to the right, so look a little beyond the bottom and left of the view.
+    for (y in max(0, y0 - 1)..min(d.h - 1, y1 + 4)) for (x in max(0, x0 - 4)..min(d.w - 1, x1 + 1)) {
+        val v = d.variant[y * d.w + x]
+        when (d.tile(x, y)) {
+            TREE -> castShadow(g, a.world, treeSprite(v), 0, cam.sx(x + 0.5f), cam.sy(y + 0.8f), t, treeScale(v))
+            ROCK -> castShadow(g, a.world, if (v < 0.4f) 6 else if (v < 0.8f) 7 else 8, 0, cam.sx(x + 0.5f), cam.sy(y + 0.8f), t, 0.8f)
+            ENTRANCE -> d.entrances.firstOrNull { it.x == x && it.y == y }?.let {
+                castShadow(g, a.world, it.region.sprite, 0, cam.sx(x + 0.5f), cam.sy(y + 0.95f), t, 1f)
+            }
+        }
+    }
+    for (b in d.buildings) {
+        if (b.y + b.h < y0 - 1 || b.y > y1 + 5 || b.x + b.w < x0 - 6 || b.x > x1 + 1) continue
+        castShadow(g, a.village, b.sprite, 0, cam.sx(b.x + b.w / 2f), cam.sy((b.y + b.h).toFloat()), t, 1f)
+    }
+    for (p in d.props) {
+        if (p.y < y0 - 1 || p.y > y1 + 3 || p.type == PropType.SKULLS) continue
+        val col = if (p.used && p.type != PropType.SHRINE) p.type.brokenSprite else p.type.sprite
+        castShadow(g, if (p.type.world) a.world else a.props, col, 0, cam.sx(p.x), cam.sy(p.y), t, 1f)
+    }
+    for (n in d.npcs) {
+        if (n.y < y0 - 1 || n.y > y1 + 3) continue
+        when (n.kind) {
+            NpcKind.SMITH -> castShadow(g, a.smith, 0, 0, cam.sx(n.x), cam.sy(n.y), t, 1.3f)
+            NpcKind.ELDER -> castShadow(g, a.elder, 0, 0, cam.sx(n.x), cam.sy(n.y), t, 1.3f)
+            else -> {
+                val sheet = if (n.kind == NpcKind.VILLAGER_F) a.villagerF else a.villagerM
+                val col = if (n.moving) HERO_WALK + (n.anim * 12f).toInt() % 8 else (n.anim * 1.3f).toInt() % 2
+                castShadow(g, sheet, col, dirRow(n.faceX, n.faceY), cam.sx(n.x), cam.sy(n.y), t, 1.25f)
+            }
+        }
+    }
+    if (d.hasMerchant) castShadow(g, a.merchant, 0, 0, cam.sx(g.merchantX), cam.sy(g.merchantY), t, CHAR_SCALE)
+    for (e in g.enemies) {
+        if (e.y < y0 - 1 || e.y > y1 + 3 || e.type == EnemyType.GHOST) continue
+        val (sheet, scale0, directional) = a.enemySprite(e.type)
+        castShadow(g, sheet, enemyCol(e, sheet, directional), if (directional) dirRow(e.faceX, e.faceY) else 0, cam.sx(e.x), cam.sy(e.y), t, scale0 * e.size * CHAR_SCALE)
+    }
+    val p = g.player
+    if (p.stealth <= 0f && !g.dead) {
+        val (col, row) = heroFrame(p, g.time)
+        castShadow(g, heroSheet(g, a), col, row, cam.sx(p.x), cam.sy(p.y), t, CHAR_SCALE)
+    }
+    drawIntoCanvas { it.restore() }
 }
 
 // ---------------------------------------------------------------- billboards
@@ -592,6 +689,16 @@ private fun DrawScope.drawZones(g: Game, cam: Camera) {
     }
 }
 
+private fun enemyCol(e: Enemy, sheet: SpriteSheet, directional: Boolean) = when {
+    !directional -> (e.anim * 7f).toInt() % 4
+    sheet.smooth && e.windup > 0f -> HERO_ATTACK + ((1f - e.windup / e.type.windup) * 6f).toInt().coerceIn(0, 5)
+    sheet.smooth && e.moving -> HERO_WALK + ((e.anim * 14f).toInt() % 8)
+    sheet.smooth -> ((e.anim + e.phase) * 1.3f).toInt() % 2
+    e.windup > 0f -> 5 + ((1f - e.windup / e.type.windup) * 3f).toInt().coerceIn(0, 2)
+    e.moving -> 1 + ((e.anim * 7f).toInt() % 4)
+    else -> 0
+}
+
 private fun DrawScope.drawEnemy(e: Enemy, g: Game, cam: Camera, a: Assets, measurer: TextMeasurer, styles: TextStyles) {
     val t = cam.t
     val cx = cam.sx(e.x)
@@ -629,15 +736,7 @@ private fun DrawScope.drawEnemy(e: Enemy, g: Game, cam: Camera, a: Assets, measu
     val (sheet, scale0, directional) = a.enemySprite(e.type)
     val scale = scale0 * e.size * CHAR_SCALE
     val row = if (directional) dirRow(e.faceX, e.faceY) else 0
-    val col = when {
-        !directional -> (e.anim * 7f).toInt() % 4
-        sheet.smooth && e.windup > 0f -> HERO_ATTACK + ((1f - e.windup / e.type.windup) * 6f).toInt().coerceIn(0, 5)
-        sheet.smooth && e.moving -> HERO_WALK + ((e.anim * 14f).toInt() % 8)
-        sheet.smooth -> ((e.anim + e.phase) * 1.3f).toInt() % 2
-        e.windup > 0f -> 5 + ((1f - e.windup / e.type.windup) * 3f).toInt().coerceIn(0, 2)
-        e.moving -> 1 + ((e.anim * 7f).toInt() % 4)
-        else -> 0
-    }
+    val col = enemyCol(e, sheet, directional)
     val filter = when {
         e.frozen > 0f -> frozenTint
         e.poison > 0f -> poisonTint
@@ -834,61 +933,96 @@ fun DrawScope.drawIcon(a: Assets, icon: Int, cx: Float, cy: Float, size: Float, 
 
 // ---------------------------------------------------------------- scene
 
+private val multiplyLayer = Paint().apply { blendMode = BlendMode.Multiply }
+
 /** The world with its lighting on top: everything below the HUD. */
 fun DrawScope.drawScene(g: Game, a: Assets, measurer: TextMeasurer, styles: TextStyles) {
-    drawWorld(g, a, measurer, styles)
-    // Darkness and its light holes need a layer of their own, or the holes would erase the world below.
-    drawIntoCanvas { it.saveLayer(Rect(Offset.Zero, size), Paint()) }
+    val labels = drawWorld(g, a, measurer, styles)
+    // The light map is built in a layer of its own and multiplied over the world, so lights tint as well as reveal.
+    drawIntoCanvas { it.saveLayer(Rect(Offset.Zero, size), multiplyLayer) }
     drawLighting(g)
     drawIntoCanvas { it.restore() }
+    drawGlows(g)
+    drawLootLabels(labels)
+    drawFloatingTexts(g, measurer, styles)
 }
 
 // ---------------------------------------------------------------- lighting
 
-/** Darkness with light holes punched out; drawn into an offscreen layer. */
+private val DAY_LIGHT = Color(0xFFFFFAF0)
+private val GOLDEN_LIGHT = Color(0xFFFFD2A6)
+private val NIGHT_LIGHT = Color(0xFF3B4870)
+private val RAIN_LIGHT = Color(0xFF8E97A3)
+
+/** The colour the whole scene is multiplied by before any light falls on it. */
+private fun ambientLight(g: Game): Color {
+    if (!g.inWorld) return lerp(Color.White, g.dungeon.biome.darkness, g.dungeon.biome.darknessAlpha)
+    val d = g.daylight
+    val c = if (d > 0.5f) lerp(GOLDEN_LIGHT, DAY_LIGHT, ((d - 0.5f) / 0.3f).coerceIn(0f, 1f))
+    else lerp(NIGHT_LIGHT, GOLDEN_LIGHT, ((d - 0.22f) / 0.28f).coerceIn(0f, 1f))
+    return lerp(c, lerp(RAIN_LIGHT, NIGHT_LIGHT, 1f - d), g.rain * 0.5f)
+}
+
+private val PLAYER_LIGHT_DUNGEON = Color(0xFFFFE4BE)
+private val PLAYER_LIGHT_WORLD = Color(0xFFDCE3F0)
+private val TORCH_LIGHT = Color(0xFFFF9F55)
+private val FIRE_LIGHT = Color(0xFFFF9A3A)
+private val COOL_LIGHT = Color(0xFF9CC9FF)
+
+/** The light map: ambient colour plus coloured lights added on top. Multiplied over the world. */
 fun DrawScope.drawLighting(g: Game) {
     val cam = cameraFor(g)
     val t = cam.t
     val d = g.dungeon
-    drawRect(d.biome.darkness.copy(alpha = g.darknessAlpha))
+    drawRect(ambientLight(g))
 
-    fun light(x: Float, y: Float, radius: Float, strength: Float) {
+    fun light(x: Float, y: Float, radius: Float, color: Color, strength: Float) {
         val c = Offset(cam.sx(x), cam.sy(y))
         if (c.x < -radius || c.y < -radius || c.x > size.width + radius || c.y > size.height + radius) return
         drawCircle(
             Brush.radialGradient(
-                0f to Color.Black.copy(alpha = strength),
-                0.5f to Color.Black.copy(alpha = strength * 0.75f),
+                0f to color.copy(alpha = strength),
+                0.45f to color.copy(alpha = strength * 0.62f),
                 1f to Color.Transparent,
                 center = c,
                 radius = radius,
             ),
-            radius, c, blendMode = BlendMode.DstOut,
+            radius, c, blendMode = BlendMode.Plus,
         )
     }
 
     val p = g.player
-    light(p.x, p.y - 0.3f, t * (if (g.inWorld) 7f else 6.2f) * flicker(g.time, 0.3f), 1f)
-    for (e in d.entrances) light(e.x + 0.5f, e.y + 0.3f, t * (if (e.region == Region.HELL) 3.4f else 1.6f), 0.8f)
-    for (i in d.torches) light(i % d.w + 0.5f, i / d.w + 1f - WALL_HEIGHT * 0.4f, t * 3.6f * flicker(g.time, i.toFloat()), 0.95f)
-    for (pr in g.projectiles) light(pr.x, pr.y, t * 2.4f, 0.85f)
-    for (b in g.bolts) light((b.x1 + b.x2) / 2f, (b.y1 + b.y2) / 2f, t * 2.6f, 0.9f * (1f - b.age / 0.28f))
-    light(d.exit.cx + 0.5f, d.exit.cy + 0.5f, t * 2.2f, 0.75f)
+    light(p.x, p.y - 0.3f, t * (if (g.inWorld) 7f else 6.2f) * flicker(g.time, 0.3f), if (g.inWorld) PLAYER_LIGHT_WORLD else PLAYER_LIGHT_DUNGEON, 1f)
+    for (e in d.entrances) {
+        if (e.region == Region.HELL) light(e.x + 0.5f, e.y + 0.3f, t * 3.4f, Color(0xFFFF5A1F), 0.9f)
+        else light(e.x + 0.5f, e.y + 0.3f, t * 1.6f, COOL_LIGHT, 0.6f)
+    }
+    for (i in d.torches) light(i % d.w + 0.5f, i / d.w + 1f - WALL_HEIGHT * 0.4f, t * 3.8f * flicker(g.time, i.toFloat()), TORCH_LIGHT, 0.95f)
+    for (pr in g.projectiles) light(pr.x, pr.y, t * (if (pr.small) 1.2f else 2.6f), pr.color, if (pr.small) 0.5f else 0.9f)
+    for (b in g.bolts) light((b.x1 + b.x2) / 2f, (b.y1 + b.y2) / 2f, t * 2.8f, Color(0xFFBDEBFF), 0.95f * (1f - b.age / 0.28f))
+    light(d.exit.cx + 0.5f, d.exit.cy + 0.5f, t * 2.2f, COOL_LIGHT, 0.75f)
+    for (z in g.zones) {
+        val k = min(1f, z.age * 4f) * min(1f, (z.life - z.age) * 2f)
+        light(z.x, z.y, z.radius * t * 1.3f, if (z.kind == ZoneKind.FIRE) FIRE_LIGHT else Color(0xFFFFE6A0), 0.8f * k)
+    }
+    for (m in g.meteors) light(m.x, m.y, t * 3f, FIRE_LIGHT, 0.5f + 0.5f * (1f - m.t / 0.75f))
     for (pr in d.props) {
         when {
-            pr.type == PropType.CAMPFIRE -> light(pr.x, pr.y - 0.3f, t * 8f * flicker(g.time, 1f), 1f)
-            pr.type == PropType.SHRINE && !pr.used -> light(pr.x, pr.y - 0.6f, t * 2.2f, 0.7f)
+            pr.type == PropType.CAMPFIRE -> light(pr.x, pr.y - 0.3f, t * 8f * flicker(g.time, 1f), FIRE_LIGHT, 1f)
+            pr.type == PropType.SHRINE && !pr.used -> light(pr.x, pr.y - 0.6f, t * 2.4f, Color(0xFF6FF3FF), 0.75f)
+            pr.type.light != 0L -> light(pr.x, pr.y - 0.4f, t * 3.4f * flicker(g.time, pr.x), Color(pr.type.light).copy(alpha = 1f), 0.9f)
         }
     }
-    if (d.hasMerchant) light(g.merchantX + 0.25f, g.merchantY - 0.4f, t * 3f, 0.8f)
-    for (pr in d.props) if (pr.type.light != 0L) light(pr.x, pr.y - 0.4f, t * 3.2f * flicker(g.time, pr.x), 0.85f)
-    for (b in d.buildings) if (b.light != 0L) light(b.x + b.w / 2f + b.lightX, b.y + b.h + b.lightY - 0.5f, t * 2.8f, 0.8f)
+    if (d.hasMerchant) light(g.merchantX + 0.25f, g.merchantY - 0.4f, t * 3f, Color(0xFFFFC58A), 0.85f)
+    for (b in d.buildings) if (b.light != 0L) {
+        light(b.x + b.w / 2f + b.lightX, b.y + b.h + b.lightY - 0.5f, t * 3f, Color(b.light).copy(alpha = 1f), 0.85f)
+    }
     for (l in g.loot) {
         val k = l.kind
-        if (k is LootKind.Gear && k.item.rarity >= Rarity.RARE) light(l.x, l.y, t * 1.3f, 0.6f)
-        if (k is LootKind.Shard) light(l.x, l.y - 0.4f, t * 1.8f, 0.75f)
+        if (k is LootKind.Gear && k.item.rarity >= Rarity.RARE) light(l.x, l.y, t * 1.3f, k.item.rarity.color, 0.6f)
+        if (k is LootKind.Shard) light(l.x, l.y - 0.4f, t * 1.8f, HEART, 0.75f)
     }
-    g.boss?.let { light(it.x, it.y - 0.5f, t * 2.8f, 0.6f) }
+    g.boss?.let { light(it.x, it.y - 0.5f, t * 2.8f, Color(0xFFFF8A80), 0.6f) }
 
     drawRect(
         Brush.radialGradient(
@@ -922,6 +1056,14 @@ fun DrawScope.drawLighting(g: Game) {
 
 // ---------------------------------------------------------------- overworld
 
+private fun treeSprite(v: Float) = when {
+    v < 0.05f -> 4
+    v < 0.13f -> 5
+    else -> (v * 1000f).toInt() % 4
+}
+
+private fun treeScale(v: Float) = 0.9f + ((v * 7f) % 1f) * 0.25f
+
 /** Trees, rocks and dungeon entrances that stand on a tile, depth-sorted with the row. */
 private fun DrawScope.drawWorldTile(g: Game, x: Int, y: Int, cam: Camera, a: Assets, measurer: TextMeasurer, styles: TextStyles) {
     val d = g.dungeon
@@ -934,15 +1076,10 @@ private fun DrawScope.drawWorldTile(g: Game, x: Int, y: Int, cam: Camera, a: Ass
     val v = d.variant[y * d.w + x]
     when (tile) {
         TREE -> {
-            val idx = when {
-                v < 0.05f -> 4
-                v < 0.13f -> 5
-                else -> (v * 1000f).toInt() % 4
-            }
+            val idx = treeSprite(v)
             val p = g.player
             val behind = y + 0.8f > p.y && y + 0.8f - p.y < 2.6f && abs(x + 0.5f - p.x) < 1.4f
-            val scale = 0.9f + ((v * 7f) % 1f) * 0.25f
-            drawSprite(a.world, idx, 0, cx, cy, t, scale = scale, alpha = if (behind && idx < 5) 0.45f else 1f)
+            drawSprite(a.world, idx, 0, cx, cy, t, scale = treeScale(v), alpha = if (behind && idx < 5) 0.45f else 1f)
         }
         ROCK -> drawSprite(a.world, if (v < 0.4f) 6 else if (v < 0.8f) 7 else 8, 0, cx, cy, t, scale = 0.8f)
         ENTRANCE -> {
