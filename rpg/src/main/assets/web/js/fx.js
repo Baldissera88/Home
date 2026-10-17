@@ -440,7 +440,7 @@ export class Fx {
         const d = this.discs.next();
         d.position.set(x, gy, y);
         d.scale.setScalar(r);
-        d.material.color.setHex(0xff5a14).multiplyScalar(0.7 + 0.15 * Math.sin(t * 9 + x));
+        d.material.color.setHex(0xff5a14).multiplyScalar(0.3 + 0.08 * Math.sin(t * 9 + x));
         d.material.opacity = a;
         for (let i = 0; i < 14; i++) {
           const ph = (t * 1.6 + hash(i, 11, Math.floor(x * 10))) % 1;

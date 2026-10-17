@@ -292,7 +292,7 @@ export class World {
     ring.position.set(x + 0.5, 0.04, y + 0.5);
     this.group.add(ring);
     this.exitRing = ring;
-    this.lights.push({ x: x + 0.5, y: 0.8, z: y + 0.5, color: 0x6fd0ff, radius: 4, intensity: 1.6, flicker: false });
+    this.lights.push({ x: x + 0.5, y: 1.4, z: y + 0.5, color: 0x6fd0ff, radius: 4, intensity: 0.6, flicker: false });
   }
 
   /** Every prop of the level, mapped onto the kits. */

@@ -163,6 +163,22 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     var joyY = 0f
     var attackHeld = false
 
+    /** The 3D view's chase camera: yaw around the hero (radians, 0 looks north), pitch above the ground and distance in tiles. */
+    var camYaw = 0f
+    var camPitch = 0.5f
+    var camDist = 6.4f
+    /** The joystick as the player holds it, before it is turned to match the camera. */
+    var stickX = 0f
+    var stickY = 0f
+
+    /** Turns the held joystick into a walking direction on the map, relative to where the camera looks. */
+    fun steer() {
+        val c = cos(camYaw)
+        val s = sin(camYaw)
+        joyX = stickX * c + stickY * s
+        joyY = -stickX * s + stickY * c
+    }
+
     val inWorld: Boolean get() = floor == 0
     val inVillage: Boolean get() = inWorld && (dungeon.village?.contains(player.x, player.y) == true)
     val merchantX: Float get() = dungeon.merchantX

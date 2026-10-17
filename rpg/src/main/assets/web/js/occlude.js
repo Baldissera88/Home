@@ -38,6 +38,8 @@ float occBayer(vec2 p) {
     float tt = dot(vOccWp - uCam, ab) / max(dot(ab, ab), 0.001);
     float dd = length(vOccWp - (uCam + ab * clamp(tt, 0.0, 1.0)));
     float cut = (1.0 - smoothstep(${(radius * 0.5).toFixed(2)}, ${(radius * 1.25).toFixed(2)}, dd)) * smoothstep(0.97, 0.85, tt) * step(0.0, tt) * 0.92;
+    // Anything right in front of the lens fades out too.
+    cut = max(cut, 1.0 - smoothstep(1.2, 2.6, distance(vOccWp, uCam)));
     if (cut > occBayer(gl_FragCoord.xy) && vOccWp.y > ${stub.toFixed(2)}) discard;
   }`);
 }

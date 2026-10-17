@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,7 +27,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -71,6 +77,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
@@ -102,6 +109,21 @@ fun RpgScreen(
     uiSfx = sfx
     var overlay by remember { mutableStateOf(if (debugOverlay >= 0) Overlay.entries[debugOverlay] else Overlay.NONE) }
 
+    // The 3D third-person view (a WebView under the HUD) unless the player chose the classic 2D view.
+    // Screenshot tests run without the frame loop and keep to the 2D renderer.
+    val context = LocalContext.current
+    var use3d by remember { mutableStateOf(animate && settings.getBoolean("render3d", true)) }
+    var quality3d by remember { mutableStateOf(settings.getString("quality3d", "high") ?: "high") }
+    var failed3d by remember { mutableStateOf<String?>(null) }
+    val scene3d = remember(use3d, quality3d) {
+        if (use3d) Scene3D(context, quality3d) {
+            failed3d = it
+            game.camYaw = 0f
+        } else null
+    }
+    DisposableEffect(scene3d) { onDispose { scene3d?.destroy() } }
+    val live3d = rememberUpdatedState(if (failed3d == null) scene3d else null)
+
     LaunchedEffect(Unit) {
         if (!animate) return@LaunchedEffect
         var last = withFrameNanos { it }
@@ -110,7 +132,10 @@ fun RpgScreen(
             withFrameNanos { now ->
                 val dt = ((now - last) / 1_000_000_000f).coerceAtMost(0.05f)
                 last = now
+                val s3d = live3d.value
+                if (s3d != null) game.steer()
                 if (started && overlay == Overlay.NONE) game.update(dt)
+                s3d?.push(game)
                 if (started) music.play(game.musicTrack)
                 music.tick(dt)
                 frame++
@@ -130,11 +155,15 @@ fun RpgScreen(
 
     CompositionLocalProvider(LocalTextStyle provides TextStyle(fontFamily = Alegreya, fontWeight = FontWeight.Medium)) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
+        val view3d = if (failed3d == null) scene3d else null
+        if (view3d != null) key(view3d) { AndroidView(factory = { view3d.view }, modifier = Modifier.fillMaxSize()) }
         Canvas(Modifier.fillMaxSize()) {
             frame.let { }
-            drawScene(game, assets, measurer, styles)
+            // Until the 3D view has loaded its models, the 2D renderer fills in.
+            if (view3d == null || !view3d.ready) drawScene(game, assets, measurer, styles)
             if (game.fade > 0f) drawRect(Color.Black.copy(alpha = game.fade * game.fade))
         }
+        if (view3d != null && started && overlay == Overlay.NONE) CameraDrag(game)
 
         hudTick.let { }
         if (started) {
@@ -201,7 +230,18 @@ fun RpgScreen(
             overlay == Overlay.SMITH -> SmithScreen(game, assets, hudTick, onClose = { overlay = Overlay.NONE })
             overlay == Overlay.STASH -> StashScreen(game, assets, onClose = { overlay = Overlay.NONE })
             overlay == Overlay.ELDER -> ElderScreen(game, hudTick, onClose = { overlay = Overlay.NONE })
-            overlay == Overlay.SETTINGS -> SettingsScreen(music, sfx, settings, onClose = { overlay = Overlay.NONE })
+            overlay == Overlay.SETTINGS -> SettingsScreen(
+                music, sfx, settings,
+                graphics = GraphicsChoice(use3d, quality3d == "high", failed3d),
+                onGraphics = { on, high ->
+                    if (on != use3d) failed3d = null
+                    if (!on) game.camYaw = 0f
+                    use3d = on
+                    quality3d = if (high) "high" else "low"
+                    settings.edit().putBoolean("render3d", on).putString("quality3d", quality3d).apply()
+                },
+                onClose = { overlay = Overlay.NONE },
+            )
         }
     }
     }
@@ -425,6 +465,26 @@ private fun Controls(game: Game, modifier: Modifier) {
     }
 }
 
+/** Graphics settings as the settings screen shows them. */
+private class GraphicsChoice(val use3d: Boolean, val high: Boolean, val error: String?)
+
+/** Swipes on the open screen turn the 3D camera around the hero and tilt it; a pinch zooms. */
+@Composable
+private fun CameraDrag(game: Game) {
+    Box(
+        Modifier.fillMaxSize().pointerInput(Unit) {
+            detectTransformGestures { _, pan, zoom, _ ->
+                var yaw = game.camYaw - pan.x * 0.0065f
+                if (yaw > PI.toFloat()) yaw -= 2f * PI.toFloat()
+                if (yaw < -PI.toFloat()) yaw += 2f * PI.toFloat()
+                game.camYaw = yaw
+                game.camPitch = (game.camPitch + pan.y * 0.004f).coerceIn(0.2f, 1.2f)
+                game.camDist = (game.camDist / zoom).coerceIn(3.5f, 11f)
+            }
+        }
+    )
+}
+
 private fun Modifier.at(center: Offset, sizeDp: Float) =
     this.offset(x = (center.x - sizeDp / 2f).dp, y = (center.y - sizeDp / 2f).dp)
 
@@ -460,8 +520,9 @@ private fun Joystick(game: Game, modifier: Modifier) {
                     val len = v.getDistance()
                     if (len > reach) v = v * (reach / len)
                     knob = v
-                    game.joyX = v.x / reach
-                    game.joyY = v.y / reach
+                    game.stickX = v.x / reach
+                    game.stickY = v.y / reach
+                    game.steer()
                 }
                 update(down.position)
                 while (true) {
@@ -472,8 +533,9 @@ private fun Joystick(game: Game, modifier: Modifier) {
                     change.consume()
                 }
                 knob = Offset.Zero
-                game.joyX = 0f
-                game.joyY = 0f
+                game.stickX = 0f
+                game.stickY = 0f
+                game.steer()
             }
         }
     ) {
@@ -1210,7 +1272,10 @@ private fun ElderScreen(game: Game, tick: Int, onClose: () -> Unit) {
 }
 
 @Composable
-private fun SettingsScreen(music: Music, sfx: Sfx, settings: android.content.SharedPreferences, onClose: () -> Unit) {
+private fun SettingsScreen(
+    music: Music, sfx: Sfx, settings: android.content.SharedPreferences,
+    graphics: GraphicsChoice, onGraphics: (Boolean, Boolean) -> Unit, onClose: () -> Unit,
+) {
     var musicOn by remember { mutableStateOf(music.enabled) }
     var sfxOn by remember { mutableStateOf(sfx.enabled) }
     var hapticsOn by remember { mutableStateOf(sfx.haptics) }
@@ -1231,6 +1296,18 @@ private fun SettingsScreen(music: Music, sfx: Sfx, settings: android.content.Sha
             settings.edit().putBoolean("haptics", hapticsOn).apply()
             if (hapticsOn) sfx.rumble(40, 160)
         })
+        GothicButton(if (graphics.use3d) "🎮 Graphics: 3D third person" else "🎮 Graphics: classic top-down", {
+            onGraphics(!graphics.use3d, graphics.high)
+        })
+        if (graphics.use3d) {
+            GothicButton(if (graphics.high) "✨ 3D quality: high" else "🔋 3D quality: battery saver", {
+                onGraphics(true, !graphics.high)
+            })
+        }
+        graphics.error?.let {
+            Text("3D is not available on this device, so the classic view is used.", color = Color(0xFFFF8A65), fontSize = 12.sp)
+        }
+        if (graphics.use3d) Text("Drag the screen to turn the camera, pinch to zoom.", color = Color.Gray, fontSize = 12.sp)
         Text("The game saves automatically.", color = Color.Gray, fontSize = 12.sp)
     }
 }

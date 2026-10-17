@@ -60,9 +60,9 @@ void main() {
 const lerpColor = (a, b, t) => new THREE.Color(a).lerp(new THREE.Color(b), t);
 
 const DUNGEON = {
-  CRYPT: { fog: 0x0a0c12, fogDensity: 0.07, hemiSky: 0x5a6680, hemiGround: 0x1a1612, hemi: 0.55, key: 0x8090b0, keyI: 0.5, lantern: 0xffc488 },
-  CAVE: { fog: 0x0c0a07, fogDensity: 0.065, hemiSky: 0x6a6050, hemiGround: 0x1a140e, hemi: 0.5, key: 0xa09078, keyI: 0.45, lantern: 0xffc080 },
-  HELL: { fog: 0x1a0602, fogDensity: 0.06, hemiSky: 0x803020, hemiGround: 0x200804, hemi: 0.6, key: 0xff7040, keyI: 0.45, lantern: 0xffa070 },
+  CRYPT: { fog: 0x0a0c12, fogDensity: 0.06, hemiSky: 0x5a6680, hemiGround: 0x1a1612, hemi: 0.8, key: 0x8090b0, keyI: 0.5, lantern: 0xffc488 },
+  CAVE: { fog: 0x0c0a07, fogDensity: 0.05, hemiSky: 0x7a7060, hemiGround: 0x2a2018, hemi: 1.1, key: 0xb0a088, keyI: 0.7, lantern: 0xffc080 },
+  HELL: { fog: 0x1a0602, fogDensity: 0.055, hemiSky: 0x803020, hemiGround: 0x200804, hemi: 0.7, key: 0xff7040, keyI: 0.45, lantern: 0xffa070 },
 };
 
 export class Atmosphere {
