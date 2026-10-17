@@ -54,7 +54,11 @@ class GameRenderTest {
 
     private fun step(g: Game, frames: Int) = repeat(frames) { g.update(1f / 60f) }
 
+    private val wireDir = File("build/screens3d").apply { mkdirs() }
+
     private fun render(g: Game, a: Assets, name: String, w: Int = 720, h: Int = 1280) {
+        // The same scene as data for the 3D renderer, rendered offline by tools/web3d.
+        File(wireDir, "$name.json").writeText("{\"level\":${Wire.level(g)},\"frame\":${Wire.frame(g, 0f)}}")
         val image = ImageBitmap(w, h)
         val canvas = Canvas(image)
         val density = Density(2f)

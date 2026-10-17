@@ -435,6 +435,12 @@ enum class Affix(val label: String, val color: Color) {
     TELEPORT("Teleporter", Color(0xFFB388FF)),
 }
 
+/** Running ids so the 3D renderer can follow each actor from frame to frame. */
+object Ids {
+    private var n = 0
+    fun next() = ++n
+}
+
 class Enemy(
     val type: EnemyType,
     override var x: Float,
@@ -444,6 +450,7 @@ class Enemy(
     val affixes: List<Affix> = emptyList(),
     val title: String? = null,
 ) : Body {
+    val uid = Ids.next()
     private val scale = (1f + 0.3f * (level - 1)) * (if (elite) 3f else 1f)
     val speed = type.speed * (if (Affix.FAST in affixes) 1.45f else 1f)
     val attackCooldown = type.cooldown * (if (Affix.FAST in affixes) 0.65f else 1f)
@@ -508,6 +515,7 @@ sealed interface LootKind {
 }
 
 class Loot(var x: Float, var y: Float, val kind: LootKind) {
+    val uid = Ids.next()
     val phase = Random.nextFloat() * 6.28f
     var label: TextLayoutResult? = null
     /** Height and velocity while it flies out of a monster or chest. */
@@ -566,6 +574,7 @@ enum class NpcKind(val title: String) {
 }
 
 class Npc(val kind: NpcKind, override var x: Float, override var y: Float) : Body {
+    val uid = Ids.next()
     var tx = x
     var ty = y
     var faceX = 0f

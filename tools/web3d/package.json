@@ -1,0 +1,10 @@
+{
+  "name": "shadow-depths-web3d-tools",
+  "private": true,
+  "description": "Dev tooling for the 3D renderer: three.js source and headless screenshots",
+  "dependencies": {
+    "@gltf-transform/cli": "^4.1.1",
+    "playwright-core": "^1.48.2",
+    "three": "^0.170.0"
+  }
+}

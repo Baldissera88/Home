@@ -53,6 +53,8 @@ jobs:
           fi
           shots=$(mktemp -d)
           cp rpg/build/screens/*.jpg "$shots/"
+          wire=$(mktemp -d)
+          cp rpg/build/screens3d/*.json "$wire/" 2>/dev/null || true
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Rebuild the commit on top of the latest branch each attempt, so concurrent runs never conflict.
@@ -62,8 +64,11 @@ jobs:
             mkdir -p rpg/screens
             rm -f rpg/screens/*.jpg
             cp "$shots"/*.jpg rpg/screens/
+            mkdir -p rpg/screens3d
+            rm -f rpg/screens3d/*.json
+            cp "$wire"/*.json rpg/screens3d/ 2>/dev/null || true
             echo "world tests: ${{ steps.rpgtests.outcome }}, ui: ${{ steps.uitests.outcome }} @ ${GITHUB_SHA::7}" > rpg/screens/STATUS.txt
-            git add -A rpg/screens
+            git add -A rpg/screens rpg/screens3d
             git commit -q -m "[ci] RPG screenshots for ${GITHUB_SHA::7}" || exit 0
             if git push -q origin "HEAD:${GITHUB_REF_NAME}"; then exit 0; fi
             sleep $((attempt * 3))
