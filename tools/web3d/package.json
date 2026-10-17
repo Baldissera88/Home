@@ -4,6 +4,10 @@
   "description": "Dev tooling for the 3D renderer: three.js source and headless screenshots",
   "dependencies": {
     "@gltf-transform/cli": "^4.1.1",
+    "@gltf-transform/core": "^4.1.1",
+    "@gltf-transform/extensions": "^4.1.1",
+    "@gltf-transform/functions": "^4.1.1",
+    "meshoptimizer": "^0.21.0",
     "playwright-core": "^1.48.2",
     "three": "^0.170.0"
   }

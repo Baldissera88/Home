@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<base href="/rpg/src/main/assets/web/">
+<title>Shadow Depths 3D harness</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; }
+</style>
+<script type="importmap">{"imports": {"three": "./lib/three.module.js", "three/addons/": "./lib/addons/"}}</script>
+</head>
+<body>
+<script type="module">
+  // Renders one CI state dump (rpg/screens3d/<scene>.json) for a screenshot:
+  // serve the repo root, open /tools/web3d/harness.html?scene=02_world_fight_day
+  import * as THREE from 'three';
+  import { Engine } from './js/engine.js';
+  const params = new URLSearchParams(location.search);
+  const scene = params.get('scene') || '02_world_fight_day';
+  const log = (m) => console.log('[harness] ' + m);
+  window.addEventListener('error', (e) => log('error ' + e.message + ' ' + e.filename + ':' + e.lineno));
+  try {
+    const data = await (await fetch('/rpg/screens3d/' + scene + '.json')).json();
+    const engine = new Engine({ capture: true, dpr: +(params.get('dpr') || 1), quality: params.get('q') || 'high' });
+    window.engine = engine;
+    await engine.init();
+    await engine.setLevel(data.level);
+    if (params.has('yaw')) data.frame.cy = +params.get('yaw');
+    for (const k of (params.get('strip') || '').split(',').filter(Boolean)) data.frame[k] = typeof data.frame[k] === 'string' ? '' : [];
+    if (params.has('pitch') || params.has('dist')) engine.chase.setView(params.has('pitch') ? +params.get('pitch') : null, params.has('dist') ? +params.get('dist') : null);
+    engine.receive(data.frame);
+    // Let textures arrive, animations blend in and the camera settle.
+    engine.step(1 / 30);
+    await Promise.all(engine.assets.pending);
+    await new Promise((r) => setTimeout(r, 200));
+    const t0 = performance.now();
+    for (let i = 0; i < 44; i++) engine.step(1 / 30, false);
+    const t1 = performance.now();
+    engine.step(1 / 30);
+    log('updates ' + ((t1 - t0) / 44).toFixed(1) + ' ms, render ' + (performance.now() - t1).toFixed(0) + ' ms');
+    const info = engine.renderer.info;
+    log(`draw calls ${info.render.calls}, triangles ${info.render.triangles}, programs ${info.programs.length}`);
+  } catch (e) {
+    log('failed ' + (e && e.stack || e));
+  }
+  window.done = true;
+</script>
+</body>
+</html>

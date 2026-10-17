@@ -1,0 +1,7 @@
+3D models in this folder are converted (meshopt-compressed, merged) from the KayKit packs by
+Kay Lousberg (https://kaylousberg.com), released under CC0 1.0 Universal:
+  - KayKit Character Pack: Adventurers
+  - KayKit Character Pack: Skeletons
+  - KayKit Dungeon Remastered
+  - KayKit Medieval Hexagon Pack
+tools/web3d/build-assets.mjs rebuilds them from the original packs.
