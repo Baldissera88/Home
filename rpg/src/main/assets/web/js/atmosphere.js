@@ -265,8 +265,8 @@ export class Atmosphere {
     this.fog.color.setHex(d.fog);
     this.fog.density = d.fogDensity + f.fg * 0.05;
     this.lantern.color.setHex(d.lantern);
-    this.lantern.intensity = 2.6;
-    this.lantern.distance = 8;
+    this.lantern.intensity = 5;
+    this.lantern.distance = 10;
     this.lantern.position.set(focus.x, focus.y + 2.4, focus.z + 0.4);
   }
 

@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Ground, makeWater } from './terrain.js';
 import { Flora } from './flora.js';
 import { PROP, TILE, hash } from './defs.js';
@@ -9,9 +8,9 @@ const WALL_HEIGHT = 1.9;
 
 const BIOME = {
   OVERWORLD: { layers: ['tex_terrain.jpg', 'tex_terrain_h.png', 7], water: 4 },
-  CRYPT: { layers: ['tex_floorset_crypt.jpg', 'tex_floorset_crypt_h.png', 4], wall: 0x8a8278, top: 0x5a554e },
-  CAVE: { layers: ['tex_floorset_cave.jpg', 'tex_floorset_cave_h.png', 4], wall: 0x7a6650, top: 0x544638 },
-  HELL: { layers: ['tex_floorset_hell.jpg', 'tex_floorset_hell_h.png', 4], wall: 0x6a3a30, top: 0x40221a },
+  CRYPT: { layers: ['tex_floorset_crypt.jpg', 'tex_floorset_crypt_h.png', 4], wall: 'crypt' },
+  CAVE: { layers: ['tex_floorset_cave.jpg', 'tex_floorset_cave_h.png', 4], wall: 'cave' },
+  HELL: { layers: ['tex_floorset_hell.jpg', 'tex_floorset_hell_h.png', 4], wall: 'hell' },
 };
 
 /** Fits a kit model to a footprint: scales by width, centres it and puts it on the ground. */
@@ -28,42 +27,21 @@ function fit(obj, width, height) {
   return holder;
 }
 
-/** Brick walls: a block per wall tile that touches the floor, with mortar lines from a shader. */
-function wallMaterial(color, top) {
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.9 });
+/**
+ * Dungeon walls: the game's own wall and top textures in world space, bump from their shading, grime
+ * creeping up from the floor and the see-through cutaway around the hero.
+ */
+function wallMaterial(map, top) {
+  const mat = new THREE.MeshStandardMaterial({ map, bumpMap: map, bumpScale: top ? 2.5 : 4, roughness: 0.92, metalness: 0 });
   mat.onBeforeCompile = (shader) => {
     applyOcclusion(shader, 1.6, 0.32);
-    shader.uniforms.uTop = { value: new THREE.Color(top) };
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWp; varying vec3 vWn;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWp = (modelMatrix * vec4(transformed, 1.0)).xyz; vWn = normalize(mat3(modelMatrix) * objectNormal);');
+      .replace('#include <common>', '#include <common>\nvarying float vWallY;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWallY = transformed.y;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>
-varying vec3 vWp; varying vec3 vWn; uniform vec3 uTop;
-float wHash(vec2 p) { return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
-float wNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(wHash(i), wHash(i + vec2(1, 0)), f.x), mix(wHash(i + vec2(0, 1)), wHash(i + vec2(1, 1)), f.x), f.y); }
-float mortar = 0.0;
-`)
-      .replace('#include <map_fragment>', `
-{
-  vec3 n = abs(vWn);
-  vec2 uv = n.x > n.z ? vWp.zy : vWp.xy;
-  if (n.y > 0.5) uv = vWp.xz;
-  vec2 b = uv * vec2(2.2, 4.4);
-  float row = floor(b.y);
-  b.x += mod(row, 2.0) * 0.5;
-  vec2 f = fract(b);
-  float edge = min(min(f.x, 1.0 - f.x) / 2.2, min(f.y, 1.0 - f.y) / 4.4) * 4.4;
-  mortar = 1.0 - smoothstep(0.03, 0.09, edge);
-  float stone = 0.78 + 0.32 * wHash(floor(b) + floor(vWp.y * 0.0)) + 0.18 * (wNoise(uv * 9.0) - 0.5);
-  vec3 c = diffuseColor.rgb * stone;
-  c = mix(c, c * 0.35, mortar);
-  if (n.y > 0.5) c = uTop * (0.75 + 0.4 * wNoise(uv * 3.0));
-  float grime = smoothstep(0.9, 0.0, vWp.y) * 0.45;
-  diffuseColor.rgb = c * (1.0 - grime);
-}`)
-      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\nnormal = normalize(normal + vec3(0.0, mortar * 0.0, 0.0));');
+      .replace('#include <common>', '#include <common>\nvarying float vWallY;')
+      .replace('#include <map_fragment>', `#include <map_fragment>
+  diffuseColor.rgb *= ${top ? '1.3' : 'mix(1.0, 1.9, smoothstep(0.0, 1.1, vWallY))'};`);
   };
   return mat;
 }
@@ -173,7 +151,7 @@ export class World {
         b.rotation.y = Math.round(Math.atan2(dx, dz) / (Math.PI / 2)) * (Math.PI / 2);
       }
       this.group.add(b);
-      if (light) this.lights.push({ x: cx + lx, y: 1.0, z: by + bh + ly - 0.5, color: 0xffb060, radius: 5, intensity: 1.2, flicker: true });
+      if (light) this.lights.push({ x: cx + lx, y: 1.2, z: by + bh + ly - 0.2, color: 0xffb060, radius: 5, intensity: 0.7, flicker: true });
     }
   }
 
@@ -182,10 +160,10 @@ export class World {
     pole.position.set(x, 0.95, z);
     pole.castShadow = true;
     this.group.add(pole);
-    const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.08, 0.22, 6), new THREE.MeshStandardMaterial({ color: 0xffc070, emissive: 0xffa040, emissiveIntensity: 2.5 }));
+    const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.08, 0.22, 6), new THREE.MeshStandardMaterial({ color: 0xffc070, emissive: 0xffa040, emissiveIntensity: 1.4 }));
     lamp.position.set(x, 1.95, z);
     this.group.add(lamp);
-    this.lights.push({ x, y: 1.95, z, color: 0xffb870, radius: 6, intensity: 1.5, flicker: false, lamp });
+    this.lights.push({ x, y: 1.95, z, color: 0xffb870, radius: 6, intensity: 0.7, flicker: false, lamp });
   }
 
   buildEntrances() {
@@ -232,25 +210,50 @@ export class World {
 
   buildWalls(cfg) {
     const lv = this.level;
-    const boxes = [];
+    const wall = (x, y) => this.tile(x, y) === TILE.WALL;
+    const near = (x, y, r) => {
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (!wall(x + dx, y + dy)) return true;
+      return false;
+    };
+    // Side faces only where a wall meets open floor; tops over the wall mass near the rooms.
+    const side = { pos: [], nor: [], uv: [] }, top = { pos: [], nor: [], uv: [] };
+    const H = WALL_HEIGHT, TEX_W = 2, TEX_H = 0.75;
+    const quad = (g, p, n, uv) => {
+      for (const i of [0, 1, 2, 0, 2, 3]) {
+        g.pos.push(...p[i]);
+        g.nor.push(...n);
+        g.uv.push(...uv[i]);
+      }
+    };
     for (let y = 0; y < lv.h; y++) {
       for (let x = 0; x < lv.w; x++) {
-        if (this.tile(x, y) !== TILE.WALL) continue;
-        let near = false;
-        for (let dy = -1; dy <= 1 && !near; dy++) for (let dx = -1; dx <= 1; dx++) if (this.tile(x + dx, y + dy) !== TILE.WALL) { near = true; break; }
-        if (!near) continue;
-        const h = WALL_HEIGHT * (0.92 + hash(x, y, 7) * 0.16);
-        const g = new THREE.BoxGeometry(1, h, 1);
-        g.translate(x + 0.5, h / 2, y + 0.5);
-        boxes.push(g);
+        if (!wall(x, y) || !near(x, y, 2)) continue;
+        quad(top, [[x, H, y], [x, H, y + 1], [x + 1, H, y + 1], [x + 1, H, y]], [0, 1, 0],
+          [[x / 2, y / 2], [x / 2, (y + 1) / 2], [(x + 1) / 2, (y + 1) / 2], [(x + 1) / 2, y / 2]]);
+        const v1 = H / TEX_H;
+        if (!wall(x, y + 1)) quad(side, [[x, 0, y + 1], [x + 1, 0, y + 1], [x + 1, H, y + 1], [x, H, y + 1]], [0, 0, 1],
+          [[x / TEX_W, 0], [(x + 1) / TEX_W, 0], [(x + 1) / TEX_W, v1], [x / TEX_W, v1]]);
+        if (!wall(x, y - 1)) quad(side, [[x + 1, 0, y], [x, 0, y], [x, H, y], [x + 1, H, y]], [0, 0, -1],
+          [[-(x + 1) / TEX_W, 0], [-x / TEX_W, 0], [-x / TEX_W, v1], [-(x + 1) / TEX_W, v1]]);
+        if (!wall(x + 1, y)) quad(side, [[x + 1, 0, y + 1], [x + 1, 0, y], [x + 1, H, y], [x + 1, H, y + 1]], [1, 0, 0],
+          [[-(y + 1) / TEX_W, 0], [-y / TEX_W, 0], [-y / TEX_W, v1], [-(y + 1) / TEX_W, v1]]);
+        if (!wall(x - 1, y)) quad(side, [[x, 0, y], [x, 0, y + 1], [x, H, y + 1], [x, H, y]], [-1, 0, 0],
+          [[y / TEX_W, 0], [(y + 1) / TEX_W, 0], [(y + 1) / TEX_W, v1], [y / TEX_W, v1]]);
       }
     }
-    if (boxes.length) {
-      const walls = new THREE.Mesh(mergeGeometries(boxes), wallMaterial(cfg.wall, cfg.top));
-      walls.castShadow = true;
-      walls.receiveShadow = true;
-      this.group.add(walls);
-    }
+    const mesh = (g, mat) => {
+      if (!g.pos.length) return;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(g.pos, 3));
+      geo.setAttribute('normal', new THREE.Float32BufferAttribute(g.nor, 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(g.uv, 2));
+      const m = new THREE.Mesh(geo, mat);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      this.group.add(m);
+    };
+    mesh(side, wallMaterial(this.assets.texture(`tex_${cfg.wall}_wall.png`), false));
+    mesh(top, wallMaterial(this.assets.texture(`tex_${cfg.wall}_top.png`), true));
     // Torches on the walls they belong to, facing the floor.
     for (const idx of lv.torch) {
       const x = idx % lv.w, y = Math.floor(idx / lv.w);

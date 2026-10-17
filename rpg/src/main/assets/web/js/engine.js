@@ -69,7 +69,9 @@ export class Engine {
     this.dpr = Math.min(devicePixelRatio || 1, this.quality.maxDpr);
     this.fixedDpr = opts.dpr || 0;
 
-    const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: this.quality.msaa });
+    // HDR needs float colour buffers; a few older GPUs only render to 8-bit ones.
+    const hdr = r.extensions.has('EXT_color_buffer_half_float') || r.extensions.has('EXT_color_buffer_float');
+    const target = new THREE.WebGLRenderTarget(1, 1, { type: hdr ? THREE.HalfFloatType : THREE.UnsignedByteType, samples: this.quality.msaa });
     this.composer = new EffectComposer(r, target);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     if (this.quality.bloom) {
@@ -149,6 +151,9 @@ export class Engine {
       return;
     }
     if (id !== this.building) return;
+    // Compile the new level's shaders up front so the first frames do not stutter.
+    try { await this.renderer.compileAsync(group, this.camera, this.scene); } catch (e) { /* compiles on first draw instead */ }
+    if (id !== this.building) return;
     if (this.world) {
       this.scene.remove(this.world.group);
       this.world.group.traverse((o) => { if (o.geometry && !o.geometry.userData.shared) o.geometry.dispose(); });
@@ -185,6 +190,7 @@ export class Engine {
     g.uHurt.value = Math.max(0, 1 - f.p[9] / 0.35);
     g.uFlash.value = Math.min(1, f.lf || 0) * 0.8;
     g.uWarm.value = this.world.outdoors ? 1 - f.dl : 0.6;
+    this.renderer.toneMappingExposure = this.world.outdoors ? 1.0 : 1.45;
     if (this.bloom) this.bloom.strength = this.world.outdoors ? 0.38 + 0.35 * (1 - f.dl) : 0.65;
     if (!render) return true;
     this.composer.render(dt);
@@ -207,6 +213,20 @@ export class Engine {
     requestAnimationFrame(loop);
   }
 
+  /** Still too slow at the lowest resolution: give up bloom, then shadow detail, then more resolution. */
+  degrade() {
+    const q = this.quality;
+    if (this.bloom && this.bloom.enabled) {
+      this.bloom.enabled = false;
+    } else if (this.atmosphere.sun.shadow.mapSize.x > 1024) {
+      const s = this.atmosphere.sun.shadow;
+      s.mapSize.set(1024, 1024);
+      if (s.map) { s.map.dispose(); s.map = null; }
+    } else if (q.minDpr > 0.75) {
+      this.quality = { ...q, minDpr: q.minDpr - 0.2 };
+    }
+  }
+
   adapt(dt) {
     if (this.fixedDpr) return;
     const ft = this.frameTimes;
@@ -216,6 +236,7 @@ export class Engine {
     ft.length = 0;
     const q = this.quality;
     let next = this.dpr;
+    if (avg > 1 / 45 && this.dpr <= q.minDpr + 0.01) this.degrade();
     if (avg > 1 / 45) next = Math.max(q.minDpr, this.dpr - 0.2);
     else if (avg < 1 / 58 && this.dpr < Math.min(devicePixelRatio || 1, q.maxDpr)) next = Math.min(q.maxDpr, this.dpr + 0.1);
     if (Math.abs(next - this.dpr) > 0.01) {

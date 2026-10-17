@@ -144,6 +144,9 @@ class Hero {
         }
     }
     this.lastSwing = swing;
+    // A short red flash when a hit lands.
+    if (act === ACT.HURT && this.act !== ACT.HURT) this.hurtFlash = 1;
+    this.hurtFlash = Math.max(0, (this.hurtFlash || 0) - dt * 5);
     this.act = act;
     a.update(dt);
     // Stealth turns the hero into a shimmer; hurt flashes red.
@@ -152,7 +155,7 @@ class Hero {
     for (const m of this.mats) {
       m.transparent = stealth;
       m.opacity = stealth ? 0.32 : 1;
-      m.emissive.setRGB((flags & 32) ? 0.16 : 0, 0, 0);
+      m.emissive.setRGB(0.35 * this.hurtFlash, 0.02 * this.hurtFlash, 0);
     }
   }
 }
