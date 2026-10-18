@@ -7,6 +7,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.core.view.ViewCompat
@@ -44,12 +45,17 @@ class MainActivity : ComponentActivity() {
             }
         }
         // Keep the game clear of the status bar, navigation bar and camera cut-outs (Android 15 draws edge to edge).
-        ViewCompat.setOnApplyWindowInsetsListener(web) { v, insets ->
+        // The padding goes on a frame around the WebView: a WebView draws its page under its own padding.
+        val frame = FrameLayout(this).apply {
+            setBackgroundColor(Color.parseColor("#1E2148"))
+            addView(web, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(frame) { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             WindowInsetsCompat.CONSUMED
         }
-        setContentView(web)
+        setContentView(frame)
         web.loadUrl("https://$HOST/assets/web/index.html")
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
