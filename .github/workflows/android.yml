@@ -39,6 +39,10 @@ jobs:
         with:
           name: skyggernes-dyb-apk
           path: rpg/build/outputs/apk/debug/*.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sticky-paws-apk
+          path: stickypaws/build/outputs/apk/debug/*.apk
       - name: RPG UI screenshots
         id: uitests
         continue-on-error: true

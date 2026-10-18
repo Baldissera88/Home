@@ -28,3 +28,9 @@ A third app in the `rpg/` module: a dark-fantasy action RPG in the spirit of Dia
 - Synthesised sound effects and ambience; the hero is saved automatically.
 
 Download `skyggernes-dyb-apk` from the CI run.
+
+## Sticky Paws
+
+A fourth app in the `stickypaws/` module: a puzzle game where a raccoon thief stretches his arm across the room to steal fidget toys. Drag from the paw to steer the arm around shelves, sleeping dogs, lasers and robot vacuums; buttons switch off matching lasers and robots. 15 rooms with up to 3 stars each, and a Toy Box of sensory fidgets (Pop-It, Spinner, Clickers, Squishy) that unlock as you play. The game is a single web page in `stickypaws/src/main/assets/web` shown in a WebView, with the Fredoka and Nunito fonts bundled so it works offline.
+
+Download `sticky-paws-apk` from the CI run.
