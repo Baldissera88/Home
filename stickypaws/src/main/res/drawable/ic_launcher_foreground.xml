@@ -1,0 +1,16 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Raccoon face: ears, grey head, white muzzle, dark mask, eyes and nose -->
+    <path android:fillColor="#9EA3BD" android:pathData="M30,44 a9,10 0 1,0 18,0 a9,10 0 1,0 -18,0 M60,44 a9,10 0 1,0 18,0 a9,10 0 1,0 -18,0" />
+    <path android:fillColor="#575C7F" android:pathData="M34,44 a5,6 0 1,0 10,0 a5,6 0 1,0 -10,0 M64,44 a5,6 0 1,0 10,0 a5,6 0 1,0 -10,0" />
+    <path android:fillColor="#9EA3BD" android:pathData="M26,62 a28,22 0 1,0 56,0 a28,22 0 1,0 -56,0" />
+    <path android:fillColor="#ECEBF5" android:pathData="M36,71 a18,11 0 1,0 36,0 a18,11 0 1,0 -36,0 M48,48 a6,5 0 1,0 12,0 a6,5 0 1,0 -12,0" />
+    <path android:fillColor="#2F3149" android:pathData="M32,61 a11,7 0 1,0 22,0 a11,7 0 1,0 -22,0 M54,61 a11,7 0 1,0 22,0 a11,7 0 1,0 -22,0 M50,57 h8 v5 h-8 z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M39,61 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0 M60,61 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+    <path android:fillColor="#1B1C2C" android:pathData="M42,61 a2.3,2.3 0 1,0 4.6,0 a2.3,2.3 0 1,0 -4.6,0 M62,61 a2.3,2.3 0 1,0 4.6,0 a2.3,2.3 0 1,0 -4.6,0 M50,68 a4,2.7 0 1,0 8,0 a4,2.7 0 1,0 -8,0" />
+    <!-- Gold star the thief is after -->
+    <path android:fillColor="#FFCF6B" android:pathData="M78,28 l2.4,5 5.4,0.8 -3.9,3.8 0.9,5.4 -4.8,-2.5 -4.8,2.5 0.9,-5.4 -3.9,-3.8 5.4,-0.8 z" />
+</vector>
