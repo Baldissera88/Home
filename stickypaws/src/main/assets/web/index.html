@@ -42,6 +42,9 @@ h1,h2,h3{font-family:var(--display);margin:0;text-wrap:balance}
 
 /* levels */
 #levelGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;overflow-y:auto;padding:8px 2px 20px}
+.world{grid-column:1/-1;display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-top:10px;font-size:20px;font-weight:600;color:var(--lamp)}
+.world:first-child{margin-top:0}
+.world small{font-family:var(--body);font-size:13px;font-weight:800;color:var(--muted)}
 .lv{aspect-ratio:1;max-width:100%;border-radius:22px;background:var(--panel);box-shadow:0 6px 0 #20245a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
 .lv b{font-size:34px;font-weight:700;line-height:1}
 .lv span{font-size:12px;color:var(--muted);font-family:var(--body);font-weight:800;max-width:90%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -157,11 +160,12 @@ h1,h2,h3{font-family:var(--display);margin:0;text-wrap:balance}
   </section>
 </div>
 
+<script src="levels.js"></script>
 <script>
 const $=s=>document.querySelector(s);
 const W=360,H=640,AR=8,STEP=4;
 const O={x:84,y:576};
-const GC={a:'#ff5ad1',b:'#ffa53d'};
+const GC={a:'#ff5ad1',b:'#ffa53d',c:'#8be04a'};
 const L=o=>Object.assign({walls:[],lasers:[],buttons:[],dogs:[],bots:[],coins:[]},o);
 const LEVELS=[
 L({name:'First Grab',hint:'Drag from the paw to the toy!',max:700,target:[230,250,'popit'],coins:[[130,470],[190,360]]}),
@@ -180,6 +184,10 @@ L({name:'Laser Grid',max:1600,target:[300,150,'spinner'],lasers:[[120,0,120,640,
 L({name:'Shelf Snake',max:1900,target:[80,120,'cube'],walls:[[0,460,260,24],[100,330,260,24],[0,200,260,24]],lasers:[[180,354,180,460,'a']],buttons:[[200,560,'a']],dogs:[[180,277,18]],coins:[[60,400],[310,160]]}),
 L({name:'Grand Heist',max:1800,target:[190,90,'slime'],walls:[[0,480,280,24]],bots:[[30,400,330,400,20,140,'a']],buttons:[[330,560,'a'],[40,350,'b']],lasers:[[0,300,360,300,'b']],dogs:[[120,190,36],[262,180,36]],coins:[[190,250],[320,340]]}),
 ];
+/* rooms 16-100 come from levels.js (stickypaws/tools/generate.mjs), grouped into worlds */
+LEVELS.push(...(window.MORE_LEVELS||[]).map(L));
+const WORLDS=window.WORLDS||[{from:1,name:'Living Room'}];
+const worldIdx=i=>{let w=0;WORLDS.forEach((x,k)=>{if(i+1>=x.from)w=k});return w};
 const FIDGETS=[
   {id:'popit',name:'Pop-It',after:0},
   {id:'spinner',name:'Spinner',after:3},
@@ -233,15 +241,19 @@ $('#bSound').onclick=()=>{save.muted=!save.muted;persist();soundLabel();ac();SFX
 
 function starStr(n){let s='';for(let k=0;k<3;k++)s+=k<n?'★':'<span class="off">★</span>';return s}
 function renderLevels(){
-  const g=$('#levelGrid');g.innerHTML='';let tot=0;
+  const g=$('#levelGrid');g.innerHTML='';let tot=0,next=null;
   LEVELS.forEach((lv,i)=>{
     const st=save.stars[i]||0;tot+=st;
+    const wd=WORLDS.find(w=>w.from===i+1);
+    if(wd){const end=(WORLDS[WORLDS.indexOf(wd)+1]||{from:LEVELS.length+1}).from-1;let ws=0;for(let k=i;k<end;k++)ws+=save.stars[k]||0;
+      const h=document.createElement('h3');h.className='world';h.innerHTML=`${wd.name}<small>★ ${ws}/${(end-i)*3}</small>`;g.appendChild(h)}
     const b=document.createElement('button');b.className='lv'+(i===save.done?' next':'');
     b.disabled=i>save.done;
     b.innerHTML=`<b>${i+1}</b><span>${i>save.done?'Locked':lv.name}</span><i>${i<save.done?starStr(st):''}</i>`;
-    b.onclick=()=>{SFX.click(900);startLevel(i)};g.appendChild(b);
+    b.onclick=()=>{SFX.click(900);startLevel(i)};g.appendChild(b);if(i===save.done)next=b;
   });
   $('#totalStars').textContent='★ '+tot+'/'+LEVELS.length*3;
+  if(next)requestAnimationFrame(()=>next.scrollIntoView({block:'center'}));
 }
 
 /* geometry */
@@ -264,7 +276,7 @@ function startLevel(i){
   G={i,lv,path:[{x:O.x,y:O.y}],len:0,coins:lv.coins.map(()=>false),pressed:new Set(),state:'play',finger:null,t:G&&G.i===i?G.t:0,ft:0,msg:'',shake:0,
     bots:lv.bots.map(b=>({x:b[0],y:b[1],ph:0})),parts:G&&G.i===i?G.parts:[],blocked:0,maxed:false,stretchAcc:0,woke:-1,flash:0,toy:lv.target[2]};
   $('#win').hidden=true;
-  $('#lvlName').innerHTML=`<small>Room ${i+1}</small>${lv.name}`;
+  $('#lvlName').innerHTML=`<small>Room ${i+1} · ${WORLDS[worldIdx(i)].name}</small>${lv.name}`;
   $('#hint').textContent=lv.hint||'';
   updHud();if(current!=='sGame')show('sGame');
 }
@@ -363,18 +375,27 @@ function win(){
 }
 
 /* drawing */
-let BG=null;
-function makeBG(){
-  BG=document.createElement('canvas');BG.width=W*2;BG.height=H*2;const c=BG.getContext('2d');c.scale(2,2);
-  const g=c.createLinearGradient(0,0,0,H);g.addColorStop(0,'#2b2f66');g.addColorStop(1,'#232651');c.fillStyle=g;c.fillRect(0,0,W,H);
-  c.fillStyle='rgba(255,255,255,.035)';for(let y=10;y<H;y+=28)for(let x=(y/28%2)*14+6;x<W;x+=28){c.beginPath();c.arc(x,y,2.2,0,7);c.fill()}
+/* one wallpaper per world: living room dots, kitchen tiles, bedroom stars, garage stripes, attic planks */
+const THEMES=[['#2b2f66','#232651'],['#22506a','#193b4f'],['#3e2d6b','#2b2152'],['#3a4149','#2a2f35'],['#55392a','#3a271c']];
+const BGS=[];
+function makeBG(w){
+  const BG=BGS[w]=document.createElement('canvas');BG.width=W*2;BG.height=H*2;const c=BG.getContext('2d');c.scale(2,2);
+  const th=THEMES[w%THEMES.length];
+  const g=c.createLinearGradient(0,0,0,H);g.addColorStop(0,th[0]);g.addColorStop(1,th[1]);c.fillStyle=g;c.fillRect(0,0,W,H);
+  c.fillStyle=c.strokeStyle='rgba(255,255,255,.04)';c.lineWidth=2;
+  if(w===1){for(let y=0;y<H;y+=30){c.beginPath();c.moveTo(0,y);c.lineTo(W,y);c.stroke()}for(let x=0;x<W;x+=30){c.beginPath();c.moveTo(x,0);c.lineTo(x,H);c.stroke()}}
+  else if(w===2){for(let y=14;y<H;y+=46)for(let x=(y/46%2)*23+12;x<W;x+=46){star(c,x,y,5);c.fill()}}
+  else if(w===3){c.lineWidth=14;for(let x=-H;x<W;x+=48){c.beginPath();c.moveTo(x,H);c.lineTo(x+H,0);c.stroke()}}
+  else if(w===4){for(let y=0;y<H;y+=36){c.beginPath();c.moveTo(0,y);c.lineTo(W,y);c.stroke();for(let x=((y/36)%3)*50+20;x<W;x+=150){c.beginPath();c.moveTo(x,y);c.lineTo(x,y+36);c.stroke()}}}
+  else for(let y=10;y<H;y+=28)for(let x=(y/28%2)*14+6;x<W;x+=28){c.beginPath();c.arc(x,y,2.2,0,7);c.fill()}
   // window with moon
   c.fillStyle='#161a40';rr(c,256,26,80,96,10);c.fill();
   c.fillStyle='#fff3c4';c.beginPath();c.arc(306,60,15,0,7);c.fill();c.fillStyle='#161a40';c.beginPath();c.arc(298,55,13,0,7);c.fill();
   c.fillStyle='#fff3c4';[[270,96],[322,100],[284,44]].forEach(([x,y])=>{c.beginPath();c.arc(x,y,1.4,0,7);c.fill()});
   c.strokeStyle='#4d548f';c.lineWidth=5;rr(c,256,26,80,96,10);c.stroke();c.beginPath();c.moveTo(296,26);c.lineTo(296,122);c.moveTo(256,74);c.lineTo(336,74);c.stroke();
   // baseboard
-  c.fillStyle='#1d2047';c.fillRect(0,H-10,W,10);
+  c.fillStyle='rgba(0,0,0,.25)';c.fillRect(0,H-10,W,10);
+  return BG;
 }
 function rr(c,x,y,w,h,r){c.beginPath();c.moveTo(x+r,y);c.arcTo(x+w,y,x+w,y+h,r);c.arcTo(x+w,y+h,x,y+h,r);c.arcTo(x,y+h,x,y,r);c.arcTo(x,y,x+w,y,r);c.closePath()}
 function star(c,x,y,r,sx=1){c.save();c.translate(x,y);c.scale(sx,1);c.beginPath();for(let k=0;k<10;k++){const a=-Math.PI/2+k*Math.PI/5,rr2=k%2?r*.45:r;c.lineTo(Math.cos(a)*rr2,Math.sin(a)*rr2)}c.closePath();c.restore()}
@@ -472,7 +493,7 @@ function render(){
   c.setTransform(1,0,0,1,0,0);c.fillStyle='#1e2148';c.fillRect(0,0,cv.width,cv.height);
   const sh=G.shake;c.setTransform(dpr*sc,0,0,dpr*sc,dpr*(ox+(Math.random()-.5)*sh*sc),dpr*(oy+(Math.random()-.5)*sh*sc));
   c.save();rr(c,0,0,W,H,18);c.clip();
-  if(!BG)makeBG();c.drawImage(BG,0,0,W,H);
+  const wi=worldIdx(G.i);c.drawImage(BGS[wi]||makeBG(wi),0,0,W,H);
   const lv=G.lv,tg=lv.target;
   // walls
   lv.walls.forEach(w=>{c.fillStyle='rgba(0,0,0,.25)';rr(c,w[0]+3,w[1]+5,w[2],w[3],6);c.fill();
