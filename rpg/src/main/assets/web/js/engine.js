@@ -12,6 +12,7 @@ import { Atmosphere } from './atmosphere.js';
 import { ChaseCamera } from './camera.js';
 import { Overlay, loadFonts } from './overlay.js';
 import { OCCLUDE } from './occlude.js';
+import { FrameInterpolator } from './interp.js';
 
 /** Vignette, a gentle filmic grade, the red edge of low health and the white flash of a new level. */
 const GradeShader = {
@@ -134,8 +135,9 @@ export class Engine {
       try { msg = JSON.parse(data); } catch (e) { this.report('bad message: ' + e.message); return; }
     }
     if (!msg) return;
-    if (msg.k === 'f') this.frame = msg;
+    if (msg.k === 'f') (this.interp || (this.interp = new FrameInterpolator())).push(msg, performance.now());
     else if (msg.k === 'level') {
+      if (this.interp) this.interp.reset();
       if (this.ready) this.setLevel(msg); else this.pending = msg;
     } else if (msg.k === 'cam') this.chase.setView(msg.p, msg.d);
   }
@@ -182,7 +184,8 @@ export class Engine {
 
   /** Moves the scene to the latest game frame; false while there is nothing to show yet. */
   update(dt) {
-    const f = this.frame;
+    // Frames come on the game's clock: show the moment due at this display frame (rAF time when looping).
+    const f = this.frame = this.interp ? this.interp.sample(this.lastTime || performance.now()) : null;
     if (!this.ready || !this.world || !f) return false;
     const ground = this.ground;
     this.actors.update(f, dt, ground);
