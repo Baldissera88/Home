@@ -39,8 +39,37 @@
     const t1 = performance.now();
     engine.step(1 / 30);
     log('updates ' + ((t1 - t0) / 44).toFixed(1) + ' ms, render ' + (performance.now() - t1).toFixed(0) + ' ms');
-    const info = engine.renderer.info;
-    log(`draw calls ${info.render.calls}, triangles ${info.render.triangles}, programs ${info.programs.length}`);
+    if (params.has('profile')) {
+      // Per-frame cost over N frames: deterministic counts plus CPU timings (SwiftShader, so render time
+      // stands in for GPU load; compare numbers measured back to back on the same machine).
+      const n = +params.get('profile') || 20;
+      const r = engine.renderer, gl = r.getContext(), px = new Uint8Array(4);
+      r.info.autoReset = false;
+      r.info.reset();
+      let upd = 0, ren = 0, ovl = 0;
+      for (let i = 0; i < n; i++) {
+        const a = performance.now();
+        engine.update(1 / 60);
+        const b = performance.now();
+        engine.drawScene(1 / 60);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        const c = performance.now();
+        engine.drawOverlay();
+        upd += b - a; ren += c - b; ovl += performance.now() - c;
+      }
+      const info = r.info;
+      window.result = {
+        scene, calls: Math.round(info.render.calls / n), triangles: Math.round(info.render.triangles / n),
+        points: Math.round(info.render.points / n), lines: Math.round(info.render.lines / n),
+        programs: info.programs.length, geometries: info.memory.geometries, textures: info.memory.textures,
+        updateMs: +(upd / n).toFixed(2), renderMs: +(ren / n).toFixed(1), overlayMs: +(ovl / n).toFixed(2),
+      };
+      log('RESULT ' + JSON.stringify(window.result));
+      r.info.autoReset = true;
+    } else {
+      const info = engine.renderer.info;
+      log(`draw calls ${info.render.calls}, triangles ${info.render.triangles}, programs ${info.programs.length}`);
+    }
   } catch (e) {
     log('failed ' + (e && e.stack || e));
   }

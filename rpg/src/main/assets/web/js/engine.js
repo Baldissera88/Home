@@ -171,12 +171,19 @@ export class Engine {
 
   /** Advances everything by dt with the latest game frame and draws it. */
   step(dt, render = true) {
-    const f = this.frame;
-    if (!this.ready || !this.world || !f) {
+    if (!this.update(dt)) {
       this.renderer.setClearColor(0x000000, 1);
       this.renderer.clear();
       return false;
     }
+    if (render) this.draw(dt);
+    return true;
+  }
+
+  /** Moves the scene to the latest game frame; false while there is nothing to show yet. */
+  update(dt) {
+    const f = this.frame;
+    if (!this.ready || !this.world || !f) return false;
     const ground = this.ground;
     this.actors.update(f, dt, ground);
     const hero = this.actors.hero.root.position;
@@ -192,10 +199,22 @@ export class Engine {
     g.uWarm.value = this.world.outdoors ? 1 - f.dl : 0.6;
     this.renderer.toneMappingExposure = this.world.outdoors ? 1.0 : 1.45;
     if (this.bloom) this.bloom.strength = this.world.outdoors ? 0.38 + 0.35 * (1 - f.dl) : 0.65;
-    if (!render) return true;
-    this.composer.render(dt);
-    this.overlay.draw(f, this.camera, ground, this.actors, this.level);
     return true;
+  }
+
+  draw(dt) {
+    this.drawScene(dt);
+    this.drawOverlay();
+  }
+
+  /** The 3D view with its post-processing. */
+  drawScene(dt) {
+    this.composer.render(dt);
+  }
+
+  /** The 2D labels over it. */
+  drawOverlay() {
+    this.overlay.draw(this.frame, this.camera, this.ground, this.actors, this.level);
   }
 
   /** Runs the render loop, trading resolution for frame rate when the phone struggles. */
