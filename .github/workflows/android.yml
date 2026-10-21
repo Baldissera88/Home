@@ -39,6 +39,10 @@ jobs:
         with:
           name: skyggernes-dyb-apk
           path: rpg/build/outputs/apk/debug/*.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: squishy-crush-apk
+          path: squish/build/outputs/apk/debug/*.apk
       - name: RPG UI screenshots
         id: uitests
         continue-on-error: true
@@ -74,3 +78,5 @@ jobs:
             sleep $((attempt * 3))
           done
           echo "screenshot push failed"
+      - name: Squishy Crush engine tests
+        run: ./gradlew :squish:testDebugUnitTest

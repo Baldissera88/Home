@@ -28,3 +28,9 @@ A third app in the `rpg/` module: a dark-fantasy action RPG in the spirit of Dia
 - Synthesised sound effects and ambience; the hero is saved automatically.
 
 Download `skyggernes-dyb-apk` from the CI run.
+
+## Squishy Crush
+
+A fourth app in the `squish/` module: a Candy Crush-style match-3 game (Danish UI) starring the toys everyone wants right now — NeeDoh, Squishmallows, slime, pop-its, mochi and Labubu. Swap two toys to make rows of three; bigger matches make power-ups (stripes, bombs and the glitter bomb) that can be combined. 30 levels with collect goals, glitter goo, bubble wrap and three stars per level. Everything is drawn in code and squashes and wobbles; sounds and music are synthesised by `tools/squish-audio/synth.py`.
+
+Download `squishy-crush-apk` from the CI run.
