@@ -269,7 +269,8 @@
   }
 
   {
-    // Allocation: blending a busy pair over and over should not grow the heap.
+    // Blending a busy pair over and over keeps nothing (output rows are reused). Moving values in rows
+    // that also hold strings are still boxed, short-lived garbage: node --trace-gc shows those.
     const ip = new FrameInterpolator();
     const a = frame(0, 0, sc0), b = frame(1 / 60, 1, sc0);
     for (const f of [a, b]) for (let i = 0; i < 40; i++) f.e.push([100 + i, 2, 20 + i, 20, 1, 0, 1, 0, 0, 0, 1, 1, '']);
@@ -280,7 +281,7 @@
       const before = mem.usedJSHeapSize;
       for (let i = 0; i < 2e5; i++) ip.sample(20 + (i % 997) * 0.01 + i * 1e-9);
       const grew = mem.usedJSHeapSize - before;
-      check('no per-sample allocations', grew < 64 * 1024, `heap ${grew >= 0 ? '+' : ''}${(grew / 1024).toFixed(1)} KB over 200k blends`);
+      check('heap does not grow while blending', grew < 64 * 1024, `heap ${grew >= 0 ? '+' : ''}${(grew / 1024).toFixed(1)} KB over 200k blends`);
     }
   }
 
