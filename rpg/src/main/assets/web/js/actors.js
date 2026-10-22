@@ -227,12 +227,14 @@ class Monster {
     }
   }
 
-  update(e, dt, ground, t) {
+  update(e, dt, ground, t, view) {
     const x = e[E.X], y = e[E.Y];
     const size = e[E.SIZE];
     const lift = this.look && this.look.float ? this.look.float + Math.sin(t * 2 + this.uid) * 0.08 : 0;
     this.root.position.set(x, ground(x, y) + lift, y);
     this.root.scale.setScalar(size);
+    // Hidden, or far away and not its turn: only the position follows; the time is played later.
+    if (view && (dt = view.admit(this, dt)) < 0) return;
     const target = Math.atan2(e[E.FX], e[E.FY]);
     this.yaw = angleDamp(this.yaw, target, 10, dt);
     this.root.rotation.y = this.yaw;
@@ -288,14 +290,15 @@ class Monster {
   }
 
   /** Plays out the death, then sinks into the ground; returns false when gone. */
-  updateDead(dt) {
+  updateDead(dt, view) {
     this.deadTime += dt;
-    if (this.anim) this.anim.update(dt);
     if (this.beast) {
       this.root.rotation.z = Math.min(1.6, this.deadTime * 4);
       this.root.position.y -= dt * 0.1;
     }
     if (this.deadTime > 1.6) this.root.position.y -= dt * 0.5;
+    const step = view ? view.admit(this, dt) : dt;
+    if (this.anim && step >= 0) this.anim.update(step);
     return this.deadTime < 3.2;
   }
 }
@@ -322,9 +325,10 @@ class Townsfolk {
     this.yaw = 0;
   }
 
-  update(n, dt, ground) {
+  update(n, dt, ground, view) {
     const x = n[2], y = n[3];
     this.root.position.set(x, ground(x, y), y);
+    if (view && (dt = view.admit(this, dt)) < 0) return;
     this.yaw = angleDamp(this.yaw, Math.atan2(n[4], n[5]), 8, dt);
     this.root.rotation.y = this.yaw;
     if (n[6] === 1) this.anim.play('Walking_A', { speed: 1 });
@@ -342,6 +346,13 @@ class Afterimages {
     this.pool = [];
     this.live = new Map();
     this.source = null;
+    this.stamp = 0;
+    this.expire = (g, key) => {
+      if (g.stamp === this.stamp) return;
+      g.used = false;
+      g.root.visible = false;
+      this.live.delete(key);
+    };
   }
 
   bones(root) {
@@ -350,18 +361,17 @@ class Afterimages {
     return list;
   }
 
-  update(gh, hero, ground) {
+  update(gh, hero, ground, view) {
     if (this.source !== hero) {
       for (const g of this.pool) this.scene.remove(g.root);
       this.pool = [];
       this.live.clear();
       this.source = hero;
     }
-    const seen = new Set();
+    const stamp = ++this.stamp;
     for (let i = gh.length - 1; i >= 0; i -= 2) {
-      const [x, y, age] = gh[i];
-      const key = x.toFixed(2) + ',' + y.toFixed(2);
-      seen.add(key);
+      const x = gh[i][0], y = gh[i][1], age = gh[i][2];
+      const key = Math.round(x * 100) * 1e6 + Math.round(y * 100);
       let g = this.live.get(key);
       if (!g) {
         g = this.pool.find((p) => !p.used);
@@ -369,31 +379,152 @@ class Afterimages {
           if (this.pool.length >= 10) continue;
           const root = new THREE.Group();
           const body = SkeletonUtils.clone(hero.body);
-          body.traverse((o) => { if (o.isMesh) { o.material = GHOST_MAT.clone(); o.castShadow = false; o.receiveShadow = false; } });
+          const meshes = [];
+          body.traverse((o) => { if (o.isMesh) { o.material = GHOST_MAT.clone(); o.castShadow = false; o.receiveShadow = false; meshes.push(o); } });
           root.add(body);
-          g = { root, body, bones: this.bones(body), src: this.bones(hero.body), used: false };
+          g = { root, body, meshes, bones: this.bones(body), src: this.bones(hero.body), used: false, stamp: 0 };
           this.pool.push(g);
           this.scene.add(root);
         }
         g.used = true;
         g.src.forEach((b, i) => { const d = g.bones[i]; if (d) { d.position.copy(b.position); d.quaternion.copy(b.quaternion); d.scale.copy(b.scale); } });
         g.body.scale.copy(hero.body.scale);
-        g.body.traverse((o) => { if (o.isMesh) { const src = hero.body.getObjectByName(o.name); o.visible = src ? src.visible : o.visible; } });
+        for (const o of g.meshes) { const src = hero.body.getObjectByName(o.name); if (src) o.visible = src.visible; }
         g.root.rotation.y = hero.root.rotation.y;
         g.root.position.set(x, ground(x, y), y);
         this.live.set(key, g);
       }
-      g.root.visible = true;
+      g.stamp = stamp;
+      g.root.visible = !view || view.sees(g.root.position, FIGURE, 0);
       const a = Math.max(0, 1 - age / 0.3);
-      g.body.traverse((o) => { if (o.isMesh) o.material.opacity = 0.14 * a * a; });
+      for (const o of g.meshes) o.material.opacity = 0.14 * a * a;
     }
-    for (const [key, g] of this.live) {
-      if (!seen.has(key)) {
-        g.used = false;
-        g.root.visible = false;
-        this.live.delete(key);
-      }
+    this.live.forEach(this.expire);
+  }
+}
+
+// The crowd's level of detail: what the camera cannot see is neither drawn nor animated.
+/** Height of a plain character (KayKit rigs at CHAR_SCALE). */
+const FIGURE = 1.35;
+/** FogExp2 hides a figure once depth x density passes this (1 - exp(-1.8^2): about 96 % fog). */
+const FOG_HIDE = 1.8;
+/** Within this distance of the hero actors animate every frame, within MID_ANIM every 2nd, beyond every 3rd. */
+const NEAR_ANIM = 14, MID_ANIM = 24;
+/** Actors cast shadows within SHADOW_ON of the hero and stop beyond SHADOW_OFF. */
+const SHADOW_ON = 12, SHADOW_OFF = 13;
+/** Seconds of animation a hidden actor may owe; enough to finish any fade or one-shot clip. */
+const MAX_OWED = 2;
+
+/** One actor's culling and animation-rate state. */
+class Lod {
+  constructor(slot) {
+    this.slot = slot;
+    this.shown = true;
+    this.shadow = true;
+    this.owed = 0;
+    this.casters = null;
+  }
+
+  /** Turns the actor's shadow on or off, remembering which meshes cast one to begin with. */
+  castShadow(root, on) {
+    if (!this.casters) {
+      const list = this.casters = [];
+      root.traverse((o) => { if (o.isMesh && o.castShadow) list.push(o); });
     }
+    for (const o of this.casters) o.castShadow = on;
+    this.shadow = on;
+  }
+}
+
+/**
+ * The camera's view of the crowd for one frame: frustum and fog culling, how often each actor animates
+ * and who casts a shadow. The chase camera moves after the actors, so its frustum is a frame old and the
+ * test spheres are padded by how much it moved and turned in the frame before.
+ */
+class CrowdView {
+  constructor() {
+    this.frustum = new THREE.Frustum();
+    this.viewProj = new THREE.Matrix4();
+    this.camPos = new THREE.Vector3();
+    this.camDir = new THREE.Vector3();
+    this.lastPos = new THREE.Vector3();
+    this.lastDir = new THREE.Vector3();
+    this.lastHero = new THREE.Vector3();
+    this.center = new THREE.Vector3();
+    this.hero = null;
+    this.reach = Infinity;
+    this.pad = 0;
+    this.slack = 0;
+    this.frame = 0;
+    this.slots = 0;
+    this.warm = 0;
+    this.on = false;
+  }
+
+  /** Reads this frame's camera, fog and hero; without a camera every actor counts as on screen. */
+  begin(camera, fog, hero) {
+    this.frame++;
+    this.hero = hero;
+    const jumped = hero.distanceToSquared(this.lastHero) > 16;
+    this.lastHero.copy(hero);
+    this.on = false;
+    if (!camera) return;
+    camera.updateMatrixWorld();
+    this.viewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    this.frustum.setFromProjectionMatrix(this.viewProj);
+    const pos = this.camPos.setFromMatrixPosition(camera.matrixWorld);
+    const m = camera.matrixWorld.elements;
+    const dir = this.camDir.set(-m[8], -m[9], -m[10]).normalize();
+    const turn = Math.acos(Math.min(1, dir.dot(this.lastDir)));
+    const moved = Math.min(1, pos.distanceTo(this.lastPos));
+    this.lastPos.copy(pos);
+    this.lastDir.copy(dir);
+    this.pad = 0.3 + moved * 1.5;
+    this.slack = 0.035 + turn * 1.5;
+    this.reach = !fog ? Infinity : fog.isFogExp2 ? (fog.density > 0 ? FOG_HIDE / fog.density : Infinity) : fog.far;
+    // Right after a new level or a teleport the old camera says nothing about the new place.
+    if (this.warm > 0) this.warm--;
+    else this.on = !jumped;
+  }
+
+  /** Whether a figure h tall standing at p may be on screen and is not lost in the fog. */
+  sees(p, h, extra) {
+    if (!this.on) return true;
+    const c = this.center.set(p.x, p.y + h * 0.5, p.z);
+    const cam = this.camPos, dir = this.camDir;
+    const depth = (c.x - cam.x) * dir.x + (c.y - cam.y) * dir.y + (c.z - cam.z) * dir.z;
+    const r = h * 0.75 + 0.35;
+    if (depth - r > this.reach) return false;
+    const pad = -(r + extra + this.pad + Math.max(0, depth) * this.slack);
+    const planes = this.frustum.planes;
+    for (let i = 0; i < 6; i++) if (planes[i].distanceToPoint(c) < pad) return false;
+    return true;
+  }
+
+  /**
+   * Shows or hides an actor (root.visible, so neither the view nor the shadow pass draws a hidden one),
+   * switches its shadow by distance and returns the time to animate it by now, or -1 to skip this frame.
+   * Skipped time is owed and played in one go on the next update.
+   */
+  admit(a, dt) {
+    const lod = a.lod || (a.lod = new Lod(this.slots++));
+    const root = a.root, p = root.position, hero = this.hero;
+    const dx = p.x - hero.x, dz = p.z - hero.z;
+    const d2 = dx * dx + dz * dz;
+    const reach = lod.shadow ? SHADOW_OFF : SHADOW_ON;
+    if ((d2 < reach * reach) !== lod.shadow) lod.castShadow(root, !lod.shadow);
+    const h = (a.height || FIGURE) * root.scale.x;
+    // A shadow can fall on screen from just outside it.
+    const shown = this.sees(p, h, lod.shadow ? 1 + h * 1.5 : 0);
+    const was = lod.shown;
+    if (shown !== was) root.visible = lod.shown = shown;
+    lod.owed = Math.min(MAX_OWED, lod.owed + dt);
+    if (!shown) return -1;
+    const every = d2 < NEAR_ANIM * NEAR_ANIM ? 1 : d2 < MID_ANIM * MID_ANIM ? 2 : 3;
+    if (was && every > 1 && (this.frame + lod.slot) % every !== 0) return -1;
+    const step = lod.owed;
+    lod.owed = 0;
+    return step;
   }
 }
 
@@ -408,6 +539,19 @@ export class Actors {
     this.npcs = new Map();
     this.merchant = null;
     this.afterimages = new Afterimages(scene);
+    this.view = new CrowdView();
+    // Sweeps for actors the latest frame no longer lists (bound once: no garbage per frame).
+    this.lostEnemy = (m, uid) => {
+      if (m.seen === this.view.frame) return;
+      this.enemies.delete(uid);
+      m.die();
+      this.dying.push(m);
+    };
+    this.lostNpc = (a, uid) => {
+      if (a.seen === this.view.frame) return;
+      this.scene.remove(a.root);
+      this.npcs.delete(uid);
+    };
   }
 
   reset() {
@@ -419,6 +563,8 @@ export class Actors {
     this.dying = [];
     this.npcs.clear();
     this.merchant = null;
+    // The camera is still where the last level left it: show everything until it catches up.
+    this.view.warm = 2;
   }
 
   placeMerchant(level, ground) {
@@ -430,7 +576,11 @@ export class Actors {
     this.merchant = m;
   }
 
-  update(f, dt, ground) {
+  /**
+   * Moves everyone to the game's frame. With the camera, actors it cannot see are hidden and not animated,
+   * far ones animate every 2nd or 3rd frame and only those near the hero cast shadows.
+   */
+  update(f, dt, ground, camera) {
     const p = f.p;
     const cls = HERO[p[P.CLS]], wpn = WEAPON[p[P.WPN]];
     if (!this.hero || this.hero.cls !== cls || this.hero.weapon !== wpn) {
@@ -439,46 +589,51 @@ export class Actors {
       this.scene.add(this.hero.root);
     }
     this.hero.update(p, dt, ground);
-    this.afterimages.update(f.gh, this.hero, ground);
+    const view = this.view;
+    view.begin(camera, this.scene.fog, this.hero.root.position);
+    this.afterimages.update(f.gh, this.hero, ground, view);
 
-    const seen = new Set();
+    const stamp = view.frame;
     for (const e of f.e) {
       const uid = e[E.UID];
-      seen.add(uid);
       let m = this.enemies.get(uid);
       if (!m) {
         m = new Monster(this.assets, ENEMY[e[E.TYPE]], uid);
         this.enemies.set(uid, m);
         this.scene.add(m.root);
       }
-      m.update(e, dt, ground, f.t);
+      m.seen = stamp;
+      m.update(e, dt, ground, f.t, view);
     }
-    for (const [uid, m] of this.enemies) {
-      if (!seen.has(uid)) {
-        this.enemies.delete(uid);
-        m.die();
-        this.dying.push(m);
-      }
+    this.enemies.forEach(this.lostEnemy);
+    const dying = this.dying;
+    let kept = 0;
+    for (let i = 0; i < dying.length; i++) {
+      const m = dying[i];
+      if (m.updateDead(dt, view)) dying[kept++] = m;
+      else this.scene.remove(m.root);
     }
-    this.dying = this.dying.filter((m) => {
-      if (m.updateDead(dt)) return true;
-      this.scene.remove(m.root);
-      return false;
-    });
+    dying.length = kept;
 
-    const npcSeen = new Set();
     for (const n of f.n) {
-      npcSeen.add(n[0]);
       let a = this.npcs.get(n[0]);
       if (!a) {
         a = new Townsfolk(this.assets, NPC[n[1]]);
         this.npcs.set(n[0], a);
         this.scene.add(a.root);
       }
-      a.update(n, dt, ground);
+      a.seen = stamp;
+      a.update(n, dt, ground, view);
     }
-    for (const [uid, a] of this.npcs) if (!npcSeen.has(uid)) { this.scene.remove(a.root); this.npcs.delete(uid); }
-    if (this.merchant) this.merchant.anim.play('Idle'), this.merchant.anim.update(dt);
+    this.npcs.forEach(this.lostNpc);
+    const mer = this.merchant;
+    if (mer) {
+      const step = view.admit(mer, dt);
+      if (step >= 0) {
+        mer.anim.play('Idle');
+        mer.anim.update(step);
+      }
+    }
   }
 
   /** Head height above the ground for labels and health bars. */
