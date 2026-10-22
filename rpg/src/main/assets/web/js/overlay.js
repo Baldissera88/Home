@@ -183,12 +183,16 @@ export class Overlay {
       const uid = e[E.UID], hp = Math.max(0, Math.min(1, e[E.HP])), b = this.track(uid, hp, dt);
       seen++;
       const elite = (flags & EF.ELITE) !== 0;
-      if (hp >= 0.999 && !elite) continue;
       const x = e[E.X], y = e[E.Y];
+      // Every monster that is after the hero, or close to them, shows its health; hidden ones don't.
+      const near = (x - hx) * (x - hx) + (y - hy) * (y - hy) < 100;
+      if (hp >= 0.999 && !elite && !near && !(flags & EF.AGGRO)) continue;
+      const actor = actors.enemies.get(uid);
+      if (actor && !actor.root.visible) continue;
       const p = this.project(camera, x, ground(x, y) + actors.heightOf(uid) + 0.25, y);
       if (!p) continue;
-      const bw = (elite ? 46 : 32) * unit * Math.min(1.4, 8 / Math.max(4, p.d));
-      const w = Math.round(bw * d) / d, h = Math.max(2, Math.round(4 * unit * d)) / d;
+      const bw = (elite ? 56 : 40) * unit * Math.min(1.4, 8 / Math.max(4, p.d));
+      const w = Math.round(bw * d) / d, h = Math.max(3, Math.round(5.5 * unit * d)) / d;
       const x0 = Math.round((p.x - w / 2) * d) / d, y0 = Math.round((p.y - h / 2) * d) / d;
       c.fillStyle = 'rgba(0,0,0,0.7)';
       c.fillRect(x0 - 1, y0 - 1, w + 2, h + 2);
@@ -233,13 +237,14 @@ export class Overlay {
     // with an elastic pop, then rise and drift sideways on an arc.
     const tx = f.tx, tg = this.nr;
     for (let i = Math.max(0, tx.length - MAX_TEXTS); i < tx.length; i++) {
-      const t = tx[i], x = t[0], y = t[1], age = t[5];
+      // Anchored where the text appeared (the enemy or hero it belongs to) when the game sends that.
+      const t = tx[i], x = t.length > 7 ? t[6] : t[0], y = t.length > 7 ? t[7] : t[1], age = t[5];
       const a = Math.min(1, 1.4 - age * 1.1);
       if (a <= 0.02 || !t[2]) continue;
-      const p = this.project(camera, x, ground(x, y) + 1.35 + age * 0.9, y);
+      const p = this.project(camera, x, ground(x, y) + 1.5 + age * 0.9, y);
       if (!p) continue;
       const big = t[4] ? 1 : 0;
-      const base = (big ? 23 : 15.5) * unit * Math.min(1.25, Math.sqrt(7 / Math.max(4, p.d)));
+      const base = (big ? 32 : 22) * unit * Math.min(1.25, Math.sqrt(7 / Math.max(4, p.d)));
       const st = this.numStyle(t[3] >>> 0, big, base), sp = this.sprite(st, t[2]);
       const k = Math.min(1, age / 0.55);
       const pop = 1 + (big ? 0.75 : 0.45) * Math.pow(2, -9 * k) * Math.cos(k * 10);

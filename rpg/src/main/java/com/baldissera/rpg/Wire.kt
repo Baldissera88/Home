@@ -158,6 +158,7 @@ object Wire {
             .append(",\"dl\":").n(g.daylight).append(",\"rn\":").n(g.rain)
             .append(",\"fg\":").n(g.fogAmount).append(",\"fd\":").n(g.fade).append(",\"cy\":").n3(yaw)
             .append(",\"sh\":[").n(g.shakeX).append(',').n(g.shakeY).append("],\"lf\":").n(g.levelFlash)
+            .append(",\"hs\":").append(if (g.hitStopping) 1 else 0)
         var flags = 0
         if (p.stealth > 0f) flags = flags or 1
         if (p.holy > 0f) flags = flags or 2
@@ -245,7 +246,9 @@ object Wire {
         for (i in texts.indices) {
             val t = texts[i]
             if (i > 0) sb.append(',')
-            sb.append('[').n(t.x).append(',').n(t.y).append(',').s(t.text).append(',').append(argb(t.color)).append(',').append(t.big.b()).append(',').n(t.age).append(']')
+            // Then where it appeared, about a tile below its 2D starting point: the speaker it belongs to.
+            sb.append('[').n(t.x).append(',').n(t.y).append(',').s(t.text).append(',').append(argb(t.color)).append(',').append(t.big.b()).append(',').n(t.age)
+                .append(',').n(t.ox).append(',').n(t.oy + 1f).append(']')
         }
         sb.append("],\"zo\":[")
         val zones = g.zones

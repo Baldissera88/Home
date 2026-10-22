@@ -587,6 +587,17 @@ class Monster {
     const lift = this.look && this.look.float ? this.look.float + Math.sin(t * 2 + this.uid) * 0.08 : 0;
     this.root.position.set(x, ground(x, y) + lift, y);
     this.root.scale.setScalar(size);
+    // A landed hit knocks the body back from the blow and squashes it for a moment.
+    const flash = e[E.FLASH];
+    if (flash > (this.lastFlash || 0) + 0.02) this.hitT = 1;
+    this.lastFlash = flash;
+    if (this.hitT > 0) {
+      this.hitT = Math.max(0, this.hitT - dt / 0.22);
+      const k = Math.sin(this.hitT * Math.PI) * (this.hitT > 0.5 ? 1 : this.hitT * 2);
+      this.root.position.x -= e[E.FX] * 0.2 * k;
+      this.root.position.z -= e[E.FY] * 0.2 * k;
+      this.root.scale.set(size * (1 + 0.1 * k), size * (1 - 0.13 * k), size * (1 + 0.1 * k));
+    }
     // Hidden, or far away and not its turn: only the position follows; the time is played later.
     if (view && (dt = view.admit(this, dt)) < 0) return;
     const target = Math.atan2(e[E.FX], e[E.FY]);
@@ -637,7 +648,6 @@ class Monster {
     }
     this.lastWind = wind;
     // Status colours and the white flash of a hit.
-    const flash = e[E.FLASH];
     for (const m of this.mats) {
       const base = m.userData.baseColor;
       m.color.copy(base);
@@ -645,7 +655,7 @@ class Monster {
       else if (flags & EF.POISON) m.color.multiply(POISONED);
       if (m.emissive) {
         if (m.userData.baseEmissive) m.emissive.copy(m.userData.baseEmissive); else m.emissive.setRGB(0, 0, 0);
-        if (flash > 0) m.emissive.addScalar(Math.min(1, flash / 0.12) * 0.45);
+        if (flash > 0) m.emissive.addScalar(Math.pow(Math.min(1, flash / 0.12), 1.5) * 0.85);
         if (flags & EF.SHIELD) m.emissive.add(SHIELD_GLOW);
       }
     }

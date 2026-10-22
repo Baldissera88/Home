@@ -81,6 +81,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
@@ -118,6 +119,7 @@ fun RpgScreen(
     // Screenshot tests run without the frame loop and keep to the 2D renderer.
     val context = LocalContext.current
     var use3d by remember { mutableStateOf(animate && settings.getBoolean("render3d", true)) }
+    remember { game.camFollow = settings.getBoolean("camFollow", true) }
     var quality3d by remember { mutableStateOf(settings.getString("quality3d", "high") ?: "high") }
     var failed3d by remember { mutableStateOf<String?>(null) }
     val scene3d = remember(use3d, quality3d) {
@@ -257,7 +259,7 @@ fun RpgScreen(
             overlay == Overlay.STASH -> StashScreen(game, assets, onClose = { overlay = Overlay.NONE })
             overlay == Overlay.ELDER -> ElderScreen(game, hudTick, onClose = { overlay = Overlay.NONE })
             overlay == Overlay.SETTINGS -> SettingsScreen(
-                music, sfx, settings,
+                game, music, sfx, settings,
                 graphics = GraphicsChoice(use3d, quality3d == "high", failed3d),
                 onGraphics = { on, high ->
                     if (on != use3d) failed3d = null
@@ -506,6 +508,7 @@ private fun CameraDrag(game: Game) {
                 if (yaw > PI.toFloat()) yaw -= 2f * PI.toFloat()
                 if (yaw < -PI.toFloat()) yaw += 2f * PI.toFloat()
                 game.camYaw = yaw
+                if (abs(pan.x) > 0.5f) game.camManualHold = 2.5f
                 game.camPitch = (game.camPitch + pan.y * 0.004f).coerceIn(0.2f, 1.2f)
                 game.camDist = (game.camDist / zoom).coerceIn(3.5f, 11f)
             }
@@ -1302,12 +1305,13 @@ private fun ElderScreen(game: Game, tick: Int, onClose: () -> Unit) {
 
 @Composable
 private fun SettingsScreen(
-    music: Music, sfx: Sfx, settings: android.content.SharedPreferences,
+    game: Game, music: Music, sfx: Sfx, settings: android.content.SharedPreferences,
     graphics: GraphicsChoice, onGraphics: (Boolean, Boolean) -> Unit, onClose: () -> Unit,
 ) {
     var musicOn by remember { mutableStateOf(music.enabled) }
     var sfxOn by remember { mutableStateOf(sfx.enabled) }
     var hapticsOn by remember { mutableStateOf(sfx.haptics) }
+    var followOn by remember { mutableStateOf(game.camFollow) }
     DarkPanel("Settings", onClose) {
         GothicButton(if (musicOn) "🎵 Music: on" else "🎵 Music: off", {
             musicOn = !musicOn
@@ -1331,6 +1335,11 @@ private fun SettingsScreen(
         if (graphics.use3d) {
             GothicButton(if (graphics.high) "✨ 3D quality: high" else "🔋 3D quality: battery saver", {
                 onGraphics(true, !graphics.high)
+            })
+            GothicButton(if (followOn) "🎥 Camera follows you: on" else "🎥 Camera follows you: off", {
+                followOn = !followOn
+                game.camFollow = followOn
+                settings.edit().putBoolean("camFollow", followOn).apply()
             })
         }
         graphics.error?.let {

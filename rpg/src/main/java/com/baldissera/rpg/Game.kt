@@ -6,6 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
@@ -182,12 +183,46 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     private var revealedY = Int.MIN_VALUE
     private var revealedIn: BooleanArray? = null
 
+    /** The 3D camera swings round behind the hero while they run (a setting; dragging the view pauses it). */
+    var camFollow = true
+    /** Seconds the camera follow stays paused after the player turned the view by hand. */
+    var camManualHold = 0f
+    /** Camera yaw the joystick is read against; held while the stick is held so the follow can't bend the run. */
+    private var steerYaw = 0f
+    private var stickHeld = false
+
+    /** True during the brief freeze that makes heavy hits land harder. */
+    val hitStopping: Boolean get() = hitStop > 0f
+
     /** Turns the held joystick into a walking direction on the map, relative to where the camera looks. */
     fun steer() {
-        val c = cos(camYaw)
-        val s = sin(camYaw)
+        val held = stickX * stickX + stickY * stickY > 0.04f
+        // While the stick is held the direction stays where the player aimed it, even as the camera swings
+        // round behind them; pushing straight ahead follows the camera again.
+        if (!held || !stickHeld || !camFollow || (stickY < 0f && abs(stickX) < -stickY * 0.4f)) steerYaw = camYaw
+        stickHeld = held
+        val c = cos(steerYaw)
+        val s = sin(steerYaw)
         joyX = stickX * c + stickY * s
         joyY = -stickX * s + stickY * c
+    }
+
+    /** Swings the 3D camera round behind the way the hero runs, unless they run towards it. */
+    private fun followCamera(dt: Float) {
+        if (camManualHold > 0f) {
+            camManualHold -= dt
+            return
+        }
+        val p = player
+        if (!camFollow || !stickHeld || !p.moving || hypot(p.vx, p.vy) < 0.5f) return
+        var d = atan2(-p.vx, -p.vy) - camYaw
+        while (d > PI.toFloat()) d -= 2f * PI.toFloat()
+        while (d < -PI.toFloat()) d += 2f * PI.toFloat()
+        if (abs(d) > 2.5f) return
+        var yaw = camYaw + d * min(1f, dt * 2.4f)
+        if (yaw > PI.toFloat()) yaw -= 2f * PI.toFloat()
+        if (yaw < -PI.toFloat()) yaw += 2f * PI.toFloat()
+        camYaw = yaw
     }
 
     val inWorld: Boolean get() = floor == 0
@@ -664,6 +699,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         // Only the 2D renderer looks through this camera; the 3D view follows the hero itself.
         if (render3d) {
             camStale = true
+            followCamera(dt)
             return
         }
         if (camStale) {

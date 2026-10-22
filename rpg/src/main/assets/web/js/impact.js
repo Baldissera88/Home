@@ -236,6 +236,8 @@ export class Impact {
   constructor(scene, assets) {
     this.scene = scene;
     this.assets = assets;
+    /** Strength of the hardest hit landed this frame (0.55 normal, 1 crit), for the camera to punch with. */
+    this.punch = 0;
     this.group = new THREE.Group();
     scene.add(this.group);
     this.quads = new QuadBatch(MAX_QUADS);
@@ -613,6 +615,7 @@ export class Impact {
       s[o + H_TX] = x;
       s[o + H_TY] = y;
       s[o + H_STYLE] = kind === 2 ? 2 : t[4] === 1 ? 1 : 0;
+      if (kind !== 2 && age < 0.15) this.punch = Math.max(this.punch, t[4] === 1 ? 1 : 0.55);
       s[o + H_SEED] = (key ^ Math.round(born * 64)) | 0;
       if (kind === 2) {
         s[o + H_X] = hp.x; s[o + H_Y] = hp.y + 0.95; s[o + H_Z] = hp.z;

@@ -176,7 +176,9 @@ export class Engine {
     const f = this.frame = this.interp ? this.interp.sample(this.lastTime || performance.now()) : null;
     if (!this.ready || !this.world || !f) return false;
     const ground = this.ground;
-    this.actors.update(f, dt, ground, this.camera);
+    // Heavy hits freeze the game for a moment: hold the characters' poses with it, and a beat after.
+    this.freeze = f.hs ? 0.06 : Math.max(0, (this.freeze || 0) - dt);
+    this.actors.update(f, this.freeze > 0 ? dt * 0.08 : dt, ground, this.camera);
     const hero = this.actors.hero.root.position;
     this.chase.update(f, dt, hero, ground);
     OCCLUDE.uHero.value.set(hero.x, hero.y + 0.8, hero.z);
@@ -184,6 +186,10 @@ export class Engine {
     this.world.update(f, f.t, dt);
     this.fx.update(f, dt, f.t, ground, this.camera);
     this.impact.update(f, dt, this.ground, this.camera, this.actors);
+    if (this.impact.punch > 0) {
+      this.chase.punch(this.impact.punch);
+      this.impact.punch = 0;
+    }
     this.atmosphere.update(f, dt, f.t, hero, this.camera, this.fx);
     const g = this.grade.uniforms;
     g.uHurt.value = Math.max(0, 1 - f.p[9] / 0.35);

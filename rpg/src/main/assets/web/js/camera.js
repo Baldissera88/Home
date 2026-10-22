@@ -98,6 +98,12 @@ export class ChaseCamera {
     this.ready = false;
   }
 
+  /** A landed hit: a quick nudge in toward the hero and a short shake, bigger for crits. */
+  punch(s) {
+    this.shakeEnv = Math.max(this.shakeEnv, s * 0.5);
+    this.zoomKick = Math.max(this.zoomKick || 0, s);
+  }
+
   setView(pitch, dist) {
     if (pitch != null) this.wantPitch = Math.max(0.18, Math.min(1.25, pitch));
     if (dist != null) this.wantDist = Math.max(3.2, Math.min(12, dist));
@@ -237,7 +243,8 @@ export class ChaseCamera {
       this.avoid.reset(0);
     }
     this.ready = true;
-    const pt = Math.min(1.35, pitch + avoid * PITCH_UP), d = dist * (1 - avoid * PULL_IN);
+    this.zoomKick = Math.max(0, (this.zoomKick || 0) - dt * 7);
+    const pt = Math.min(1.35, pitch + avoid * PITCH_UP), d = dist * (1 - avoid * PULL_IN) * (1 - 0.06 * this.zoomKick);
     const hd = Math.cos(pt) * d;
     let x = px + sy * hd, z = pz + cy * hd, y = py + Math.sin(pt) * d;
 

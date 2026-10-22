@@ -629,6 +629,9 @@ class FloatText(
 ) {
     var age = 0f
     var layout: TextLayoutResult? = null
+    /** Where the text appeared; the 3D view anchors it there instead of following the 2D arc. */
+    val ox: Float = x
+    val oy: Float = y
 }
 
 class Particle(
