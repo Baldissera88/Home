@@ -1,5 +1,6 @@
 package com.baldissera.rpg
 
+import android.os.SystemClock
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import kotlin.math.abs
@@ -29,9 +30,38 @@ object Wire {
         return this
     }
 
-    private fun StringBuilder.s(text: String): StringBuilder {
-        append('"')
-        for (c in text) {
+    /** [v] in fixed point with [scale] = 10^decimals, trailing zeros dropped; no allocation. */
+    private fun StringBuilder.fixed(v: Float, scale: Long): StringBuilder {
+        if (v.isNaN() || v.isInfinite()) return append('0')
+        val r = Math.round(v.toDouble().coerceIn(-1e12, 1e12) * scale)
+        if (r < 0L) append('-')
+        val a = abs(r)
+        append(a / scale)
+        var frac = a % scale
+        if (frac != 0L) {
+            append('.')
+            var lim = scale / 10L
+            while (frac % 10L == 0L) {
+                frac /= 10L
+                lim /= 10L
+            }
+            while (frac < lim) {
+                append('0')
+                lim /= 10L
+            }
+            append(frac)
+        }
+        return this
+    }
+
+    private fun StringBuilder.n3(v: Float): StringBuilder = fixed(v, 1000L)
+
+    private fun StringBuilder.n4(v: Float): StringBuilder = fixed(v, 10000L)
+
+    /** [text] escaped for a JSON string, without the quotes. */
+    private fun StringBuilder.esc(text: String): StringBuilder {
+        for (i in text.indices) {
+            val c = text[i]
             when {
                 c == '"' -> append("\\\"")
                 c == '\\' -> append("\\\\")
@@ -40,8 +70,10 @@ object Wire {
                 else -> append(c)
             }
         }
-        return append('"')
+        return this
     }
+
+    private fun StringBuilder.s(text: String): StringBuilder = append('"').esc(text).append('"')
 
     private fun Boolean.b() = if (this) 1 else 0
 
@@ -105,13 +137,26 @@ object Wire {
         }
     }
 
-    /** The moving world for one frame; [yaw] is where the camera looks, in radians. */
+    /** Reused by [frame], which runs every display frame on the main thread. */
+    private val frameSb = StringBuilder(16384)
+    private var frameSeq = 0
+    private const val MAX_PARTICLES = 350
+
+    /**
+     * The moving world for one frame; [yaw] is where the camera looks, in radians. "t" carries 4 decimals,
+     * positions, facings and the camera 3; "fs" counts frames and "ts" is the send time (uptime ms), both for
+     * web/js/interp.js. Only the newest [MAX_PARTICLES] particles are sent.
+     */
+    @Synchronized
     fun frame(g: Game, yaw: Float): String {
         val p = g.player
         val d = g.dungeon
-        val sb = StringBuilder(8192)
-        sb.append("{\"k\":\"f\",\"t\":").n(g.time).append(",\"dl\":").n(g.daylight).append(",\"rn\":").n(g.rain)
-            .append(",\"fg\":").n(g.fogAmount).append(",\"fd\":").n(g.fade).append(",\"cy\":").n(yaw)
+        val sb = frameSb
+        sb.setLength(0)
+        frameSeq++
+        sb.append("{\"k\":\"f\",\"t\":").n4(g.time).append(",\"fs\":").append(frameSeq).append(",\"ts\":").append(SystemClock.uptimeMillis())
+            .append(",\"dl\":").n(g.daylight).append(",\"rn\":").n(g.rain)
+            .append(",\"fg\":").n(g.fogAmount).append(",\"fd\":").n(g.fade).append(",\"cy\":").n3(yaw)
             .append(",\"sh\":[").n(g.shakeX).append(',').n(g.shakeY).append("],\"lf\":").n(g.levelFlash)
         var flags = 0
         if (p.stealth > 0f) flags = flags or 1
@@ -120,13 +165,15 @@ object Wire {
         if (p.venom > 0f) flags = flags or 8
         if (p.chill > 0f) flags = flags or 16
         if (p.hurt > 0f) flags = flags or 32
-        sb.append(",\"p\":[").n(p.x).append(',').n(p.y).append(',').n(p.faceX).append(',').n(p.faceY).append(',').append(action(g))
+        sb.append(",\"p\":[").n3(p.x).append(',').n3(p.y).append(',').n3(p.faceX).append(',').n3(p.faceY).append(',').append(action(g))
             .append(',').n(p.swing).append(',').n(p.swingTime).append(',').append(p.heroClass.ordinal).append(',').append(p.weaponKind.ordinal)
-            .append(',').n(p.hp / p.maxHp).append(',').append(flags).append(',').n(p.leapZ).append(',').append(p.buff?.ordinal ?: -1)
+            .append(',').n(p.hp / p.maxHp).append(',').append(flags).append(',').n3(p.leapZ).append(',').append(p.buff?.ordinal ?: -1)
             .append(',').n(hypot2(p.vx, p.vy)).append(']')
 
         sb.append(",\"e\":[")
-        g.enemies.forEachIndexed { i, e ->
+        val enemies = g.enemies
+        for (i in enemies.indices) {
+            val e = enemies[i]
             if (i > 0) sb.append(',')
             var f = 0
             if (e.frozen > 0f) f = f or 1
@@ -138,66 +185,113 @@ object Wire {
             if (e.aggro) f = f or 64
             if (e.fear > 0f) f = f or 128
             val wind = if (e.windup > 0f) 1f - e.windup / e.type.windup else 0f
-            sb.append('[').append(e.uid).append(',').append(e.type.ordinal).append(',').n(e.x).append(',').n(e.y).append(',').n(e.faceX).append(',').n(e.faceY)
+            sb.append('[').append(e.uid).append(',').append(e.type.ordinal).append(',').n3(e.x).append(',').n3(e.y).append(',').n3(e.faceX).append(',').n3(e.faceY)
                 .append(',').append(e.moving.b()).append(',').n(wind).append(',').n(e.flash).append(',').append(f).append(',').n(e.size)
-                .append(',').n(e.hp / e.maxHp).append(',')
-            if (e.elite || e.type.boss) sb.s(e.name + if (e.affixes.isNotEmpty()) "|" + e.affixText else "") else sb.append("\"\"")
-            sb.append(']')
+                .append(',').n(e.hp / e.maxHp).append(',').append('"')
+            if (e.elite || e.type.boss) {
+                sb.esc(e.name)
+                val affixes = e.affixes
+                if (affixes.isNotEmpty()) {
+                    sb.append('|')
+                    for (j in affixes.indices) {
+                        if (j > 0) sb.append(" · ")
+                        sb.esc(affixes[j].label)
+                    }
+                }
+            }
+            sb.append("\"]")
         }
         sb.append("],\"n\":[")
-        d.npcs.forEachIndexed { i, n ->
+        val npcs = d.npcs
+        for (i in npcs.indices) {
+            val n = npcs[i]
             if (i > 0) sb.append(',')
-            sb.append('[').append(n.uid).append(',').append(n.kind.ordinal).append(',').n(n.x).append(',').n(n.y).append(',').n(n.faceX).append(',').n(n.faceY)
+            sb.append('[').append(n.uid).append(',').append(n.kind.ordinal).append(',').n3(n.x).append(',').n3(n.y).append(',').n3(n.faceX).append(',').n3(n.faceY)
                 .append(',').append(n.moving.b()).append(',').s(n.say ?: "").append(']')
         }
         sb.append("],\"pr\":[")
-        g.projectiles.forEachIndexed { i, pr ->
+        val shots = g.projectiles
+        for (i in shots.indices) {
+            val pr = shots[i]
             if (i > 0) sb.append(',')
             val f = pr.small.b() or (pr.hostile.b() shl 1) or ((pr.aoe > 0f).b() shl 2)
-            sb.append('[').n(pr.x).append(',').n(pr.y).append(',').n(pr.vx).append(',').n(pr.vy).append(',').append(argb(pr.color)).append(',').n(pr.radius).append(',').append(f).append(']')
+            sb.append('[').n3(pr.x).append(',').n3(pr.y).append(',').n(pr.vx).append(',').n(pr.vy).append(',').append(argb(pr.color)).append(',').n(pr.radius).append(',').append(f).append(']')
         }
         sb.append("],\"lo\":[")
-        g.loot.forEachIndexed { i, l ->
+        val loot = g.loot
+        for (i in loot.indices) {
+            val l = loot[i]
             if (i > 0) sb.append(',')
             sb.append('[').append(l.uid).append(',')
             when (val k = l.kind) {
-                is LootKind.Gold -> sb.append("0,").n(l.x).append(',').n(l.y).append(',').n(l.z).append(",0,0,").s("${k.amount} gold")
-                LootKind.Potion -> sb.append("1,").n(l.x).append(',').n(l.y).append(',').n(l.z).append(",0,0,\"\"")
-                is LootKind.Gear -> sb.append("2,").n(l.x).append(',').n(l.y).append(',').n(l.z).append(',').append(k.item.rarity.ordinal).append(',').append(k.item.icon).append(',').s(k.item.name)
-                is LootKind.Shard -> sb.append("3,").n(l.x).append(',').n(l.y).append(',').n(l.z).append(",0,0,\"\"")
+                is LootKind.Gold -> sb.append("0,").n3(l.x).append(',').n3(l.y).append(',').n3(l.z).append(",0,0,\"").append(k.amount).append(" gold\"")
+                LootKind.Potion -> sb.append("1,").n3(l.x).append(',').n3(l.y).append(',').n3(l.z).append(",0,0,\"\"")
+                is LootKind.Gear -> sb.append("2,").n3(l.x).append(',').n3(l.y).append(',').n3(l.z).append(',').append(k.item.rarity.ordinal).append(',').append(k.item.icon).append(',').s(k.item.name)
+                is LootKind.Shard -> sb.append("3,").n3(l.x).append(',').n3(l.y).append(',').n3(l.z).append(",0,0,\"\"")
             }
             sb.append(']')
         }
         sb.append("],\"pa\":[")
-        var first = true
-        for (pt in g.particles) {
-            if (!first) sb.append(',')
-            first = false
+        val parts = g.particles
+        val firstPart = if (parts.size > MAX_PARTICLES) parts.size - MAX_PARTICLES else 0
+        for (i in firstPart until parts.size) {
+            val pt = parts[i]
+            if (i > firstPart) sb.append(',')
             val f = pt.glow.b() or (pt.soft.b() shl 1)
             sb.n(pt.x).append(',').n(pt.y).append(',').n(pt.z).append(',').n(pt.size).append(',').append(argb(pt.color)).append(',').n(1f - pt.age / pt.life).append(',').append(f)
         }
         sb.append("],\"tx\":[")
-        g.texts.forEachIndexed { i, t ->
+        val texts = g.texts
+        for (i in texts.indices) {
+            val t = texts[i]
             if (i > 0) sb.append(',')
             sb.append('[').n(t.x).append(',').n(t.y).append(',').s(t.text).append(',').append(argb(t.color)).append(',').append(t.big.b()).append(',').n(t.age).append(']')
         }
         sb.append("],\"zo\":[")
-        g.zones.forEachIndexed { i, z ->
+        val zones = g.zones
+        for (i in zones.indices) {
+            val z = zones[i]
             if (i > 0) sb.append(',')
             sb.append('[').n(z.x).append(',').n(z.y).append(',').n(z.radius).append(',').append(z.kind.ordinal).append(',').n(z.age / z.life).append(']')
         }
         sb.append("],\"me\":[")
-        g.meteors.forEachIndexed { i, m -> if (i > 0) sb.append(','); sb.append('[').n(m.x).append(',').n(m.y).append(',').n(m.t).append(']') }
+        val meteors = g.meteors
+        for (i in meteors.indices) {
+            val m = meteors[i]
+            if (i > 0) sb.append(',')
+            sb.append('[').n(m.x).append(',').n(m.y).append(',').n(m.t).append(']')
+        }
         sb.append("],\"bo\":[")
-        g.bolts.forEachIndexed { i, b -> if (i > 0) sb.append(','); sb.append('[').n(b.x1).append(',').n(b.y1).append(',').n(b.x2).append(',').n(b.y2).append(',').n(b.age).append(',').append(b.seed).append(']') }
+        val bolts = g.bolts
+        for (i in bolts.indices) {
+            val b = bolts[i]
+            if (i > 0) sb.append(',')
+            sb.append('[').n(b.x1).append(',').n(b.y1).append(',').n(b.x2).append(',').n(b.y2).append(',').n(b.age).append(',').append(b.seed).append(']')
+        }
         sb.append("],\"wa\":[")
-        g.waves.forEachIndexed { i, w -> if (i > 0) sb.append(','); sb.append('[').n(w.x).append(',').n(w.y).append(',').n(w.radius).append(',').append(argb(w.color)).append(',').n(w.age / w.life).append(']') }
+        val waves = g.waves
+        for (i in waves.indices) {
+            val w = waves[i]
+            if (i > 0) sb.append(',')
+            sb.append('[').n(w.x).append(',').n(w.y).append(',').n(w.radius).append(',').append(argb(w.color)).append(',').n(w.age / w.life).append(']')
+        }
         sb.append("],\"dc\":[")
-        g.decals.forEachIndexed { i, dc -> if (i > 0) sb.append(','); sb.append('[').n(dc.x).append(',').n(dc.y).append(',').append(dc.kind).append(',').n(dc.rotation).append(',').n(dc.scale).append(']') }
+        val decals = g.decals
+        for (i in decals.indices) {
+            val dc = decals[i]
+            if (i > 0) sb.append(',')
+            sb.append('[').n(dc.x).append(',').n(dc.y).append(',').append(dc.kind).append(',').n(dc.rotation).append(',').n(dc.scale).append(']')
+        }
         sb.append("],\"gh\":[")
-        g.ghosts.forEachIndexed { i, gh -> if (i > 0) sb.append(','); sb.append('[').n(gh.x).append(',').n(gh.y).append(',').n(gh.age).append(']') }
+        val ghosts = g.ghosts
+        for (i in ghosts.indices) {
+            val gh = ghosts[i]
+            if (i > 0) sb.append(',')
+            sb.append('[').n(gh.x).append(',').n(gh.y).append(',').n(gh.age).append(']')
+        }
         sb.append("],\"pu\":\"")
-        for (pr in d.props) sb.append(if (pr.used) '1' else '0')
+        val props = d.props
+        for (i in props.indices) sb.append(if (props[i].used) '1' else '0')
         sb.append("\"}")
         return sb.toString()
     }
