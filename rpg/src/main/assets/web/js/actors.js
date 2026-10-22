@@ -5,17 +5,24 @@ import * as Beasts from './creatures.js';
 
 const CHAR_SCALE = 0.52;
 
-/** Clones every material so this instance can be tinted, flashed or faded on its own. */
+/**
+ * Clones each material once so this instance can be tinted, flashed or faded on its own; parts that shared a
+ * material still share its copy, so they can be merged into one mesh.
+ */
 function ownMaterials(root) {
-  const mats = [];
+  const own = new Map();
   root.traverse((o) => {
     if (o.isMesh && o.material) {
-      o.material = o.material.clone();
-      o.material.userData.baseColor = o.material.color.clone();
-      mats.push(o.material);
+      let m = own.get(o.material);
+      if (!m) {
+        m = o.material.clone();
+        m.userData.baseColor = m.color.clone();
+        own.set(o.material, m);
+      }
+      o.material = m;
     }
   });
-  return mats;
+  return [...own.values()];
 }
 
 function showOnly(root, visible, all) {
@@ -408,6 +415,7 @@ class Hero {
     this.root.add(this.body);
     this.mats = ownMaterials(this.body);
     showOnly(this.body, heroGear(this.model, weapon), GEAR[this.model]);
+    assets.mergeParts(this.body);
     this.anim = new Animator(this.body, assets.clips);
     this.attacks = attackClips(this.model, weapon);
     this.attackIndex = 0;
@@ -556,6 +564,7 @@ class Monster {
       };
       attach('handslotr', look.weapon);
       attach('handslotl', look.shield);
+      assets.mergeParts(this.body);
       this.anim = new Animator(this.body, assets.clips);
       this.skeletal = look.model.startsWith('skeleton');
       this.height = 1.35 * (look.scale || 1);
@@ -677,6 +686,7 @@ class Townsfolk {
     this.body.traverse((o) => { if (o.isMesh && hidden.includes(o.name)) o.visible = keep.includes(o.name); });
     const tint = { SMITH: 0xd8b8a0, ELDER: 0xc8c8d8, VILLAGER_F: 0xe8c8b0, VILLAGER_M: 0xb8d0a0 }[kind];
     for (const m of mats) m.color.multiply(new THREE.Color(tint));
+    assets.mergeParts(this.body);
     this.anim = new Animator(this.body, assets.clips);
     this.yaw = 0;
   }
