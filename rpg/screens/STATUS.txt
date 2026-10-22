@@ -1,1 +1,1 @@
-world tests: failure, ui: success @ d51a0b1
+world tests: success, ui: success @ d06f3ed
