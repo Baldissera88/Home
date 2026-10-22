@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { ACT, ENEMY, NPC, P, E, EF, HERO, WEAPON, angleDamp, damp } from './defs.js';
 import * as Beasts from './creatures.js';
+import { enhanceCharacter, updateBlobs } from './charmat.js';
 
 const CHAR_SCALE = 0.52;
 
@@ -17,6 +18,7 @@ function ownMaterials(root) {
       if (!m) {
         m = o.material.clone();
         m.userData.baseColor = m.color.clone();
+        enhanceCharacter(m);
         own.set(o.material, m);
       }
       o.material = m;
@@ -1001,6 +1003,7 @@ export class Actors {
         mer.anim.update(step);
       }
     }
+    updateBlobs(this, ground, f);
   }
 
   /** Head height above the ground for labels and health bars. */
