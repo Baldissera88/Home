@@ -5,6 +5,7 @@ import { PROP, TILE, hash } from './defs.js';
 import { applyOcclusion } from './occlude.js';
 import { buildDressing } from './dressing.js';
 import { batchStatic } from './batch.js';
+import { buildBackdrop, updateBackdrop } from './backdrop.js';
 
 const WALL_HEIGHT = 1.9;
 
@@ -110,6 +111,8 @@ export class World {
       this.buildRocks();
       this.buildBuildings();
       this.buildEntrances();
+      this.backdrop = buildBackdrop(this);
+      this.group.add(this.backdrop);
     } else {
       this.buildWalls(cfg);
       this.buildExit();
@@ -566,5 +569,6 @@ export class World {
     }
     if (this.flora) this.flora.update(t, 1 + f.rn * 1.5);
     if (this.water) this.water.material.uniforms.uTime.value = t;
+    if (this.backdrop) updateBackdrop(this.backdrop, f, t);
   }
 }
