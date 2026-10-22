@@ -11,6 +11,54 @@ float tNoise(vec2 p) {
 }
 `;
 
+/** Height of the lake surfaces; the ground dips below it in the basins. */
+const WATER_Y = -0.17;
+/** Splat weight texels per tile by quality: the ground's material blend is baked at this density. */
+const SPLAT_RES = { high: 8, medium: 6, low: 4 };
+/** Height-field cells per side of a ground chunk; a chunk that stays flat is drawn with a few triangles. */
+const CHUNK = 8;
+
+/** The ground built last, so makeWater can fit the lakes to it when not handed one. */
+let lastGround = null;
+
+/**
+ * Two independent smooth value noises over [0, w] x [0, h] at `freq` lattice cells per unit, from a seeded
+ * lattice. The returned function writes both into `out` at a point (x, y >= 0).
+ */
+function latticeNoise2(freq, seed, w, h, out) {
+  const nx = Math.ceil(w * freq) + 2, ny = Math.ceil(h * freq) + 2;
+  const v = new Float32Array(nx * ny * 2);
+  let s = seed >>> 0;
+  for (let i = 0; i < v.length; i++) {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), s | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    v[i] = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  const row = nx * 2;
+  return (x, y) => {
+    x = Math.min(nx - 1.001, x * freq);
+    y = Math.min(ny - 1.001, y * freq);
+    const ix = x | 0, iy = y | 0;
+    let fx = x - ix, fy = y - iy;
+    fx = fx * fx * (3 - 2 * fx);
+    fy = fy * fy * (3 - 2 * fy);
+    for (let c = 0, o = (iy * nx + ix) * 2; c < 2; c++, o++) {
+      const a = v[o] + (v[o + 2] - v[o]) * fx, b = v[o + row] + (v[o + row + 2] - v[o + row]) * fx;
+      out[c] = a + (b - a) * fy;
+    }
+  };
+}
+
+/** Indexed geometry from flat position / normal arrays (and any extra float attributes). */
+function meshGeometry(pos, idx, attrs = {}) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  for (const [name, [data, size]] of Object.entries(attrs)) geo.setAttribute(name, new THREE.Float32BufferAttribute(data, size));
+  geo.setIndex(idx);
+  return geo;
+}
+
 /**
  * The walkable ground: a height field (lakes dip into basins, the rest stays almost flat for the game's
  * flat physics) drawn with a splat shader that blends material textures by height, like the 2D baker.
@@ -76,34 +124,113 @@ export class Ground {
     return (a + (b - a) * tx) + ((c + (d - c) * tx) - (a + (b - a) * tx)) * ty;
   }
 
-  materialTexture() {
+  /**
+   * Bakes the splat blend, k texels per tile, into two RGBA textures the shader samples bilinearly. Each
+   * texel holds, per layer, the largest bilinear weight among the four tiles around a noise-warped point
+   * that use it (layers 0-3 in the first texture, 4-6 in the second), so the shader no longer warps and
+   * looks up the tile corners itself. The second texture's alpha holds the macro brightness variation.
+   */
+  splatTextures(count, waterLayer, k) {
     const { w, h } = this;
-    const data = new Uint8Array(w * h * 4);
     const mat = this.level.mat;
-    for (let i = 0; i < w * h; i++) data[i * 4] = mat.charCodeAt(i) - 48;
-    const tex = new THREE.DataTexture(data, w, h, THREE.RGBAFormat);
-    tex.magFilter = tex.minFilter = THREE.NearestFilter;
-    tex.generateMipmaps = false;
-    tex.needsUpdate = true;
-    return tex;
+    const layer = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      const m = mat.charCodeAt(i) - 48;
+      layer[i] = Math.min(6, m >= count ? waterLayer : m);
+    }
+    // Tiles whose 5 x 5 neighbourhood is one layer: no warp reaches another there, so skip the noise.
+    const solid = new Int8Array(w * h).fill(-1);
+    for (let ty = 0; ty < h; ty++) {
+      for (let tx = 0; tx < w; tx++) {
+        const l = layer[ty * w + tx];
+        let same = true;
+        for (let y = Math.max(0, ty - 2); same && y <= Math.min(h - 1, ty + 2); y++) {
+          for (let x = Math.max(0, tx - 2); x <= Math.min(w - 1, tx + 2); x++) if (layer[y * w + x] !== l) { same = false; break; }
+        }
+        if (same) solid[ty * w + tx] = l;
+      }
+    }
+    const seed = this.level.seed | 0;
+    const warp = new Float32Array(2), fine = new Float32Array(2), macro = new Float32Array(2);
+    const warpAt = latticeNoise2(1.7, seed + 1, w, h, warp), fineAt = latticeNoise2(4.1, seed + 2, w, h, fine);
+    // Macro variation on a half-tile grid, two octaves (the second a sample of the same lattice further
+    // out), faded out at the edges so the apron beyond does not streak.
+    const macroAt = latticeNoise2(0.37, seed + 3, w, h, macro);
+    const mw = w * 2 + 1, mh = h * 2 + 1, mg = new Float32Array(mw * mh);
+    for (let gy = 0; gy < mh; gy++) {
+      for (let gx = 0; gx < mw; gx++) {
+        const x = gx / 2, y = gy / 2;
+        macroAt(x, y);
+        const m = macro[0];
+        macroAt(x * 0.35 + 3.1, y * 0.35 + 5.7);
+        mg[gy * mw + gx] = 0.5 + ((macro[1] + m * 0.5) / 1.5 - 0.5) * Math.min(1, Math.min(x, y, w - x, h - y) / 3);
+      }
+    }
+    const W = w * k, H = h * k, half = W * H * 4;
+    // Both textures in one buffer; each layer's byte offset within a texel.
+    const data = new Uint8Array(half * 2), off = [0, 1, 2, 3, half, half + 1, half + 2];
+    const put = (o, l, v) => {
+      const q = (v * 255 + 0.5) | 0, p = o + off[l];
+      if (q > data[p]) data[p] = q;
+    };
+    for (let j = 0; j < H; j++) {
+      const y = (j + 0.5) / k;
+      for (let i = 0; i < W; i++) {
+        const x = (i + 0.5) / k, o = (j * W + i) * 4;
+        const sl = solid[(y | 0) * w + (x | 0)];
+        if (sl >= 0) {
+          data[o + off[sl]] = 255;
+        } else {
+          warpAt(x, y);
+          fineAt(x, y);
+          const sx = x + (warp[0] - 0.5 + (fine[0] - 0.5) * 0.4) * 0.75 - 0.5;
+          const sy = y + (warp[1] - 0.5 + (fine[1] - 0.5) * 0.4) * 0.75 - 0.5;
+          const ix = Math.floor(sx), iy = Math.floor(sy), fx = sx - ix, fy = sy - iy;
+          const x0 = Math.min(w - 1, Math.max(0, ix)), x1 = Math.min(w - 1, Math.max(0, ix + 1));
+          const y0 = Math.min(h - 1, Math.max(0, iy)) * w, y1 = Math.min(h - 1, Math.max(0, iy + 1)) * w;
+          put(o, layer[y0 + x0], (1 - fx) * (1 - fy));
+          put(o, layer[y0 + x1], fx * (1 - fy));
+          put(o, layer[y1 + x0], (1 - fx) * fy);
+          put(o, layer[y1 + x1], fx * fy);
+        }
+        const mx = x * 2, my = y * 2, mi = (my | 0) * mw + (mx | 0), fx = mx - (mx | 0), fy = my - (my | 0);
+        const ma = mg[mi] + (mg[mi + 1] - mg[mi]) * fx, mb = mg[mi + mw] + (mg[mi + mw + 1] - mg[mi + mw]) * fx;
+        data[half + o + 3] = (ma + (mb - ma) * fy) * 255 + 0.5;
+      }
+    }
+    return [data.subarray(0, half), data.subarray(half)].map((d) => {
+      const tex = new THREE.DataTexture(d, W, H, THREE.RGBAFormat);
+      tex.magFilter = THREE.LinearFilter;
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+      tex.generateMipmaps = true;
+      tex.needsUpdate = true;
+      return tex;
+    });
   }
 
-  /** Standard PBR material with the splat blend injected in place of the colour map and a height bump. */
+  /**
+   * Standard PBR material with the splat blend injected in place of the colour map and a height bump.
+   * extra.quality ('high', 'medium', 'low' or a preset with that name) sets the splat bake density;
+   * low also drops the bump.
+   */
   material(extra = {}) {
+    const quality = (extra.quality && extra.quality.name) || extra.quality || 'high';
+    const bump = quality !== 'low';
+    const [splat0, splat1] = this.splatTextures(extra.count || 7, extra.waterLayer ?? 4, SPLAT_RES[quality] || SPLAT_RES.high);
     const mat = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0.0 });
     const uniforms = {
-      uMat: { value: this.materialTexture() },
+      uSplat0: { value: splat0 },
+      uSplat1: { value: splat1 },
       uLayers: { value: this.layers },
       uSize: { value: new THREE.Vector2(this.w, this.h) },
       uTexScale: { value: extra.texScale || 4.0 },
-      uWaterLayer: { value: extra.waterLayer ?? 4.0 },
-      uLayerCount: { value: extra.count || 7.0 },
       uHeightBlend: { value: 0.6 },
       uBump: { value: extra.bump ?? 1.6 },
       uMacro: { value: extra.macro ?? 0.22 },
       uTint: { value: new THREE.Color(extra.tint ?? 0xffffff) },
     };
     mat.userData.uniforms = uniforms;
+    mat.customProgramCacheKey = () => (bump ? 'ground-bump' : 'ground');
     mat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);
       shader.vertexShader = shader.vertexShader
@@ -112,48 +239,45 @@ export class Ground {
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', `#include <common>
 varying vec3 vGroundPos;
-uniform sampler2D uMat;
+uniform sampler2D uSplat0, uSplat1;
 uniform highp sampler2DArray uLayers;
 uniform vec2 uSize;
-uniform float uTexScale, uWaterLayer, uLayerCount, uHeightBlend, uBump, uMacro;
+uniform float uTexScale, uHeightBlend, uBump, uMacro;
 uniform vec3 uTint;
 float splatH = 0.0;
-${NOISE_GLSL}
-float matAt(ivec2 c) {
-  c = clamp(c, ivec2(0), ivec2(uSize) - 1);
-  float m = floor(texelFetch(uMat, c, 0).r * 255.0 + 0.5);
-  return m >= uLayerCount ? uWaterLayer : m;
+// Keeps the two strongest layers as (weight, layer, weight, layer).
+void splatPick(inout vec4 best, float w, float layer) {
+  if (w > best.x) best = vec4(w, layer, best.xy);
+  else if (w > best.z) best.zw = vec2(w, layer);
 }
-vec4 layerAt(float m, vec2 uv, vec2 dx, vec2 dy) { return textureGrad(uLayers, vec3(uv, m), dx, dy); }
 `)
         .replace('#include <map_fragment>', `
 {
   vec2 tp = vGroundPos.xz;
-  vec2 warp = vec2(tNoise(tp * 1.7), tNoise(tp * 1.7 + 31.7)) - 0.5;
-  warp += (vec2(tNoise(tp * 4.1 + 7.3), tNoise(tp * 4.1 + 13.1)) - 0.5) * 0.4;
-  vec2 s = tp + warp * 0.75 - 0.5;
-  ivec2 i0 = ivec2(floor(s));
-  vec2 f = fract(s);
-  float m00 = matAt(i0), m10 = matAt(i0 + ivec2(1, 0)), m01 = matAt(i0 + ivec2(0, 1)), m11 = matAt(i0 + ivec2(1, 1));
+  vec4 w0 = texture(uSplat0, tp / uSize), w1 = texture(uSplat1, tp / uSize);
+  vec4 best = vec4(w0.x, 0.0, -1.0, 0.0);
+  splatPick(best, w0.y, 1.0);
+  splatPick(best, w0.z, 2.0);
+  splatPick(best, w0.w, 3.0);
+  splatPick(best, w1.x, 4.0);
+  splatPick(best, w1.y, 5.0);
+  splatPick(best, w1.z, 6.0);
   vec2 uv = tp / uTexScale;
-  vec2 dx = dFdx(uv), dy = dFdy(uv);
-  vec4 c00 = layerAt(m00, uv, dx, dy);
-  vec4 c10 = m10 == m00 ? c00 : layerAt(m10, uv, dx, dy);
-  vec4 c01 = m01 == m00 ? c00 : (m01 == m10 ? c10 : layerAt(m01, uv, dx, dy));
-  vec4 c11 = m11 == m00 ? c00 : (m11 == m10 ? c10 : (m11 == m01 ? c01 : layerAt(m11, uv, dx, dy)));
-  float s00 = (1.0 - f.x) * (1.0 - f.y) + c00.a * uHeightBlend;
-  float s10 = f.x * (1.0 - f.y) + c10.a * uHeightBlend;
-  float s01 = (1.0 - f.x) * f.y + c01.a * uHeightBlend;
-  float s11 = f.x * f.y + c11.a * uHeightBlend;
-  float top = max(max(s00, s10), max(s01, s11)) - 0.1;
-  vec4 b = max(vec4(s00, s10, s01, s11) - top, 0.0);
-  vec4 col = (c00 * b.x + c10 * b.y + c01 * b.z + c11 * b.w) / max(b.x + b.y + b.z + b.w, 1e-4);
+  vec4 c1 = texture(uLayers, vec3(uv, best.y)), c2 = texture(uLayers, vec3(uv, best.w));
+  // Height blend: the higher texture wins near the seam; the second layer's height counts only where it is present.
+  float s1 = best.x + c1.a * uHeightBlend;
+  float s2 = best.z + c2.a * uHeightBlend * min(best.z * 16.0, 1.0);
+  float top = max(s1, s2) - 0.1;
+  float b1 = max(s1 - top, 0.0), b2 = max(s2 - top, 0.0);
+  vec4 col = (c1 * b1 + c2 * b2) / (b1 + b2);
   splatH = col.a;
-  float macro = 1.0 + (tNoise(tp * 0.13) + tNoise(tp * 0.37) * 0.5 - 0.75) * uMacro;
-  diffuseColor.rgb *= col.rgb * macro * uTint;
+  // Darker where wet: lake shores just above the water line and the beds below it.
+  float wet = 1.0 - smoothstep(-0.2, -0.09, vGroundPos.y);
+  diffuseColor.rgb *= col.rgb * (1.0 + (w1.w * 1.5 - 0.75) * uMacro) * (1.0 - 0.3 * wet) * uTint;
 }
-`)
-        .replace('#include <normal_fragment_maps>', `
+`);
+      if (bump) {
+        shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_maps>', `
 #include <normal_fragment_maps>
 {
   vec3 dpdx = dFdx(-vViewPosition), dpdy = dFdy(-vViewPosition);
@@ -164,42 +288,199 @@ vec4 layerAt(float m, vec2 uv, vec2 dx, vec2 dy) { return textureGrad(uLayers, v
   normal = normalize(abs(det) * normal - grad * uBump * 0.02);
 }
 `);
+      }
     };
     return mat;
   }
 
-  /** The playable area as a displaced mesh, plus a flat apron beyond the edges that fades into fog. */
+  /**
+   * The height field as a mesh: full resolution in chunks where it bends, flat chunks as two triangles,
+   * or a fan whose sides follow the vertices of bent neighbours so no T-junction cracks open between them.
+   */
+  geometry() {
+    const { w, h, res, gw, gh, heights } = this;
+    const cw = w * res, ch = h * res;
+    const nx = Math.ceil(cw / CHUNK), ny = Math.ceil(ch / CHUNK);
+    const flat = new Uint8Array(nx * ny);
+    for (let cy = 0; cy < ny; cy++) {
+      for (let cx = 0; cx < nx; cx++) {
+        let f = 1;
+        for (let gy = cy * CHUNK; f && gy <= Math.min(ch, cy * CHUNK + CHUNK); gy++) {
+          for (let gx = cx * CHUNK; gx <= Math.min(cw, cx * CHUNK + CHUNK); gx++) {
+            if (heights[gy * gw + gx] !== 0) { f = 0; break; }
+          }
+        }
+        flat[cy * nx + cx] = f;
+      }
+    }
+    const pos = [], nor = [], idx = [];
+    const ids = new Int32Array(gw * gh).fill(-1);
+    const vert = (gx, gy) => {
+      const i = gy * gw + gx;
+      if (ids[i] < 0) {
+        ids[i] = pos.length / 3;
+        pos.push(gx / res, heights[i], gy / res);
+        const sx = (heights[gy * gw + Math.max(0, gx - 1)] - heights[gy * gw + Math.min(gw - 1, gx + 1)]) * res / 2;
+        const sz = (heights[Math.max(0, gy - 1) * gw + gx] - heights[Math.min(gh - 1, gy + 1) * gw + gx]) * res / 2;
+        const l = Math.hypot(sx, 1, sz);
+        nor.push(sx / l, 1 / l, sz / l);
+      }
+      return ids[i];
+    };
+    const bent = (cx, cy) => cx >= 0 && cy >= 0 && cx < nx && cy < ny && !flat[cy * nx + cx];
+    for (let cy = 0; cy < ny; cy++) {
+      for (let cx = 0; cx < nx; cx++) {
+        const x0 = cx * CHUNK, x1 = Math.min(cw, x0 + CHUNK), y0 = cy * CHUNK, y1 = Math.min(ch, y0 + CHUNK);
+        if (!flat[cy * nx + cx]) {
+          for (let gy = y0; gy < y1; gy++) {
+            for (let gx = x0; gx < x1; gx++) {
+              const a = vert(gx, gy), b = vert(gx, gy + 1), c = vert(gx + 1, gy + 1), d = vert(gx + 1, gy);
+              idx.push(a, b, d, b, c, d);
+            }
+          }
+          continue;
+        }
+        const left = bent(cx - 1, cy), down = bent(cx, cy + 1), right = bent(cx + 1, cy), up = bent(cx, cy - 1);
+        if (!left && !down && !right && !up) {
+          const a = vert(x0, y0), b = vert(x0, y1), c = vert(x1, y1), d = vert(x1, y0);
+          idx.push(a, b, d, b, c, d);
+          continue;
+        }
+        // Counter-clockwise from above, every cell step along sides shared with a bent chunk.
+        const ring = [];
+        for (let gy = y0; gy < y1; gy += left ? 1 : y1 - y0) ring.push(vert(x0, gy));
+        for (let gx = x0; gx < x1; gx += down ? 1 : x1 - x0) ring.push(vert(gx, y1));
+        for (let gy = y1; gy > y0; gy -= right ? 1 : y1 - y0) ring.push(vert(x1, gy));
+        for (let gx = x1; gx > x0; gx -= up ? 1 : x1 - x0) ring.push(vert(gx, y0));
+        const m = pos.length / 3;
+        pos.push((x0 + x1) / 2 / res, 0, (y0 + y1) / 2 / res);
+        nor.push(0, 1, 0);
+        for (let i = 0; i < ring.length; i++) idx.push(m, ring[i], ring[(i + 1) % ring.length]);
+      }
+    }
+    return meshGeometry(pos, idx, { normal: [nor, 3] });
+  }
+
+  /** Lake surface: the height-field cells that dip below the water line, each vertex carrying the depth there. */
+  waterGeometry() {
+    const { res, gw, gh, heights } = this;
+    const pos = [], depth = [], idx = [];
+    const ids = new Int32Array(gw * gh).fill(-1);
+    const vert = (i) => {
+      if (ids[i] < 0) {
+        ids[i] = depth.length;
+        pos.push((i % gw) / res, 0, Math.floor(i / gw) / res);
+        depth.push(WATER_Y - heights[i]);
+      }
+      return ids[i];
+    };
+    for (let gy = 0; gy < gh - 1; gy++) {
+      for (let gx = 0; gx < gw - 1; gx++) {
+        const i = gy * gw + gx;
+        if (Math.min(heights[i], heights[i + 1], heights[i + gw], heights[i + gw + 1]) >= WATER_Y) continue;
+        // Same diagonal as the ground's cells, so the interpolated depth meets the shore exactly.
+        const a = vert(i), b = vert(i + gw), c = vert(i + gw + 1), d = vert(i + 1);
+        idx.push(a, b, d, b, c, d);
+      }
+    }
+    return meshGeometry(pos, idx, { aDepth: [depth, 1] });
+  }
+
+  /** The playable area as a displaced mesh, plus a flat apron around the edges that fades into fog. */
   build(material) {
     const group = new THREE.Group();
-    const { w, h, res, gw, gh } = this;
-    const geo = new THREE.PlaneGeometry(w, h, w * res, h * res);
-    geo.rotateX(-Math.PI / 2);
-    geo.translate(w / 2, 0, h / 2);
-    const pos = geo.attributes.position;
-    for (let i = 0; i < pos.count; i++) {
-      const gx = Math.round(pos.getX(i) * res), gy = Math.round(pos.getZ(i) * res);
-      pos.setY(i, this.heights[Math.min(gh - 1, gy) * gw + Math.min(gw - 1, gx)]);
-    }
-    geo.computeVertexNormals();
-    const mesh = new THREE.Mesh(geo, material);
+    const { w, h } = this;
+    const mesh = new THREE.Mesh(this.geometry(), material);
     mesh.receiveShadow = true;
     group.add(mesh);
     if (this.opts.apron) {
-      const pad = 70;
-      const apron = new THREE.Mesh(new THREE.PlaneGeometry(w + pad * 2, h + pad * 2, 1, 1), material);
-      apron.rotation.x = -Math.PI / 2;
-      apron.position.set(w / 2, -0.015, h / 2);
+      // A frame, not a sheet under the level: it tucks one tile under the border, leaving the lakes open.
+      const pad = 70, i = 1, y = -0.015;
+      const pos = [-pad, y, -pad, -pad, y, h + pad, w + pad, y, h + pad, w + pad, y, -pad, i, y, i, i, y, h - i, w - i, y, h - i, w - i, y, i];
+      const idx = [], nor = [];
+      for (let s = 0; s < 4; s++) {
+        const o0 = s, o1 = (s + 1) % 4, i0 = s + 4, i1 = (s + 1) % 4 + 4;
+        idx.push(o0, o1, i1, o0, i1, i0);
+        nor.push(0, 1, 0, 0, 1, 0);
+      }
+      const apron = new THREE.Mesh(meshGeometry(pos, idx, { normal: [nor, 3] }), material);
       apron.receiveShadow = true;
       group.add(apron);
     }
     this.mesh = mesh;
+    lastGround = this;
     return group;
   }
 }
 
-/** Open water: deep colour, sky reflection by fresnel, drifting ripples and the sun's glitter. */
-export function makeWater(w, h, assets) {
-  const ripples = assets.texture('tex_water_ripples.png', false);
+let waveTexture = null;
+
+/**
+ * A tiling ripple texture, made once: RG hold the slope of a sum of waves with whole-number frequencies
+ * (so it wraps), B a value noise that breaks up the shore foam.
+ */
+function waves() {
+  if (waveTexture) return waveTexture;
+  const N = 128, TAU = Math.PI * 2;
+  let s = 0x2f6b1d;
+  const rnd = () => ((s = (Math.imul(s, 1664525) + 1013904223) | 0) >>> 0) / 4294967296;
+  const list = [];
+  while (list.length < 20) {
+    const f = 2 + rnd() * 8, a = rnd() * TAU;
+    const fx = Math.round(Math.cos(a) * f), fy = Math.round(Math.sin(a) * f);
+    if (fx || fy) list.push([fx, fy, Math.pow(Math.hypot(fx, fy), -1.5), rnd() * TAU]);
+  }
+  const lattice = (n) => Float32Array.from({ length: n * n }, rnd);
+  const coarse = lattice(8), fine = lattice(16);
+  const noise = (v, n, x, y) => {
+    x *= n;
+    y *= n;
+    const ix = Math.floor(x), iy = Math.floor(y);
+    let fx = x - ix, fy = y - iy;
+    fx = fx * fx * (3 - 2 * fx);
+    fy = fy * fy * (3 - 2 * fy);
+    const at = (i, j) => v[(j % n) * n + (i % n)];
+    const a = at(ix, iy) + (at(ix + 1, iy) - at(ix, iy)) * fx, b = at(ix, iy + 1) + (at(ix + 1, iy + 1) - at(ix, iy + 1)) * fx;
+    return a + (b - a) * fy;
+  };
+  const slope = new Float32Array(N * N * 2);
+  let max = 0;
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      let sx = 0, sy = 0;
+      for (const [fx, fy, amp, ph] of list) {
+        const c = Math.cos(TAU * (fx * x + fy * y) / N + ph) * amp * TAU;
+        sx += c * fx;
+        sy += c * fy;
+      }
+      slope[(y * N + x) * 2] = sx;
+      slope[(y * N + x) * 2 + 1] = sy;
+      max = Math.max(max, Math.abs(sx), Math.abs(sy));
+    }
+  }
+  const data = new Uint8Array(N * N * 4);
+  for (let i = 0; i < N * N; i++) {
+    const x = (i % N) / N, y = Math.floor(i / N) / N;
+    data[i * 4] = 128 + 127 * slope[i * 2] / max;
+    data[i * 4 + 1] = 128 + 127 * slope[i * 2 + 1] / max;
+    data[i * 4 + 2] = 255 * (noise(coarse, 8, x, y) * 0.65 + noise(fine, 16, x, y) * 0.35);
+    data[i * 4 + 3] = 255;
+  }
+  const tex = waveTexture = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/**
+ * Open water: coloured by depth, sky reflection by fresnel off two drifting ripple layers, the sun's
+ * glints and a soft foam line where it meets the shore. One pass, no render targets. Fitted to the
+ * ground's basins (the last Ground built unless one is passed), so it only covers the lakes.
+ */
+export function makeWater(w, h, assets, ground = lastGround) {
   const uniforms = THREE.UniformsUtils.merge([
     THREE.UniformsLib.fog,
     {
@@ -208,24 +489,27 @@ export function makeWater(w, h, assets) {
       uSunColor: { value: new THREE.Color(1, 0.95, 0.85) },
       uSky: { value: new THREE.Color(0.55, 0.7, 0.9) },
       uHorizon: { value: new THREE.Color(0.8, 0.85, 0.9) },
-      uDeep: { value: new THREE.Color(0.015, 0.06, 0.075) },
-      uShallow: { value: new THREE.Color(0.05, 0.16, 0.17) },
-      uRipples: { value: ripples },
+      uDeep: { value: new THREE.Color(0.01, 0.045, 0.06) },
+      uShallow: { value: new THREE.Color(0.07, 0.19, 0.17) },
+      uWaves: { value: null },
       uLight: { value: 1.0 },
     },
   ]);
-  uniforms.uRipples.value = ripples;
+  uniforms.uWaves.value = waves();
   const mat = new THREE.ShaderMaterial({
     uniforms,
     transparent: true,
     fog: true,
     depthWrite: false,
     vertexShader: /* glsl */`
+      attribute float aDepth;
       varying vec3 vPos;
+      varying float vDepth;
       #include <fog_pars_vertex>
       void main() {
         vec4 wp = modelMatrix * vec4(position, 1.0);
         vPos = wp.xyz;
+        vDepth = aDepth;
         vec4 mvPosition = viewMatrix * wp;
         gl_Position = projectionMatrix * mvPosition;
         #include <fog_vertex>
@@ -233,37 +517,60 @@ export function makeWater(w, h, assets) {
     fragmentShader: /* glsl */`
       uniform float uTime, uLight;
       uniform vec3 uSun, uSunColor, uSky, uHorizon, uDeep, uShallow;
-      uniform sampler2D uRipples;
+      uniform sampler2D uWaves;
       varying vec3 vPos;
+      varying float vDepth;
       #include <fog_pars_fragment>
-      ${NOISE_GLSL}
-      float waves(vec2 p) {
-        return tNoise(p * 1.3 + vec2(uTime * 0.25, uTime * 0.13)) * 0.6 + tNoise(p * 3.1 - vec2(uTime * 0.31, -uTime * 0.2)) * 0.3
-          + tNoise(p * 7.0 + vec2(uTime * 0.6, uTime * 0.4)) * 0.1;
-      }
       void main() {
         vec2 p = vPos.xz;
-        float e = 0.08;
-        float hx = waves(p + vec2(e, 0.0)) - waves(p - vec2(e, 0.0));
-        float hz = waves(p + vec2(0.0, e)) - waves(p - vec2(0.0, e));
-        vec3 n = normalize(vec3(-hx * 1.6, 1.0, -hz * 1.6));
+        float d = max(vDepth, 0.0);
+        // Two ripple layers drifting across each other.
+        vec4 a = texture2D(uWaves, p * 0.17 + uTime * vec2(0.013, 0.008));
+        vec4 b = texture2D(uWaves, p * 0.43 - uTime * vec2(0.019, -0.023));
+        vec2 slope = (a.rg - 0.5) * 0.5 + (b.rg - 0.5) * 0.3;
+        vec3 n = normalize(vec3(slope.x, 1.0, slope.y));
         vec3 v = normalize(cameraPosition - vPos);
+        vec3 l = normalize(uSun);
         float fres = pow(1.0 - max(dot(v, n), 0.0), 4.0);
         vec3 r = reflect(-v, n);
-        vec3 sky = mix(uHorizon, uSky, clamp(r.y * 1.5, 0.0, 1.0)) * uLight;
-        vec3 base = mix(uDeep, uShallow, 0.5 + 0.5 * tNoise(p * 0.3)) * (0.35 + 0.65 * uLight);
-        float rip = texture2D(uRipples, p * 0.22 + vec2(uTime * 0.03, uTime * 0.017)).a * texture2D(uRipples, p * 0.3 - vec2(uTime * 0.021, -uTime * 0.026)).a;
-        vec3 col = mix(base, sky, 0.18 + 0.75 * fres) + rip * 0.35 * uLight;
-        float spec = pow(max(dot(r, normalize(uSun)), 0.0), 220.0);
-        col += uSunColor * spec * 3.0 * uLight;
-        gl_FragColor = vec4(col, 0.82 + 0.18 * fres);
+        vec3 sky = mix(uHorizon, uSky, smoothstep(0.1, 0.9, r.y)) * uLight;
+        // Colour by depth: clear and green over the shallows, dark in the deep; ripples catch the light.
+        float deep = 1.0 - exp(-d * 6.0);
+        vec3 body = mix(uShallow, uDeep, deep) * (0.35 + 0.65 * uLight) * (0.75 + 0.5 * max(dot(n, l), 0.0));
+        vec3 col = mix(body, sky, 0.16 + 0.7 * fres);
+        // Sun glints: a soft sheen and sharp sparkles off the ripple facets.
+        float nh = max(dot(n, normalize(l + v)), 0.0);
+        float s1 = pow(nh, 160.0), s8 = s1 * s1;
+        s8 *= s8;
+        s8 *= s8;
+        float glint = (s1 * 0.6 + s8 * 9.0) * uLight;
+        // Shore: the depth is roughened with noise so the waterline wanders off the mesh's straight edges.
+        // There the water fades out, with a soft ragged foam line just off it and a fainter one lapping in.
+        float nz = a.b * 0.55 + b.b * 0.45;
+        float ds = d + (nz - 0.5) * 0.06;
+        float edge = 1.0 - smoothstep(0.0, 0.07, ds);
+        float lap = smoothstep(0.5, 1.0, sin(ds * 70.0 - uTime * 1.6)) * (1.0 - smoothstep(0.05, 0.13, ds));
+        float foam = smoothstep(0.3, 0.8, edge * (0.5 + b.b)) * 0.8 + lap * 0.3 * a.b;
+        foam *= smoothstep(0.0, 0.015, ds);
+        col += uSunColor * glint * (1.0 - foam);
+        col = mix(col, mix(uHorizon, vec3(1.0), 0.6) * (0.15 + 0.85 * uLight), foam);
+        // See-through over the shallows, opaque in the deep and at grazing angles; glints and foam stay solid.
+        float alpha = min(mix(0.3, 0.88, deep) + fres * 0.35, 1.0) * smoothstep(0.0, 0.04, ds);
+        gl_FragColor = vec4(col, max(max(alpha, foam), min(glint, 1.0)));
         #include <fog_fragment>
       }`,
   });
-  const geo = new THREE.PlaneGeometry(w + 140, h + 140, 1, 1);
-  geo.rotateX(-Math.PI / 2);
+  let geo;
+  if (ground && ground.w === w && ground.h === h) {
+    geo = ground.waterGeometry();
+  } else {
+    geo = new THREE.PlaneGeometry(w + 140, h + 140, 1, 1);
+    geo.rotateX(-Math.PI / 2);
+    geo.translate(w / 2, 0, h / 2);
+    geo.setAttribute('aDepth', new THREE.Float32BufferAttribute([1, 1, 1, 1], 1));
+  }
   const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(w / 2, -0.17, h / 2);
+  mesh.position.y = WATER_Y;
   mesh.renderOrder = 2;
   return mesh;
 }
