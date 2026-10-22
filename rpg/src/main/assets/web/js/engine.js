@@ -8,6 +8,7 @@ import { Assets } from './assets.js';
 import { World } from './world.js';
 import { Actors } from './actors.js';
 import { Fx } from './fx.js';
+import { Impact } from './impact.js';
 import { Atmosphere } from './atmosphere.js';
 import { ChaseCamera } from './camera.js';
 import { Overlay, loadFonts } from './overlay.js';
@@ -122,6 +123,7 @@ export class Engine {
   async init() {
     await Promise.all([this.assets.load(), loadFonts()]);
     this.fx = new Fx(this.assets, this.scene);
+    this.impact = new Impact(this.scene, this.assets);
     this.resize();
     this.ready = true;
     if (this.pending) {
@@ -182,6 +184,7 @@ export class Engine {
     this.scene.add(group);
     this.actors.reset();
     this.fx.reset();
+    this.impact.reset();
     this.actors.placeMerchant(level, this.ground);
     this.atmosphere.setLevel(world);
     this.chase.ready = false;
@@ -212,6 +215,7 @@ export class Engine {
     OCCLUDE.uCam.value.copy(this.camera.position);
     this.world.update(f, f.t, dt);
     this.fx.update(f, dt, f.t, ground, this.camera);
+    this.impact.update(f, dt, this.ground, this.camera, this.actors);
     this.atmosphere.update(f, dt, f.t, hero, this.camera, this.fx);
     const g = this.grade.uniforms;
     g.uHurt.value = Math.max(0, 1 - f.p[9] / 0.35);
