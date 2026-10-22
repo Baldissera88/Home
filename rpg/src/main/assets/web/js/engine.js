@@ -185,6 +185,7 @@ export class Engine {
     this.actors.placeMerchant(level, this.ground);
     this.atmosphere.setLevel(world);
     this.chase.ready = false;
+    this.chase.setLevel(level);
     if (this.onLevel) this.onLevel(level);
   }
 
