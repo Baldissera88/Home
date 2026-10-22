@@ -185,7 +185,7 @@ export class Engine {
     const f = this.frame;
     if (!this.ready || !this.world || !f) return false;
     const ground = this.ground;
-    this.actors.update(f, dt, ground);
+    this.actors.update(f, dt, ground, this.camera);
     const hero = this.actors.hero.root.position;
     this.chase.update(f, dt, hero, ground);
     OCCLUDE.uHero.value.set(hero.x, hero.y + 0.8, hero.z);
