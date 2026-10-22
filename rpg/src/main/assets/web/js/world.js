@@ -94,12 +94,12 @@ export class World {
     const cfg = BIOME[this.biome] || BIOME.CRYPT;
     const layers = await this.assets.layeredStrip(cfg.layers[0], cfg.layers[1], cfg.layers[2]);
     this.ground = new Ground(lv, layers, { apron: this.outdoors });
-    const mat = this.ground.material({ count: cfg.layers[2], waterLayer: cfg.water ?? 1, texScale: 4, bump: this.outdoors ? 1.6 : 2.2, macro: this.outdoors ? 0.22 : 0.3 });
+    const mat = this.ground.material({ count: cfg.layers[2], waterLayer: cfg.water ?? 1, texScale: 4, bump: this.outdoors ? 1.6 : 2.2, macro: this.outdoors ? 0.22 : 0.3, quality: this.quality });
     this.group.add(this.ground.build(mat));
     this.flameMat = flameSprite();
     if (this.outdoors) {
       if (lv.tiles.includes(String(TILE.WATER))) {
-        this.water = makeWater(lv.w, lv.h, this.assets);
+        this.water = makeWater(lv.w, lv.h, this.assets, this.ground);
         this.water.userData.dynamic = true;
         this.group.add(this.water);
       }
