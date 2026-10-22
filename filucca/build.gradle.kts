@@ -12,8 +12,19 @@ android {
         applicationId = "com.baldissera.filucca"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
         versionName = "1.0"
+    }
+
+    // One shared key for every build (CI otherwise makes a new debug key per run, and Android
+    // refuses to update an app whose signature changed). Debug-only; not for a store release.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("keystore/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
