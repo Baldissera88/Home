@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { NOISE_GLSL } from './terrain.js';
+import { SKY_VS, SKY_FS, makeSkyNoise, Rain } from './sky.js';
 import { PointBatch } from './fx.js';
 import { hash } from './defs.js';
 
@@ -9,55 +9,14 @@ import { hash } from './defs.js';
  * an environment map for reflections, rain, fireflies and dust motes.
  */
 
-const SKY_VS = /* glsl */`
-varying vec3 vDir;
-void main() {
-  vDir = normalize(position);
-  vec4 p = projectionMatrix * viewMatrix * vec4(cameraPosition + vDir * 50.0, 1.0);
-  gl_Position = p.xyww;
-}`;
-
-const SKY_FS = /* glsl */`
-uniform vec3 uSun, uMoon, uZenith, uHorizon, uSunColor, uGround;
-uniform float uTime, uNight, uCloud, uRain;
-varying vec3 vDir;
-${NOISE_GLSL}
-float fbm(vec2 p) { float a = 0.5, s = 0.0; for (int i = 0; i < 5; i++) { s += a * tNoise(p); p = p * 2.03 + 17.1; a *= 0.5; } return s; }
-float hash3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
-void main() {
-  vec3 d = normalize(vDir);
-  float h = d.y;
-  vec3 col = mix(uHorizon, uZenith, pow(clamp(h, 0.0, 1.0), 0.55));
-  col = mix(col, uGround, smoothstep(0.0, -0.25, h));
-  // Sun: a hot disc and a wide forward-scattering glow.
-  float sd = max(dot(d, uSun), 0.0);
-  col += uSunColor * (pow(sd, 6.0) * 0.35 + pow(sd, 90.0) * 1.2) * (1.0 - uRain * 0.8);
-  col += uSunColor * smoothstep(0.9993, 0.9997, sd) * 30.0 * (1.0 - uCloud * 0.7);
-  // Moon and stars at night.
-  float md = max(dot(d, uMoon), 0.0);
-  col += vec3(0.75, 0.82, 1.0) * (smoothstep(0.9990, 0.9994, md) * 6.0 + pow(md, 60.0) * 0.15) * uNight;
-  if (h > 0.0) {
-    vec3 cell = floor(d * 280.0);
-    float s = hash3(cell);
-    float tw = 0.6 + 0.4 * sin(uTime * 3.0 + s * 50.0);
-    col += vec3(0.9, 0.95, 1.0) * step(0.9975, s) * tw * uNight * 2.2 * smoothstep(0.0, 0.25, h) * (1.0 - uCloud);
-  }
-  // Clouds: two drifting layers projected onto a dome.
-  if (h > 0.0) {
-    vec2 uv = d.xz / (h + 0.12) * 1.6;
-    float c = fbm(uv + vec2(uTime * 0.012, uTime * 0.004));
-    float c2 = fbm(uv * 2.3 - vec2(uTime * 0.02, 0.0));
-    float cover = mix(0.56, 0.3, uCloud);
-    float m = smoothstep(cover, cover + 0.22, c * 0.75 + c2 * 0.35);
-    float lit = 0.75 + 0.5 * pow(sd, 3.0);
-    vec3 cloud = mix(uHorizon * 1.15, uSunColor * 0.6 + uZenith * 0.5, 0.35) * lit;
-    cloud = mix(cloud, vec3(0.38, 0.4, 0.44) * (0.2 + 0.8 * (1.0 - uNight)), uRain * 0.8);
-    col = mix(col, cloud, m * smoothstep(0.0, 0.18, h) * 0.92);
-  }
-  gl_FragColor = vec4(col, 1.0);
-}`;
-
-const lerpColor = (a, b, t) => new THREE.Color(a).lerp(new THREE.Color(b), t);
+// Sky palette (sRGB): clear day, overcast, dusk and moonlit night; rain streak colours.
+const SKY = {
+  zenith: new THREE.Color(0x2c62b4), zenithRain: new THREE.Color(0x4a5462), zenithDusk: new THREE.Color(0x2a3270), zenithNight: new THREE.Color(0x0b1a3c),
+  horizon: new THREE.Color(0xaccae6), horizonRain: new THREE.Color(0x7a828c), horizonDusk: new THREE.Color(0xf29058), horizonNight: new THREE.Color(0x203c66),
+  sun: new THREE.Color(0xfff2dc), sunDusk: new THREE.Color(0xff8a40), flash: new THREE.Color(0xa8b8e8),
+  rainDay: new THREE.Color(0xb4bfcf), rainNight: new THREE.Color(0x3a4a66), white: new THREE.Color(0xffffff),
+};
+const _zenith = new THREE.Color(), _horizon = new THREE.Color(), _sunColor = new THREE.Color(), _fog = new THREE.Color(), _mote = new THREE.Color();
 
 const DUNGEON = {
   CRYPT: { fog: 0x0a0c12, fogDensity: 0.06, hemiSky: 0x5a6680, hemiGround: 0x1a1612, hemi: 0.8, key: 0x8090b0, keyI: 0.5, lantern: 0xffc488 },
@@ -110,12 +69,17 @@ export class Atmosphere {
       uNight: { value: 0 },
       uCloud: { value: 0 },
       uRain: { value: 0 },
+      uFog: { value: new THREE.Color() },
+      uHaze: { value: 8 },
+      uFlash: { value: 0 },
+      uNoise: { value: makeSkyNoise() },
     };
     this.sky = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), new THREE.ShaderMaterial({
       uniforms: this.skyUniforms, vertexShader: SKY_VS, fragmentShader: SKY_FS, side: THREE.BackSide, depthWrite: false, depthTest: true, fog: false,
     }));
     this.sky.frustumCulled = false;
-    this.sky.renderOrder = -10;
+    // Drawn after all opaque geometry, so the depth test skips every pixel the scene already covers.
+    this.sky.renderOrder = 1000;
     this.envScene = new THREE.Scene();
     this.envSky = new THREE.Mesh(this.sky.geometry, this.sky.material);
     this.envScene.add(this.envSky);
@@ -129,21 +93,20 @@ export class Atmosphere {
     this.motes.points.renderOrder = 6;
     scene.add(this.motes.points);
     this.rain = this.makeRain();
-    scene.add(this.rain);
+    scene.add(this.rain.group);
+    this.moonDir = new THREE.Vector3();
     this.sunDir = new THREE.Vector3();
     this.flash = 0;
   }
 
   makeRain() {
-    const n = 1400;
-    const pos = new Float32Array(n * 6);
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
-    const lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x9fb0c8, transparent: true, opacity: 0.35, depthWrite: false }));
-    lines.frustumCulled = false;
-    lines.userData.drops = Array.from({ length: n }, (_, i) => [hash(i, 1) * 30 - 15, hash(i, 2) * 14, hash(i, 3) * 30 - 15, 0.8 + hash(i, 4) * 0.4]);
-    lines.visible = false;
-    return lines;
+    // Splashes land on the ground, or on the water where a lake dips below it.
+    this.rainGround = (x, z) => {
+      const w = this.world;
+      const g = w ? w.heightAt(x, z) : 0;
+      return w && w.water ? Math.max(g, w.water.position.y) : g;
+    };
+    return new Rain(this.motes.mat.uniforms.uScale);
   }
 
   setPointScale(v) { this.motes.mat.uniforms.uScale.value = v; }
@@ -189,7 +152,7 @@ export class Atmosphere {
     else this.updateDungeon(f, t, focus);
     this.placeShadow(focus, camera);
     this.assignLights(f, t, focus, fx);
-    this.updateRain(f, dt, focus);
+    this.updateRain(f, dt, focus, camera);
     this.updateMotes(f, t, focus);
   }
 
@@ -201,16 +164,24 @@ export class Atmosphere {
     const elev = Math.asin(Math.max(-1, Math.min(1, Math.cos(phase)))) * 0.69;
     const az = phase + 0.6;
     const sun = this.sunDir.set(-Math.sin(az) * Math.cos(elev), Math.sin(elev), Math.cos(az) * Math.cos(elev) * 0.9 + 0.35).normalize();
-    const moon = new THREE.Vector3(-sun.x, Math.abs(sun.y) * 0.9 + 0.25, -sun.z).normalize();
+    const moon = this.moonDir.set(-sun.x, Math.abs(sun.y) * 0.9 + 0.25, -sun.z).normalize();
     const night = THREE.MathUtils.smoothstep(-sun.y, -0.05, 0.2);
     const dusk = Math.max(0, 1 - Math.abs(sun.y) / 0.32);
+    const flash = this.flash = this.lightning(t, rain);
 
-    const zenith = lerpColor(0x2a5fae, 0x4a5462, rain).lerp(new THREE.Color(0x0a1426), night);
-    const horizon = lerpColor(0xa8c4e0, 0x7a828c, rain).lerp(new THREE.Color(0xf09a5a), dusk * (1 - night) * 0.75 * (1 - rain)).lerp(new THREE.Color(0x0b1424), night);
-    const sunColor = lerpColor(0xfff2dc, 0xff8a40, dusk);
+    // Clear blue, overcast grey, a warm dusk and a deep moonlit blue; fog is the horizon's colour.
+    const warm = dusk * (1 - night) * (1 - rain);
+    const zenith = _zenith.copy(SKY.zenith).lerp(SKY.zenithRain, rain).lerp(SKY.zenithDusk, warm * 0.6).lerp(SKY.zenithNight, night);
+    const horizon = _horizon.copy(SKY.horizon).lerp(SKY.horizonRain, rain).lerp(SKY.horizonDusk, warm * 0.75).lerp(SKY.horizonNight, night);
+    zenith.multiplyScalar(1 - 0.3 * rain * night);
+    horizon.multiplyScalar(1 - 0.3 * rain * night);
+    const sunColor = _sunColor.copy(SKY.sun).lerp(SKY.sunDusk, dusk);
+    const fogCol = _fog.copy(horizon).lerp(zenith, 0.15).lerp(SKY.flash, flash * 0.3);
+    // The sky draws the moon lower than its light comes from, where the chase camera can see it.
+    const me = Math.min(Math.asin(moon.y), 0.2), mh = Math.cos(me) / (Math.hypot(moon.x, moon.z) || 1);
     const u = this.skyUniforms;
     u.uSun.value.copy(sun);
-    u.uMoon.value.copy(moon);
+    u.uMoon.value.set(moon.x * mh, Math.sin(me), moon.z * mh);
     u.uZenith.value.copy(zenith);
     u.uHorizon.value.copy(horizon);
     u.uGround.value.copy(horizon).multiplyScalar(0.6);
@@ -219,6 +190,7 @@ export class Atmosphere {
     u.uNight.value = night;
     u.uCloud.value = Math.min(1, 0.15 + rain * 0.9);
     u.uRain.value = rain;
+    u.uFlash.value = flash;
 
     // Key light: the sun by day, a cold moon at night.
     const lightDir = night > 0.5 ? moon : sun;
@@ -229,11 +201,13 @@ export class Atmosphere {
     this.sun.intensity = night > 0.5 ? moonI : 3.0 * sunI + 0.05;
     this.hemi.color.copy(zenith).lerp(new THREE.Color(0xffffff), 0.35);
     this.hemi.groundColor.setHex(0x5a4a36).lerp(new THREE.Color(0x1a2232), night);
-    this.hemi.intensity = 0.8 + 0.5 * day - 0.15 * rain;
+    this.hemi.intensity = 0.8 + 0.5 * day - 0.15 * rain + flash * 2.5;
 
-    const fogCol = horizon.clone().lerp(zenith, 0.15);
     this.fog.color.copy(fogCol);
     this.fog.density = 0.012 + f.fg * 0.09 + rain * 0.012 + night * 0.012;
+    // The sky's horizon haze is the fog colour exactly, in a band that widens with the fog.
+    u.uFog.value.copy(fogCol);
+    u.uHaze.value = 1 / (0.05 + this.fog.density * 4);
     this.lantern.intensity = night * 3.5;
     this.lantern.color.setHex(0xffc488);
     this.lantern.position.set(focus.x, focus.y + 2.2, focus.z);
@@ -319,31 +293,27 @@ export class Atmosphere {
     }
   }
 
-  updateRain(f, dt, focus) {
+  /** A rare double flash of lightning in heavy rain; 0 almost all the time. */
+  lightning(t, rain) {
+    if (rain < 0.7) return 0;
+    const win = Math.floor(t / 8);
+    if (hash(win, 31) > (rain - 0.7) * 1.6) return 0;
+    const s = t - win * 8 - 1 - hash(win, 32) * 5;
+    if (s < 0 || s > 1.2) return 0;
+    return Math.exp(-s * 12) + (s > 0.18 ? 0.75 * Math.exp(-(s - 0.18) * 8) : 0);
+  }
+
+  updateRain(f, dt, focus, camera) {
     const r = this.outdoors ? f.rn : 0;
-    this.rain.visible = r > 0.03;
-    if (!this.rain.visible) return;
-    this.rain.material.opacity = 0.18 + r * 0.3;
-    const pos = this.rain.geometry.attributes.position.array;
-    const drops = this.rain.userData.drops;
-    const count = Math.floor(drops.length * Math.min(1, r * 1.2));
-    for (let i = 0; i < drops.length; i++) {
-      const d = drops[i];
-      d[1] -= dt * 16 * d[3];
-      if (d[1] < 0) d[1] += 14;
-      const px = focus.x + d[0], z = focus.z + d[2], y = focus.y + d[1] - 2;
-      const o = i * 6;
-      if (i >= count) { pos[o + 1] = pos[o + 4] = -999; continue; }
-      pos[o] = px; pos[o + 1] = y; pos[o + 2] = z;
-      pos[o + 3] = px + 0.08; pos[o + 4] = y - 0.55; pos[o + 5] = z + 0.05;
-    }
-    this.rain.geometry.attributes.position.needsUpdate = true;
+    // Streaks catch the daylight; at night they turn faint and blue, and lightning shows them all.
+    if (r > 0.03) this.rain.uniforms.uColor.value.copy(SKY.rainNight).lerp(SKY.rainDay, f.dl).lerp(SKY.white, Math.min(1, this.flash) * 0.5);
+    this.rain.update(r, dt, focus, camera, this.rainGround);
   }
 
   updateMotes(f, t, focus) {
     const m = this.motes;
     m.begin();
-    const c = new THREE.Color();
+    const c = _mote;
     if (this.outdoors) {
       // Fireflies after dusk.
       const night = 1 - f.dl;
