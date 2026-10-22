@@ -3,6 +3,7 @@ import { Ground, makeWater } from './terrain.js';
 import { Flora } from './flora.js';
 import { PROP, TILE, hash } from './defs.js';
 import { applyOcclusion } from './occlude.js';
+import { buildDressing } from './dressing.js';
 
 const WALL_HEIGHT = 1.9;
 
@@ -270,6 +271,7 @@ export class World {
       this.addFlame(px + fx * 0.08, 1.42, pz + fz * 0.08, 0.32);
       this.lights.push({ x: px + fx * 0.3, y: 1.5, z: pz + fz * 0.3, color: 0xff9a4a, radius: 6.5, intensity: 2.2, flicker: true });
     }
+    buildDressing(this);
   }
 
   addFlame(x, y, z, size) {
