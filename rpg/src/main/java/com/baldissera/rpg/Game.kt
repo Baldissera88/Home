@@ -170,6 +170,17 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     /** The joystick as the player holds it, before it is turned to match the camera. */
     var stickX = 0f
     var stickY = 0f
+    /**
+     * True while the 3D view shows the game instead of the 2D renderer (the UI sets it every frame).
+     * update() then skips work only the 2D renderer reads: its smoothed camera and enemy corpses.
+     */
+    var render3d = false
+    /** The 2D camera was left behind while the 3D view showed; it snaps to the hero when 2D drawing resumes. */
+    private var camStale = false
+    /** The tile and map reveal() last ran for, so it only scans again once the hero reaches another tile. */
+    private var revealedX = Int.MIN_VALUE
+    private var revealedY = Int.MIN_VALUE
+    private var revealedIn: BooleanArray? = null
 
     /** Turns the held joystick into a walking direction on the map, relative to where the camera looks. */
     fun steer() {
@@ -625,10 +636,10 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             bossIntroTime -= dt
             if (bossIntroTime <= 0f) bossIntro = null
         }
-        corpses.removeAll { it.age += dt; it.age > 1.2f }
-        bolts.removeAll { it.age += dt; it.age > 0.28f }
-        waves.removeAll { it.age += dt; it.age > it.life }
-        ghosts.removeAll { it.age += dt; it.age > 0.3f }
+        if (corpses.isNotEmpty()) corpses.removeAll { it.age += dt; it.age > 1.2f }
+        if (bolts.isNotEmpty()) bolts.removeAll { it.age += dt; it.age > 0.28f }
+        if (waves.isNotEmpty()) waves.removeAll { it.age += dt; it.age > it.life }
+        if (ghosts.isNotEmpty()) ghosts.removeAll { it.age += dt; it.age > 0.3f }
         if (dead || victory) return
         updatePlayer(dt)
         updateNpcs(dt)
@@ -650,6 +661,15 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     }
 
     private fun updateCamera(dt: Float) {
+        // Only the 2D renderer looks through this camera; the 3D view follows the hero itself.
+        if (render3d) {
+            camStale = true
+            return
+        }
+        if (camStale) {
+            camStale = false
+            snapCamera()
+        }
         val p = player
         val lead = if (p.moving) 0.9f else 0.3f
         val tx = p.x + p.faceX * lead
@@ -1656,7 +1676,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         sfx.kill()
         streak++
         streakTimer = 1.6f
-        corpses += Corpse(e.type, e.x, e.y, e.faceX, e.faceY, e.size)
+        // Only the 2D renderer draws corpses.
+        if (!render3d) corpses += Corpse(e.type, e.x, e.y, e.faceX, e.faceY, e.size)
         hitStop = max(hitStop, if (e.type.boss) 0.35f else 0.05f)
         burst(e.x, e.y, bloodColor(e.type), 20)
         if (bleeds(e.type)) addDecal(e.x, e.y, rnd.nextInt(4), 0.9f * e.size * (if (e.type.boss) 2f else 1f))
@@ -2260,6 +2281,11 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     private fun reveal() {
         val px = floorInt(player.x)
         val py = floorInt(player.y)
+        // Nothing new can show until the hero steps onto another tile or a new map starts.
+        if (px == revealedX && py == revealedY && revealedIn === explored) return
+        revealedX = px
+        revealedY = py
+        revealedIn = explored
         val r = if (inWorld) 9 else 7
         for (y in py - r..py + r) for (x in px - r..px + r) {
             if (x in 0 until dungeon.w && y in 0 until dungeon.h && (x - px) * (x - px) + (y - py) * (y - py) <= r * r) {

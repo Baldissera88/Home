@@ -32,6 +32,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -103,6 +106,8 @@ fun RpgScreen(
     autoStart: Boolean = false, debugOverlay: Int = -1, animate: Boolean = true, debugChooseClass: Boolean = false,
 ) {
     var frame by remember { mutableLongStateOf(0L) }
+    // Bumped only on frames the scene canvas below has something to draw, so it is not redrawn every frame under the 3D view.
+    var sceneTick by remember { mutableLongStateOf(0L) }
     var hudTick by remember { mutableIntStateOf(0) }
     var started by remember { mutableStateOf(autoStart) }
     var choosing by remember { mutableStateOf(debugChooseClass) }
@@ -122,26 +127,47 @@ fun RpgScreen(
         } else null
     }
     DisposableEffect(scene3d) { onDispose { scene3d?.destroy() } }
+    // The WebView stops its rendering while the activity is paused and picks up again on resume.
+    @Suppress("DEPRECATION")
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, scene3d) {
+        val s3d = scene3d
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) s3d?.pause()
+            else if (event == Lifecycle.Event.ON_RESUME) s3d?.resume()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val live3d = rememberUpdatedState(if (failed3d == null) scene3d else null)
 
     LaunchedEffect(Unit) {
         if (!animate) return@LaunchedEffect
         var last = withFrameNanos { it }
         var n = 0
-        while (true) {
-            withFrameNanos { now ->
-                val dt = ((now - last) / 1_000_000_000f).coerceAtMost(0.05f)
-                last = now
-                val s3d = live3d.value
-                if (s3d != null) game.steer()
-                if (started && overlay == Overlay.NONE) game.update(dt)
-                s3d?.push(game)
-                if (started) music.play(game.musicTrack)
-                music.tick(dt)
-                frame++
-                if (++n % 5 == 0) hudTick++
-            }
+        var canvasDrew = true
+        // One callback for every frame instead of a new lambda each time round the loop.
+        val onFrame: (Long) -> Unit = { now ->
+            val dt = ((now - last) / 1_000_000_000f).coerceAtMost(0.05f)
+            last = now
+            val s3d = live3d.value
+            val shown3d = s3d != null && s3d.ready && !s3d.failed
+            game.render3d = shown3d
+            if (s3d != null) game.steer()
+            if (started && overlay == Overlay.NONE) game.update(dt)
+            s3d?.push(game)
+            if (started) music.play(game.musicTrack)
+            music.tick(dt)
+            // The scene canvas draws the 2D scene until the 3D view is up, and the fade from black over either.
+            // Once neither shows it is redrawn one last time, empty, and then left alone.
+            val canvasDraws = !shown3d || game.fade > 0f
+            if (canvasDraws || canvasDrew) sceneTick++
+            canvasDrew = canvasDraws
+            // Only the title screen's embers animate by frame count.
+            if (!started) frame++
+            if (++n % 5 == 0) hudTick++
         }
+        while (true) withFrameNanos(onFrame)
     }
 
     val measurer = rememberTextMeasurer()
@@ -158,7 +184,7 @@ fun RpgScreen(
         val view3d = if (failed3d == null) scene3d else null
         if (view3d != null) key(view3d) { AndroidView(factory = { view3d.view }, modifier = Modifier.fillMaxSize()) }
         Canvas(Modifier.fillMaxSize()) {
-            frame.let { }
+            sceneTick.let { }
             // Until the 3D view has loaded its models, the 2D renderer fills in.
             if (view3d == null || !view3d.ready) drawScene(game, assets, measurer, styles)
             if (game.fade > 0f) drawRect(Color.Black.copy(alpha = game.fade * game.fade))
@@ -216,7 +242,7 @@ fun RpgScreen(
                 onBack = { choosing = false },
             )
             !started -> TitleScreen(
-                game, frame,
+                game, { frame },
                 onContinue = { started = true },
                 onNew = { choosing = true },
             )
@@ -455,15 +481,17 @@ private fun Controls(game: Game, modifier: Modifier) {
             )
             // Four skills on an arc around the attack button, the potion at its foot.
             val skills = game.player.heroClass.skills
-            val angles = listOf(280f, 245f, 210f, 175f)
             for ((i, s) in skills.withIndex()) {
-                val a = Math.toRadians(angles[i].toDouble())
+                val a = Math.toRadians(SKILL_ANGLES[i].toDouble())
                 val c = Offset(attackC.x + cos(a).toFloat() * 104f, attackC.y + sin(a).toFloat() * 104f)
                 SkillButton(game, s, Modifier.at(c, 58f))
             }
         }
     }
 }
+
+/** Where the four skill buttons sit on the arc around the attack button, in degrees. */
+private val SKILL_ANGLES = floatArrayOf(280f, 245f, 210f, 175f)
 
 /** Graphics settings as the settings screen shows them. */
 private class GraphicsChoice(val use3d: Boolean, val high: Boolean, val error: String?)
@@ -1050,7 +1078,7 @@ private fun ClassSelectScreen(assets: Assets, onPick: (HeroClass) -> Unit, onBac
 }
 
 @Composable
-private fun TitleScreen(game: Game, frame: Long, onContinue: () -> Unit, onNew: () -> Unit) {
+private fun TitleScreen(game: Game, frame: () -> Long, onContinue: () -> Unit, onNew: () -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         // The village glows through a vignette while embers drift up from below.
         Canvas(Modifier.fillMaxSize()) {
@@ -1060,7 +1088,8 @@ private fun TitleScreen(game: Game, frame: Long, onContinue: () -> Unit, onNew: 
                     center = Offset(size.width / 2f, size.height * 0.42f), radius = size.maxDimension * 0.62f,
                 ),
             )
-            val t = frame / 60f
+            // Read while drawing, so the embers redraw each frame without recomposing the screen.
+            val t = frame() / 60f
             for (i in 0 until 46) {
                 val seed = i * 7919
                 val fx = ((seed * 31) % 1000) / 1000f
