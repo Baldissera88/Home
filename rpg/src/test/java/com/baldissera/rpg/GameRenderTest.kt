@@ -352,8 +352,10 @@ class GameRenderTest {
         val got = g.shardsFound.size
         check(got >= 4) { "collected $got fragments (had $found0)" }
         check(g.player.maxHp > before) { "no extra heart" }
+        // The four collected fragments never come back, whatever the random walk found earlier.
+        val taken = worldShards.take(4).map { (it.kind as LootKind.Shard).key }.toSet()
         g.enterFloor(0)
-        check(g.loot.count { it.kind is LootKind.Shard } <= worldShards.size - 4)
+        check(g.loot.none { (it.kind as? LootKind.Shard)?.key in taken }) { "collected fragment respawned" }
         g.enterFloor(2)
         check(g.loot.any { (it.kind as? LootKind.Shard)?.key == "f2" }) { "no fragment on depth 2" }
 
