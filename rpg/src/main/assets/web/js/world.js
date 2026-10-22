@@ -3,6 +3,7 @@ import { Ground, makeWater } from './terrain.js';
 import { Flora } from './flora.js';
 import { PROP, TILE, hash } from './defs.js';
 import { applyOcclusion } from './occlude.js';
+import { batchStatic } from './batch.js';
 
 const WALL_HEIGHT = 1.9;
 
@@ -96,10 +97,13 @@ export class World {
     if (this.outdoors) {
       if (lv.tiles.includes(String(TILE.WATER))) {
         this.water = makeWater(lv.w, lv.h, this.assets);
+        this.water.userData.dynamic = true;
         this.group.add(this.water);
       }
       this.flora = new Flora(lv, this.ground, this.quality);
-      this.group.add(this.flora.build());
+      const flora = this.flora.build();
+      flora.userData.dynamic = true;
+      this.group.add(flora);
       this.buildRocks();
       this.buildBuildings();
       this.buildEntrances();
@@ -108,6 +112,7 @@ export class World {
       this.buildExit();
     }
     this.buildProps();
+    batchStatic(this.group);
     return this.group;
   }
 
@@ -162,6 +167,7 @@ export class World {
     this.group.add(pole);
     const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.08, 0.22, 6), new THREE.MeshStandardMaterial({ color: 0xffc070, emissive: 0xffa040, emissiveIntensity: 1.4 }));
     lamp.position.set(x, 1.95, z);
+    lamp.userData.dynamic = true;
     this.group.add(lamp);
     this.lights.push({ x, y: 1.95, z, color: 0xffb870, radius: 6, intensity: 0.7, flicker: false, lamp });
   }
@@ -201,6 +207,7 @@ export class World {
         const portal = new THREE.Mesh(new THREE.CircleGeometry(0.95, 32), new THREE.MeshBasicMaterial({ color: 0xff5a10, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
         portal.position.y = 1.1;
         g.add(portal);
+        portal.userData.dynamic = true;
         this.portal = portal;
         this.lights.push({ x: x + 0.5, y: 1.1, z: y + 0.8, color: 0xff5a20, radius: 7, intensity: 2.5, flicker: true });
       }
@@ -278,6 +285,7 @@ export class World {
     s.scale.set(size, size * 1.5, 1);
     s.userData.base = size;
     s.userData.seed = Math.random() * 10;
+    s.userData.dynamic = true;
     this.group.add(s);
     this.flames.push(s);
   }
@@ -294,6 +302,7 @@ export class World {
     ring.rotation.x = -Math.PI / 2;
     ring.position.set(x + 0.5, 0.04, y + 0.5);
     this.group.add(ring);
+    ring.userData.dynamic = true;
     this.exitRing = ring;
     this.lights.push({ x: x + 0.5, y: 1.4, z: y + 0.5, color: 0x6fd0ff, radius: 4, intensity: 0.6, flicker: false });
   }
@@ -308,6 +317,7 @@ export class World {
       obj.position.x = x;
       obj.position.z = y;
       obj.position.y += this.heightAt(x, y);
+      if (name === 'BARREL' || name === 'URN' || name === 'CRATE' || name === 'CHEST') obj.userData.dynamic = true;
       this.group.add(obj);
       this.props[i] = { obj, name, used };
     });
@@ -372,6 +382,7 @@ export class World {
     g.add(cloth);
     const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.1), new THREE.MeshStandardMaterial({ color: 0xff2040, emissive: 0xff1030, emissiveIntensity: 2 }));
     gem.position.y = 0.75;
+    gem.userData.dynamic = true;
     g.add(gem);
     this.spinners = (this.spinners || []).concat(gem);
     return g;
@@ -432,6 +443,7 @@ export class World {
     const orb = new THREE.Mesh(new THREE.SphereGeometry(0.16, 20, 14), new THREE.MeshStandardMaterial({ color: 0x40e8ff, emissive: 0x20c8ff, emissiveIntensity: 2.2, roughness: 0.1 }));
     orb.position.y = 1.25;
     g.add(orb);
+    orb.userData.dynamic = true;
     g.userData.orb = orb;
     g.traverse((m) => { if (m.isMesh) m.castShadow = true; });
     return g;
