@@ -21,9 +21,9 @@ import { BloomPass, FinalPass } from './post.js';
  * name is the preset's key. Engine.degrade() swaps in lowered copies and tells `engine.onQuality`.
  */
 const QUALITY = {
-  high: { name: 'high', maxDpr: 2, minDpr: 1.1, shadowMap: 2048, shadowSpan: 15, pointLights: 6, bloom: true, msaa: 4, grass: 1 },
-  medium: { name: 'medium', maxDpr: 1.6, minDpr: 0.95, shadowMap: 1536, shadowSpan: 14, pointLights: 5, bloom: true, msaa: 2, grass: 0.75 },
-  low: { name: 'low', maxDpr: 1.25, minDpr: 0.8, shadowMap: 1024, shadowSpan: 13, pointLights: 4, bloom: false, msaa: 0, grass: 0.5 },
+  high: { name: 'high', maxDpr: 2, minDpr: 1.1, shadowMap: 2048, shadowSpan: 15, pointLights: 5, bloom: true, msaa: 4, grass: 1 },
+  medium: { name: 'medium', maxDpr: 1.6, minDpr: 0.95, shadowMap: 1536, shadowSpan: 14, pointLights: 4, bloom: true, msaa: 2, grass: 0.75 },
+  low: { name: 'low', maxDpr: 1.25, minDpr: 0.8, shadowMap: 1024, shadowSpan: 13, pointLights: 3, bloom: false, msaa: 0, grass: 0.5 },
 };
 
 export class Engine {
