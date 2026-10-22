@@ -1,9 +1,6 @@
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Assets } from './assets.js';
 import { World } from './world.js';
 import { Actors } from './actors.js';
@@ -15,37 +12,7 @@ import { Overlay, loadFonts } from './overlay.js';
 import { detectTier, FramePacer, GpuTimer, StatsView } from './perf.js';
 import { OCCLUDE } from './occlude.js';
 import { FrameInterpolator } from './interp.js';
-
-/** Vignette, a gentle filmic grade, the red edge of low health and the white flash of a new level. */
-const GradeShader = {
-  uniforms: {
-    tDiffuse: { value: null },
-    uVignette: { value: 0.32 },
-    uHurt: { value: 0 },
-    uFlash: { value: 0 },
-    uAspect: { value: 1 },
-    uWarm: { value: 0 },
-  },
-  vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-  fragmentShader: `
-    uniform sampler2D tDiffuse;
-    uniform float uVignette, uHurt, uFlash, uAspect, uWarm;
-    varying vec2 vUv;
-    void main() {
-      vec4 c = texture2D(tDiffuse, vUv);
-      vec2 d = (vUv - 0.5) * vec2(uAspect, 1.0);
-      float r = length(d) / length(vec2(uAspect, 1.0) * 0.5);
-      float vig = 1.0 - uVignette * smoothstep(0.35, 1.05, r);
-      vec3 col = c.rgb * vig;
-      // split tone: cool shadows, warm highlights
-      float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
-      col *= mix(vec3(0.94, 0.98, 1.06), vec3(1.05, 1.0, 0.94), smoothstep(0.05, 0.8, l));
-      col *= 1.0 + uWarm * vec3(0.06, 0.01, -0.05);
-      col = mix(col, vec3(0.6, 0.0, 0.0), uHurt * smoothstep(0.45, 1.1, r) * 0.7);
-      col += uFlash * vec3(1.0, 0.95, 0.85);
-      gl_FragColor = vec4(col, c.a);
-    }`,
-};
+import { BloomPass, FinalPass } from './post.js';
 
 /**
  * Render presets, picked by ?q= (see detectTier in perf.js: 'high' means the best the device can do).
@@ -93,13 +60,13 @@ export class Engine {
     const target = new THREE.WebGLRenderTarget(1, 1, { type: hdr ? THREE.HalfFloatType : THREE.UnsignedByteType, samples: this.quality.msaa });
     this.composer = new EffectComposer(r, target);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
+    // Bloom at half size and below, then one pass that grades, tone maps and writes sRGB (FXAA without msaa).
     if (this.quality.bloom) {
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.55, 0.55, 0.9);
+      this.bloom = new BloomPass(target.texture.type);
       this.composer.addPass(this.bloom);
     }
-    this.grade = new ShaderPass(GradeShader);
+    this.grade = new FinalPass(this.bloom || null, !this.quality.msaa);
     this.composer.addPass(this.grade);
-    this.composer.addPass(new OutputPass());
 
     this.assets = new Assets(r);
     this.actors = new Actors(this.assets, this.scene);
