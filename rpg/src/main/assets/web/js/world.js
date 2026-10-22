@@ -34,6 +34,8 @@ function fit(obj, width, height) {
  */
 function wallMaterial(map, top) {
   const mat = new THREE.MeshStandardMaterial({ map, bumpMap: map, bumpScale: top ? 2.5 : 4, roughness: 0.92, metalness: 0 });
+  // Sides and tops bake different shading into the shader, so they must not share one compiled program.
+  mat.customProgramCacheKey = () => (top ? 'wall-top' : 'wall-side');
   mat.onBeforeCompile = (shader) => {
     applyOcclusion(shader, 1.6, 0.32);
     shader.vertexShader = shader.vertexShader
