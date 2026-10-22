@@ -24,39 +24,347 @@ function showOnly(root, visible, all) {
   });
 }
 
-/** Crossfading animation player over the shared clip library. */
+/**
+ * Walk and run clips: ground covered per second at timeScale 1 and CHAR_SCALE (how fast a planted toe slides back),
+ * and where in the cycle the left foot lands, both measured from anims.glb, so the legs can match the actual speed and
+ * one gait can take over from another in step. 'Brisk' is half Walking_A, half Running_B: the two share a cycle length.
+ */
+const GAIT = {
+  Walking_A: { speed: 0.44, land: 0.09 },
+  Walking_D_Skeletons: { speed: 0.38, land: 0.1 },
+  Brisk: { speed: 0.81, blend: ['Walking_A', 'Running_B'] },
+  Running_B: { speed: 1.18, land: 0.11 },
+  Running_A: { speed: 2.35, land: 0.17 },
+  Running_C: { speed: 2.37, land: 0.17 },
+};
+const HERO_GAITS = ['Walking_A', 'Brisk', 'Running_B', 'Running_A'];
+const MONSTER_GAITS = ['Walking_A', 'Brisk', 'Running_B', 'Running_A'];
+const SKELETON_GAITS = ['Walking_D_Skeletons', 'Running_B', 'Running_A'];
+const NPC_GAITS = ['Walking_A', 'Brisk', 'Running_B'];
+/** Preferred playback rate: a touch quicker than authored reads lighter on the feet. */
+const PACE = 1.15;
+
+/** Swing timing as fractions of each clip: the wind-up apex (weapon cocked) and the strike. */
+const SWING = {
+  '1H_Melee_Attack_Chop': [0.45, 0.55],
+  '1H_Melee_Attack_Slice_Diagonal': [0.28, 0.39],
+  '1H_Melee_Attack_Slice_Horizontal': [0.18, 0.24],
+  '1H_Melee_Attack_Stab': [0.19, 0.25],
+  '2H_Melee_Attack_Chop': [0.34, 0.48],
+  '2H_Melee_Attack_Slice': [0.27, 0.36],
+  Dualwield_Melee_Attack_Chop: [0.38, 0.44],
+  Dualwield_Melee_Attack_Slice: [0.42, 0.5],
+  Dualwield_Melee_Attack_Stab: [0.19, 0.25],
+  Spellcast_Shoot: [0.2, 0.28],
+  Throw: [0.45, 0.53],
+};
+
+/** Monster attacks, alternated from one wind-up to the next. */
+const MONSTER_SWINGS = {
+  light: ['1H_Melee_Attack_Chop', '1H_Melee_Attack_Slice_Diagonal'],
+  heavy: ['2H_Melee_Attack_Chop', '2H_Melee_Attack_Slice'],
+  cast: ['Spellcast_Shoot'],
+};
+
+/** Clips that break up a long idle now and then. */
+const FIDGETS = {
+  hero: ['Idle_Combat'],
+  SMITH: ['PickUp', 'Idle'],
+  ELDER: ['Idle_Combat'],
+  VILLAGER_F: ['PickUp', 'Interact', 'Idle_Combat'],
+  VILLAGER_M: ['PickUp', 'Interact', 'Idle_Combat'],
+};
+
+/** Bones the legs layer drives (the hips too, so the legs stay attached to a moving pelvis). */
+const LEG_TRACK = /^(root|hips|upperleg|lowerleg|foot|toes)/;
+/** How much the legs layer outweighs a full-body action on the bones it shares (9 = 90 %). */
+const LEG_WEIGHT = 9;
+const TAU = Math.PI * 2;
+
+const twins = new Map();
+const legClips = new Map();
+
+/** A second clip over the same keyframes, so a clip can restart while its previous run fades out. */
+function twinOf(clip) {
+  let t = twins.get(clip);
+  if (!t) twins.set(clip, t = new THREE.AnimationClip(clip.name, clip.duration, clip.tracks));
+  return t;
+}
+
+/** The clip's tracks for the hips and legs only. */
+function legsOf(clip) {
+  let l = legClips.get(clip);
+  if (!l) legClips.set(clip, l = new THREE.AnimationClip(clip.name, clip.duration, clip.tracks.filter((t) => LEG_TRACK.test(t.name))));
+  return l;
+}
+
+function ease(w) {
+  return w * w * (3 - 2 * w);
+}
+
+function clamp(v, lo, hi) {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+/** Turns yaw toward target, easing in but never faster than rate rad/s; snap allows an instant flip past 150°. */
+function turnToward(yaw, target, dt, rate, snap) {
+  let d = target - yaw;
+  d -= Math.round(d / TAU) * TAU;
+  if (snap && Math.abs(d) > 2.62) return target;
+  const step = d * (1 - Math.exp(-14 * dt)), max = rate * dt;
+  const next = yaw + (step > max ? max : step < -max ? -max : step);
+  return next - Math.round(next / TAU) * TAU;
+}
+
+/**
+ * Crossfading animation player over the shared clip library. Weights are kept summed to one (eased crossfades,
+ * no bind pose showing through), a restarted clip blends from its previous run, walks and runs swap in step, and a
+ * legs-only layer can keep the feet walking under a swing.
+ */
 class Animator {
   constructor(root, clips) {
     this.mixer = new THREE.AnimationMixer(root);
     this.clips = clips;
     this.current = null;
     this.name = '';
+    /** Second clip blended into the current state (the run half of a brisk walk). */
+    this.partner = null;
+    /**
+     * Actions with any weight. Each carries w (fade 0..1), rate (fade per second), on (part of the current state),
+     * share and m (its target and actual part of that state), legs (a legs-only layer) and inLive.
+     */
+    this.live = [];
+    this.legs = null;
+    this.legsOn = false;
+    /** Ground speed in units per second, from position changes. */
+    this.speed = 0;
+    this.lastX = NaN;
+    this.lastY = 0;
+    this.dist = 0;
+    this.time = 0;
+    this.gait = '';
+    this.pace = 1;
+    /** Seconds spent in the current looped idle, and when to fidget. */
+    this.still = 0;
+    this.fidgetAt = 6 + Math.random() * 4;
   }
 
-  play(name, { loop = true, fade = 0.18, speed = 1, restart = false } = {}) {
+  /** Crossfades to a clip; restart plays it again from the start (or from `at` seconds) even if it is showing. */
+  play(name, { loop = true, fade = 0.18, speed = 1, restart = false, at = 0 } = {}) {
+    return this.cue(name, fade, speed, loop, restart, at);
+  }
+
+  /** play() without the options object, for calls made every frame. */
+  cue(name, fade = 0.18, speed = 1, loop = true, restart = false, at = 0) {
     const clip = this.clips[name];
     if (!clip) return null;
+    const rate = 1 / Math.max(0.01, fade);
+    if (this.partner) {
+      this.partner.on = false;
+      this.partner.rate = rate;
+      this.partner = null;
+    }
     if (this.name === name && !restart) {
       this.current.timeScale = speed;
+      this.current.share = 1;
       return this.current;
     }
-    const next = this.mixer.clipAction(clip);
-    next.reset();
+    const next = this.fresh(clip, loop && !restart);
     next.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
     next.clampWhenFinished = !loop;
     next.timeScale = speed;
-    next.enabled = true;
-    next.setEffectiveWeight(1);
-    if (this.current && this.current !== next) {
-      next.crossFadeFrom(this.current, fade, false);
+    if (at > 0) next.time = at;
+    const live = this.live;
+    for (let i = 0; i < live.length; i++) {
+      const a = live[i];
+      if (a.legs || a === next) continue;
+      a.on = false;
+      a.rate = rate;
     }
-    next.play();
+    next.on = true;
+    next.rate = rate;
+    next.share = 1;
+    if (!this.current) next.w = next.m = 1;
     this.current = next;
     this.name = name;
+    this.still = 0;
     return next;
   }
 
+  /** An action for clip ready to fade in: a looping one still fading out resumes where it is, anything else starts over. */
+  fresh(clip, resume) {
+    let a = Animator.prep(this.mixer.clipAction(clip));
+    if (a.inLive) {
+      if (resume) return a;
+      // Restarting a clip that still shows: use its twin so the old run eases away instead of snapping.
+      const b = Animator.prep(this.mixer.clipAction(twinOf(clip)));
+      if (!b.inLive || b.w < a.w) a = b;
+    }
+    this.enlist(a);
+    if (GAIT[clip.name]) a.time = this.inStep(clip, a);
+    return a;
+  }
+
+  /** Starts an action from its first frame, adding it to the live list if it is not there yet. */
+  enlist(a) {
+    a.reset();
+    if (!a.inLive) {
+      a.inLive = true;
+      a.w = 0;
+      a.m = 1;
+      a.play();
+      this.live.push(a);
+    }
+  }
+
+  static prep(a) {
+    if (a.w === undefined) {
+      a.w = 0;
+      a.m = 1;
+      a.share = 1;
+      a.on = false;
+      a.rate = 5;
+      a.legs = false;
+      a.inLive = false;
+    }
+    return a;
+  }
+
+  /** Clip time that puts a walk or run in step with the strongest one already showing (0 if none). */
+  inStep(clip, self) {
+    let best = null, bw = 0;
+    const live = this.live;
+    for (let i = 0; i < live.length; i++) {
+      const a = live[i];
+      if (a === self || !GAIT[a.getClip().name]) continue;
+      const w = a.w * (a.legs ? 1 : a.m);
+      if (w > bw) { best = a; bw = w; }
+    }
+    if (!best) return 0;
+    const from = best.getClip();
+    const phase = best.time / from.duration - GAIT[from.name].land + GAIT[clip.name].land;
+    return (phase - Math.floor(phase)) * clip.duration;
+  }
+
+  /**
+   * Measures the actor's ground speed from where the game puts it: distance over time, both summed over the last
+   * fraction of a second, so repeated or skipped frames even out.
+   */
+  track(x, y, dt) {
+    if (this.lastX === this.lastX) {
+      const dx = x - this.lastX, dy = y - this.lastY;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      const keep = Math.exp(-dt / 0.2);
+      // A jump of two tiles is a teleport or a new level, not a step.
+      this.dist = this.dist * keep + (d < 2 ? d : 0);
+      this.time = this.time * keep + dt;
+      this.speed = this.time > 0 ? this.dist / this.time : 0;
+    }
+    this.lastX = x;
+    this.lastY = y;
+    return this.speed;
+  }
+
+  /** Picks the gait whose natural pace best fits speed v at scale k (sticking a little to the current one) and sets this.pace. */
+  pick(gaits, v, k) {
+    let best = gaits[0], cost = Infinity, pace = 1;
+    for (let i = 0; i < gaits.length; i++) {
+      const p = v / (GAIT[gaits[i]].speed * k);
+      const c = Math.abs(Math.log(Math.max(0.05, p) / PACE)) - (gaits[i] === this.gait ? 0.2 : 0);
+      if (c < cost) { cost = c; best = gaits[i]; pace = p; }
+    }
+    this.gait = best;
+    this.pace = clamp(pace, 0.5, 2.6);
+    return best;
+  }
+
+  /** Walks or runs at speed v (units per second) for an actor at scale k, with the legs matching the ground. */
+  locomote(gaits, v, k, fade = 0.2) {
+    const name = this.pick(gaits, v, k);
+    const blend = GAIT[name].blend;
+    if (!blend) return this.cue(name, fade, this.pace);
+    const a = this.cue(blend[0], fade, this.pace);
+    const clip = this.clips[blend[1]];
+    if (!a || !clip) return a;
+    const b = this.fresh(clip, true);
+    if (b.w === 0) b.m = 0.5;
+    b.setLoop(THREE.LoopRepeat, Infinity);
+    b.clampWhenFinished = false;
+    b.on = true;
+    b.rate = a.rate;
+    b.share = 0.5;
+    b.timeScale = this.pace;
+    a.share = 0.5;
+    this.partner = b;
+    return a;
+  }
+
+  /** Keeps the legs walking or running under an upper-body action for this frame (call it every frame); null hands them back. */
+  legsFor(gaits, v, k) {
+    if (!gaits) {
+      this.legsOn = false;
+      return;
+    }
+    let name = this.pick(gaits, v, k);
+    if (GAIT[name].blend) {
+      name = GAIT[name].blend[1];
+      this.pace = clamp(v / (GAIT[name].speed * k), 0.5, 2.6);
+    }
+    const clip = this.clips[name];
+    if (!clip) return;
+    const leg = legsOf(clip);
+    const l = Animator.prep(this.mixer.clipAction(leg));
+    l.legs = true;
+    if (l !== this.legs) {
+      if (!l.inLive) {
+        this.enlist(l);
+        l.time = this.inStep(leg, l);
+      }
+      this.legs = l;
+    }
+    l.timeScale = this.pace;
+    l.rate = 8;
+    this.legsOn = true;
+  }
+
+  /** Idles on `name`, letting a one-shot finish first and now and then playing one of `extras` once. */
+  idle(name, extras, dt, fade = 0.25) {
+    const c = this.current;
+    if (this.name !== name && c && c.loop === THREE.LoopOnce && c.isRunning()) return c;
+    if (this.name === name) {
+      this.still += dt;
+      if (extras && this.still > this.fidgetAt) {
+        this.fidgetAt = 7 + Math.random() * 6;
+        return this.cue(extras[(Math.random() * extras.length) | 0], 0.45, 1, false, true);
+      }
+    }
+    return this.cue(name, fade);
+  }
+
   update(dt) {
+    const live = this.live;
+    let total = 0;
+    for (let i = live.length - 1; i >= 0; i--) {
+      const a = live[i];
+      if (a.legs ? a === this.legs && this.legsOn : a.on) {
+        a.w = Math.min(1, a.w + dt * a.rate);
+        if (a.m < a.share) a.m = Math.min(a.share, a.m + dt * a.rate);
+        else if (a.m > a.share) a.m = Math.max(a.share, a.m - dt * a.rate);
+      } else if ((a.w -= dt * a.rate) <= 0) {
+        a.w = 0;
+        a.inLive = false;
+        a.stop();
+        live.splice(i, 1);
+        if (a === this.legs) this.legs = null;
+        continue;
+      }
+      if (!a.legs) total += ease(a.w) * a.m;
+    }
+    for (let i = 0; i < live.length; i++) {
+      const a = live[i];
+      a.weight = a.legs ? ease(a.w) * LEG_WEIGHT : total > 1e-4 ? ease(a.w) * a.m / total : a === this.current ? 1 : 0;
+    }
+    this.legsOn = false;
     this.mixer.update(dt);
   }
 }
@@ -81,7 +389,7 @@ function heroGear(model, weapon) {
 
 function attackClips(model, weapon) {
   switch (model) {
-    case 'knight': return weapon === 'SPEAR' ? ['2H_Melee_Attack_Stab', '2H_Melee_Attack_Slice'] : ['1H_Melee_Attack_Slice_Diagonal', '1H_Melee_Attack_Chop', '1H_Melee_Attack_Slice_Horizontal'];
+    case 'knight': return weapon === 'SPEAR' ? ['1H_Melee_Attack_Stab', '2H_Melee_Attack_Slice'] : ['1H_Melee_Attack_Slice_Diagonal', '1H_Melee_Attack_Chop', '1H_Melee_Attack_Slice_Horizontal'];
     case 'barbarian': return weapon === 'MACE' ? ['Dualwield_Melee_Attack_Chop', 'Dualwield_Melee_Attack_Slice'] : weapon === 'SWORD' ? ['1H_Melee_Attack_Chop', '1H_Melee_Attack_Slice_Diagonal'] : ['2H_Melee_Attack_Chop', '2H_Melee_Attack_Slice'];
     case 'mage': return ['Spellcast_Shoot'];
     default: return ['Dualwield_Melee_Attack_Slice', 'Dualwield_Melee_Attack_Stab', 'Dualwield_Melee_Attack_Chop'];
@@ -111,38 +419,61 @@ class Hero {
   update(p, dt, ground) {
     const x = p[P.X], y = p[P.Y];
     this.root.position.set(x, ground(x, y) + p[P.LEAP_Z], y);
-    const target = Math.atan2(p[P.FX], p[P.FY]);
-    this.yaw = angleDamp(this.yaw, target, 14, dt);
-    this.root.rotation.y = this.yaw;
     const act = p[P.ACT];
     const swing = p[P.SWING];
     const a = this.anim;
-    const speed = Math.max(0.6, Math.min(1.6, p[P.SPEED] / 3.4));
+    const v = a.track(x, y, dt);
+    // Turn at a limited rate (flipping at once only when standing still) and lean into turns and sprints.
+    const busy = act === ACT.ATTACK || act === ACT.CAST || act === ACT.DODGE || act === ACT.SWEEP;
+    const before = this.yaw;
+    this.yaw = turnToward(this.yaw, Math.atan2(p[P.FX], p[P.FY]), dt, busy ? 22 : 15, v < 0.3 && act !== ACT.RUN);
+    this.root.rotation.y = this.yaw;
+    let turned = this.yaw - before;
+    turned -= Math.round(turned / TAU) * TAU;
+    this.spin = damp(this.spin || 0, dt > 0 && Math.abs(turned) < 2 ? turned / dt : 0, 12, dt);
+    const k = this.body.scale.x / CHAR_SCALE;
+    const from = this.act, entered = act !== from;
+    this.sinceSwing = (this.sinceSwing || 0) + dt;
+    let legs = false;
     switch (act) {
-      case ACT.DEAD: a.play('Death_A', { loop: false, fade: 0.25 }); break;
-      case ACT.LEAP: a.play('Jump_Full_Short', { loop: false, speed: 1.6 }); break;
-      case ACT.CHARGE: a.play('Running_B', { speed: 1.5 }); break;
-      case ACT.WHIRLWIND: a.play('2H_Melee_Attack_Spinning', { speed: 1.3 }); break;
-      case ACT.SWEEP: a.play('2H_Melee_Attack_Spin', { loop: false, speed: 1.8 }); break;
-      case ACT.DODGE: a.play('Dodge_Forward', { loop: false, speed: 1.7, fade: 0.08 }); break;
-      case ACT.CAST: a.play(this.model === 'mage' ? 'Spellcast_Long' : this.model === 'rogue' ? 'Throw' : 'Spellcast_Raise', { loop: false, speed: 1.8, fade: 0.1 }); break;
-      case ACT.ATTACK: {
-        // A new swing starts when the timer jumps back up.
-        if (swing > this.lastSwing + 0.01 || this.act !== ACT.ATTACK) {
-          const name = this.attacks[this.attackIndex++ % this.attacks.length];
-          const clip = a.clips[name];
-          const want = Math.max(0.3, p[P.SWING_TIME] * 1.9);
-          a.play(name, { loop: false, restart: true, fade: 0.06, speed: clip ? clip.duration / want : 1.5 });
+      case ACT.DEAD: a.cue('Death_A', 0.2, 1, false); break;
+      case ACT.LEAP: a.cue('Jump_Full_Short', 0.08, 1.6, false, entered); break;
+      case ACT.CHARGE: a.cue('Running_C', 0.1, 2.2); break;
+      case ACT.WHIRLWIND: a.cue('2H_Melee_Attack_Spinning', 0.1, 1.3); break;
+      case ACT.SWEEP: a.cue('2H_Melee_Attack_Spin', 0.08, 1.8, false, entered); break;
+      case ACT.DODGE: a.cue('Dodge_Forward', 0.06, 1.7, false, entered); break;
+      case ACT.CAST:
+        if (entered) {
+          const name = this.model === 'mage' ? 'Spellcast_Shoot' : this.model === 'rogue' ? 'Throw' : 'Spellcast_Raise';
+          if (SWING[name]) this.strike(name, 0.6, 0.08);
+          else a.play(name, { loop: false, speed: 1.8, fade: 0.1, restart: true });
         }
+        legs = true;
         break;
-      }
-      case ACT.HURT: if (this.act !== ACT.HURT) a.play('Hit_A', { loop: false, speed: 1.5, fade: 0.08 }); break;
-      case ACT.RUN: a.play('Running_A', { speed }); break;
-      default:
-        if (a.name !== 'Idle' && (!a.current || a.current.loop !== THREE.LoopOnce || !a.current.isRunning())) {
-          a.play(this.model === 'barbarian' && this.attacks[0].startsWith('2H') ? '2H_Melee_Idle' : 'Idle', { fade: 0.25 });
+      case ACT.ATTACK:
+        // A new swing starts when the timer jumps back up; after a pause the combo starts over.
+        if (swing > this.lastSwing + 0.01 || entered) {
+          if (this.sinceSwing > 1.2) this.attackIndex = 0;
+          this.strike(this.attacks[this.attackIndex++ % this.attacks.length], Math.max(0.3, p[P.SWING_TIME] * 1.9), 0.05);
+          this.sinceSwing = 0;
         }
+        legs = true;
+        break;
+      case ACT.HURT:
+        if (entered) a.play('Hit_A', { loop: false, speed: 1.5, fade: 0.06, restart: true });
+        legs = true;
+        break;
+      case ACT.RUN: a.locomote(HERO_GAITS, v, k, from === ACT.ATTACK || from === ACT.CAST || from === ACT.HURT ? 0.12 : 0.18); break;
+      default: a.idle(this.model === 'barbarian' && this.attacks[0].startsWith('2H') ? '2H_Melee_Idle' : 'Idle', FIDGETS.hero, dt, from === ACT.RUN ? 0.18 : 0.25);
     }
+    // Swings strike fast and follow through calmer; the feet keep running under them while the hero moves.
+    if (a.current && a.current === this.swingAction) a.current.timeScale = a.current.time < this.strikeAt ? this.swingFast : this.swingSlow;
+    a.legsFor(legs && v > (a.legs ? 0.6 : 0.9) ? HERO_GAITS : null, v, k);
+    const running = act === ACT.RUN || act === ACT.CHARGE || a.legsOn;
+    const roll = running ? clamp(-this.spin * v * 0.012, -0.2, 0.2) : 0;
+    const pitch = act === ACT.CHARGE ? 0.1 : running ? clamp((v - 3) * 0.05, 0, 0.12) : 0;
+    this.body.rotation.z = damp(this.body.rotation.z, roll, 8, dt);
+    this.body.rotation.x = damp(this.body.rotation.x, pitch, 6, dt);
     this.lastSwing = swing;
     // A short red flash when a hit lands.
     if (act === ACT.HURT && this.act !== ACT.HURT) this.hurtFlash = 1;
@@ -157,6 +488,18 @@ class Hero {
       m.opacity = stealth ? 0.32 : 1;
       m.emissive.setRGB(0.35 * this.hurtFlash, 0.02 * this.hurtFlash, 0);
     }
+  }
+
+  /** Starts a swing or cast late in its wind-up so the blow lands just after the press, then follows through over `length` seconds. */
+  strike(name, length, fade) {
+    const clip = this.anim.clips[name];
+    if (!clip) return;
+    const t = SWING[name] || SWING.Spellcast_Shoot;
+    const d = clip.duration, from = t[0] * 0.7 * d, at = t[1] * d;
+    this.swingAction = this.anim.play(name, { loop: false, restart: true, fade, at: from });
+    this.strikeAt = at;
+    this.swingFast = clamp((at - from) / 0.14, 1, 2.6);
+    this.swingSlow = clamp((d - at) / Math.max(0.15, length - (at - from) / this.swingFast), 0.6, 2.4);
   }
 }
 
@@ -242,26 +585,39 @@ class Monster {
     const stunned = (flags & EF.STUN) !== 0, frozen = (flags & EF.FROZEN) !== 0;
     if (this.anim) {
       const a = this.anim;
+      const v = a.track(x, y, dt);
+      const k = this.body.scale.x * size / CHAR_SCALE;
+      const swinging = a.current && a.current.loop === THREE.LoopOnce && a.current.isRunning();
       if (wind > 0) {
-        // Wind up: hold the attack pose in step with the game's telegraph, then let it swing through.
-        const name = this.type === 'CULTIST' || this.type === 'IMP' ? 'Spellcast_Shoot' : this.look.model === 'barbarian' ? '2H_Melee_Attack_Chop' : '1H_Melee_Attack_Chop';
-        const act = a.play(name, { loop: false, fade: 0.1 });
+        // Wind up: ease into the cocked pose in step with the game's telegraph and hold it there...
+        if (this.lastWind <= 0 || !this.swingName) {
+          const pool = this.type === 'CULTIST' || this.type === 'IMP' ? MONSTER_SWINGS.cast
+            : this.look.model === 'barbarian' || (this.look.gear && this.look.gear[0].startsWith('2H')) ? MONSTER_SWINGS.heavy : MONSTER_SWINGS.light;
+          this.swings = (this.swings || 0) + 1;
+          this.swingName = pool[(this.swings - 1) % pool.length];
+        }
+        const act = a.cue(this.swingName, 0.12, 1, false, this.lastWind <= 0);
         if (act) {
+          const u = 1 - wind;
           act.paused = true;
-          act.time = wind * act.getClip().duration * 0.42;
+          act.time = (1 - u * u * u) * SWING[this.swingName][0] * act.getClip().duration;
         }
       } else if (this.lastWind > 0 && a.current) {
+        // ...then let go with a fast swing.
         a.current.paused = false;
-        a.current.timeScale = 1.4;
-      } else if (a.current && a.current.loop === THREE.LoopOnce && a.current.isRunning()) {
-        // let the swing finish
+        a.current.timeScale = 1.6;
+      } else if (swinging && !(moving && a.current.time > 0.75 * a.current.getClip().duration)) {
+        // let the swing finish (its tail blends into walking)
       } else if (stunned || frozen) {
-        a.play('Hit_B', { loop: false, speed: frozen ? 0.05 : 1 });
+        a.cue('Hit_B', 0.18, frozen ? 0.05 : 1, false);
       } else if (moving) {
-        a.play(this.skeletal ? 'Walking_D_Skeletons' : 'Running_A', { speed: this.skeletal ? 1.3 : 1.1 });
+        if (this.look.float) a.cue('Walking_D_Skeletons', 0.25, 0.9);
+        else a.locomote(this.skeletal ? SKELETON_GAITS : MONSTER_GAITS, v, k, 0.2);
       } else {
-        a.play(this.skeletal ? 'Idle_Combat' : 'Idle', { fade: 0.3 });
+        a.cue(this.skeletal ? 'Idle_Combat' : 'Idle', 0.25);
       }
+      // The feet keep walking under a swing while the monster moves.
+      if ((wind > 0 || swinging) && moving && v > 0.4 && !this.look.float) a.legsFor(this.skeletal ? SKELETON_GAITS : MONSTER_GAITS, v, k);
       a.update(frozen ? dt * 0.1 : dt);
     } else if (this.beast) {
       this.beast.update(frozen ? 0 : dt, moving, wind, 1);
@@ -327,8 +683,9 @@ class Townsfolk {
     this.root.position.set(x, ground(x, y), y);
     this.yaw = angleDamp(this.yaw, Math.atan2(n[4], n[5]), 8, dt);
     this.root.rotation.y = this.yaw;
-    if (n[6] === 1) this.anim.play('Walking_A', { speed: 1 });
-    else this.anim.play(this.kind === 'SMITH' ? 'Interact' : 'Idle', { fade: 0.4 });
+    const v = this.anim.track(x, y, dt);
+    if (n[6] === 1) this.anim.locomote(NPC_GAITS, v, this.body.scale.x / CHAR_SCALE, 0.3);
+    else this.anim.idle(this.kind === 'SMITH' ? 'Interact' : 'Idle', FIDGETS[this.kind], dt, 0.4);
     this.anim.update(dt);
   }
 }
