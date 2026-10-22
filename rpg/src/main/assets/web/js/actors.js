@@ -672,7 +672,7 @@ class Monster {
 
 const FROZEN = new THREE.Color(0.6, 0.85, 1.3);
 const POISONED = new THREE.Color(0.7, 1.2, 0.6);
-const SHIELD_GLOW = new THREE.Color(0.35, 0.28, 0.05);
+const SHIELD_GLOW = new THREE.Color(0.06, 0.045, 0.008);
 
 class Townsfolk {
   constructor(assets, kind) {
