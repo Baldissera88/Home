@@ -9,6 +9,7 @@ import android.os.Looper
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebMessage
+import android.webkit.WebMessagePort
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -37,6 +38,10 @@ class Scene3D(context: Context, private val quality: String, private val onFail:
     private var sentQuest = -1
     private var sentPitch = Float.NaN
     private var sentDist = Float.NaN
+    private var destroyed = false
+    /** Our end of a message channel to the page; frames go here instead of through the window when it is open. */
+    private var port: WebMessagePort? = null
+    private val origin = Uri.parse("https://$HOST")
 
     val view: WebView = WebView(context).apply {
         setBackgroundColor(AndroidColor.BLACK)
@@ -44,6 +49,9 @@ class Scene3D(context: Context, private val quality: String, private val onFail:
         settings.allowFileAccess = false
         settings.allowContentAccess = false
         settings.mediaPlaybackRequiresUserGesture = true
+        settings.offscreenPreRaster = true
+        // Keep the renderer process important while the game shows it (API 26, our minSdk).
+        setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, true)
         isVerticalScrollBarEnabled = false
         isHorizontalScrollBarEnabled = false
         overScrollMode = WebView.OVER_SCROLL_NEVER
@@ -104,9 +112,11 @@ class Scene3D(context: Context, private val quality: String, private val onFail:
     private inner class Bridge {
         @JavascriptInterface
         fun ready() = main.post {
+            if (destroyed) return@post
             this@Scene3D.ready = true
             sentLevel = null
             sentPitch = Float.NaN
+            openPort()
         }
 
         @JavascriptInterface
@@ -120,13 +130,50 @@ class Scene3D(context: Context, private val quality: String, private val onFail:
         onFail(message)
     }
 
+    /** Hands the page one end of a fresh message channel (main.js listens for "port"); we keep the other. */
+    private fun openPort() {
+        closePort()
+        port = try {
+            val ports = view.createWebMessageChannel()
+            view.postWebMessage(WebMessage("port", arrayOf<WebMessagePort>(ports[1])), origin)
+            ports[0]
+        } catch (e: Exception) {
+            Log.w("Scene3D", "message channel unavailable", e)
+            null
+        }
+    }
+
+    private fun closePort() {
+        val p = port ?: return
+        port = null
+        try {
+            p.close()
+        } catch (e: Exception) {
+            // already closed
+        }
+    }
+
     private fun post(json: String) {
-        view.postWebMessage(WebMessage(json), Uri.parse("https://$HOST"))
+        val p = port
+        if (p != null) {
+            try {
+                p.postMessage(WebMessage(json))
+                return
+            } catch (e: Exception) {
+                Log.w("Scene3D", "port post failed, using postWebMessage", e)
+                closePort()
+            }
+        }
+        try {
+            view.postWebMessage(WebMessage(json), origin)
+        } catch (e: Exception) {
+            Log.w("Scene3D", "postWebMessage failed", e)
+        }
     }
 
     /** Sends the level when it changed, the camera when it moved, and this frame. Call on the main thread. */
     fun push(g: Game) {
-        if (!ready || failed) return
+        if (!ready || failed || destroyed || !view.isAttachedToWindow) return
         if (sentLevel !== g.dungeon || sentQuest != g.questStage) {
             sentLevel = g.dungeon
             sentQuest = g.questStage
@@ -145,6 +192,10 @@ class Scene3D(context: Context, private val quality: String, private val onFail:
     fun resume() = view.onResume()
 
     fun destroy() {
+        if (destroyed) return
+        destroyed = true
+        ready = false
+        closePort()
         view.removeJavascriptInterface("Android")
         view.destroy()
     }

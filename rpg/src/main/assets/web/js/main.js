@@ -7,7 +7,14 @@ const bridge = window.Android || null;
 const engine = new Engine({ quality: params.get('q') || 'high', bridge });
 window.engine = engine;
 window.wire = (m) => engine.receive(m);
-addEventListener('message', (e) => engine.receive(e.data));
+// Scene3D hands over one end of a WebMessageChannel ("port"); frames then arrive on it instead of the window.
+addEventListener('message', (e) => {
+  if (e.data === 'port' && e.ports && e.ports[0]) {
+    e.ports[0].onmessage = (ev) => engine.receive(ev.data);
+    return;
+  }
+  engine.receive(e.data);
+});
 addEventListener('error', (e) => engine.report(`${e.message} @${e.filename}:${e.lineno}`));
 addEventListener('unhandledrejection', (e) => engine.report('rejection: ' + (e.reason && e.reason.stack || e.reason)));
 

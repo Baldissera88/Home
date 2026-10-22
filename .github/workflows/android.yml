@@ -44,6 +44,11 @@ jobs:
         continue-on-error: true
         timeout-minutes: 8
         run: ./gradlew :rpg:testDebugUnitTest --tests 'com.baldissera.rpg.UiScreenTest'
+      - name: RPG 3D wire format test
+        id: wiretest
+        continue-on-error: true
+        timeout-minutes: 5
+        run: ./gradlew :rpg:testDebugUnitTest --tests 'com.baldissera.rpg.WireTest'
       - name: Publish RPG screenshots to the branch
         if: always() && github.event_name == 'push'
         run: |
