@@ -24,6 +24,20 @@ const DUNGEON = {
   HELL: { fog: 0x1a0602, fogDensity: 0.055, hemiSky: 0x803020, hemiGround: 0x200804, hemi: 0.7, key: 0xff7040, keyI: 0.45, lantern: 0xffa070 },
 };
 
+// The sun's shadow box (placeShadow) covers the ground the chase camera sees, out to fog or SHADOW_REACH
+// times the preset's shadowSpan ahead of the hero, plus receivers from SHADOW_LOW below the hero's feet to
+// SHADOW_HIGH above them. Its half sizes move in SHADOW_STEP steps, with a step of slack before shrinking,
+// so camera springs and shake do not keep resizing (and re-rasterising) it.
+const SHADOW_REACH = 1.4, SHADOW_LOW = 2, SHADOW_HIGH = 3, SHADOW_STEP = 0.5;
+// Static casters smaller than this (bounding radius) give no shadow worth a draw in the shadow pass.
+const SHADOW_MIN_RADIUS = 0.3;
+// Point light pool (assignLights): fade times in seconds, how much a source that holds a light is favoured
+// (its score is multiplied by this) and how far an effect's light may move in a frame and still be the same.
+const LIGHT_IN = 0.25, LIGHT_OUT = 0.35, LIGHT_OUT_BUSY = 0.12, LIGHT_KEEP = 0.6, LIGHT_TRACK = 2.5;
+// The reflection map's cube size: the sky is soft and most materials rough, so 64 texels a face do.
+const ENV_SIZE = 64;
+const _fwd = new THREE.Vector3(), _box = new THREE.Box3();
+
 export class Atmosphere {
   constructor(renderer, scene, quality) {
     this.renderer = renderer;
@@ -39,6 +53,7 @@ export class Atmosphere {
     this.shadowSpan = quality.shadowSpan;
     cam.left = -this.shadowSpan; cam.right = this.shadowSpan; cam.top = this.shadowSpan; cam.bottom = -this.shadowSpan;
     cam.near = 1; cam.far = 80;
+    this.shadowX = this.shadowY = 0; // the fitted box's half width and height, in light space (placeShadow)
     this.sun.shadow.bias = -0.0004;
     this.sun.shadow.normalBias = 0.035;
     this.sun.shadow.radius = 3;
@@ -47,13 +62,21 @@ export class Atmosphere {
     this.hemi = new THREE.HemisphereLight(0xbcd4ff, 0x4a4030, 0.8);
     scene.add(this.hemi);
 
+    // Point lights for fires and magic. Each keeps its source while that is chosen and fades in and out;
+    // `slots` holds what it shows (copied, as effect lights are reused records), `cands` and `pick` are
+    // assignLights' scratch, reused frame to frame.
     this.pool = [];
+    this.slots = [];
     for (let i = 0; i < quality.pointLights; i++) {
-      const l = new THREE.PointLight(0xffffff, 0, 6, 1.6);
-      l.userData.level = 0;
+      const l = new THREE.PointLight(0xffffff, 0, 6, 1.5);
       scene.add(l);
       this.pool.push(l);
+      this.slots.push({ src: null, fx: false, on: false, level: 0, x: 0, y: 0, z: 0, color: 0xffffff, radius: 5, intensity: 0, flicker: false });
     }
+    this.cands = [];
+    this.pick = new Array(this.pool.length).fill(0);
+    this.lightT = 0;
+    this.lightSnap = true;
     // The hero carries a soft light below ground; useful in dark dungeons.
     this.lantern = new THREE.PointLight(0xffc488, 0, 7, 1.4);
     scene.add(this.lantern);
@@ -126,23 +149,63 @@ export class Atmosphere {
       this.updateEnvironment(true);
     }
     this.envKey = -1;
-    for (const l of this.pool) { l.intensity = 0; l.userData.src = null; }
+    for (let i = 0; i < this.pool.length; i++) {
+      const s = this.slots[i];
+      s.src = null; s.fx = false; s.on = false; s.level = 0;
+      this.pool[i].intensity = 0;
+    }
+    this.lightSnap = true; // a new level starts with its lights already lit
+    this.shadowX = this.shadowY = 0;
+    this.trimShadows(world);
   }
 
-  /** Re-renders the reflection map from the sky when the light has changed enough to notice. */
+  /**
+   * Stops the shadow pass drawing what casts no shadow worth its draw: small props and flat, decal-like
+   * pieces (floors, rugs, the tops of walls, whose faces the shadow pass culls anyway) and see-through
+   * ones. Flora keeps its own casters, and actors are not part of the level.
+   */
+  trimShadows(world) {
+    const flora = world.flora && world.flora.group;
+    const visit = (o) => {
+      if (o === flora) return;
+      if (o.isMesh && o.castShadow && !o.isInstancedMesh && !o.isSkinnedMesh) {
+        const g = o.geometry, m = Array.isArray(o.material) ? o.material[0] : o.material;
+        if (!g.boundingSphere) g.computeBoundingSphere();
+        if (!g.boundingBox) g.computeBoundingBox();
+        o.updateWorldMatrix(true, false);
+        _box.copy(g.boundingBox).applyMatrix4(o.matrixWorld);
+        const small = g.boundingSphere.radius * o.matrixWorld.getMaxScaleOnAxis() < SHADOW_MIN_RADIUS;
+        const flat = _box.max.y - _box.min.y < 0.02;
+        if (small || flat || (m && (m.transparent || !m.depthWrite || m.polygonOffset))) o.castShadow = false;
+      }
+      for (let i = 0; i < o.children.length; i++) visit(o.children[i]);
+    };
+    visit(world.group);
+  }
+
+  /**
+   * Re-renders the reflection map from the sky (or a dungeon's dim colour) when the light has changed
+   * enough to notice: into a small cube, then prefiltered into the same target every time, so a refresh
+   * neither allocates nor draws the sky at full size.
+   */
   updateEnvironment(dungeon) {
-    if (this.envTarget) this.envTarget.dispose();
+    if (!this.envCube) {
+      this.envCube = new THREE.WebGLCubeRenderTarget(ENV_SIZE, { type: THREE.HalfFloatType });
+      this.envCam = new THREE.CubeCamera(0.1, 100, this.envCube);
+      this.envDark = new THREE.Scene();
+      this.envDark.background = new THREE.Color();
+    }
     if (dungeon) {
       const d = DUNGEON[this.biome] || DUNGEON.CRYPT;
-      const env = new THREE.Scene();
-      env.background = new THREE.Color(d.hemiSky).multiplyScalar(0.25);
-      this.envTarget = this.pmrem.fromScene(env, 0, 0.1, 100);
+      this.envDark.background.setHex(d.hemiSky).multiplyScalar(0.25);
+      this.envCam.update(this.renderer, this.envDark);
       this.scene.environmentIntensity = 0.35;
     } else {
       this.envSky.scale.setScalar(50);
-      this.envTarget = this.pmrem.fromScene(this.envScene, 0.04, 0.1, 100);
+      this.envCam.update(this.renderer, this.envScene);
       this.scene.environmentIntensity = 0.55;
     }
+    this.envTarget = this.pmrem.fromCubemap(this.envCube.texture, this.envTarget);
     this.scene.environment = this.envTarget.texture;
   }
 
@@ -244,53 +307,167 @@ export class Atmosphere {
     this.lantern.position.set(focus.x, focus.y + 2.4, focus.z + 0.4);
   }
 
-  /** The shadow camera follows the hero, snapped to whole shadow texels so edges do not crawl. */
+  /**
+   * Fits the sun's shadow box to the ground the chase camera sees: from the bottom of the screen, just
+   * behind the hero, to where fog (or the preset's reach) takes over ahead. The circle around that patch
+   * gives the box's width whichever way the camera turns, and its height in light space is the circle
+   * foreshortened by the light's slant, plus the height of what receives shadows. The box is centred on
+   * the circle and snapped to whole shadow texels in light space, so edges do not crawl as it follows.
+   */
   placeShadow(focus, camera) {
-    const dir = this.keyDir;
-    const span = this.shadowSpan;
-    // Centre a little ahead of the hero, where the camera looks.
-    const fwd = new THREE.Vector3();
-    camera.getWorldDirection(fwd);
-    fwd.y = 0;
-    fwd.normalize();
-    const cx = focus.x + fwd.x * span * 0.45, cz = focus.z + fwd.z * span * 0.45;
-    const texel = (span * 2) / this.sun.shadow.mapSize.x;
-    const sx = Math.round(cx / texel) * texel, sz = Math.round(cz / texel) * texel;
-    this.sun.target.position.set(sx, focus.y, sz);
-    this.sun.position.set(sx + dir.x * 40, focus.y + dir.y * 40, sz + dir.z * 40);
+    const dir = this.keyDir, shadow = this.sun.shadow, cam = shadow.camera;
+    camera.getWorldDirection(_fwd);
+    const pitch = Math.asin(Math.max(-0.99, Math.min(0.99, -_fwd.y)));
+    _fwd.y = 0;
+    _fwd.normalize();
+    const p = camera.position;
+    const h = Math.max(0.5, p.y - focus.y); // camera height over the hero's feet
+    const back = (focus.x - p.x) * _fwd.x + (focus.z - p.z) * _fwd.z; // and how far behind the hero it is
+    const half = camera.fov * Math.PI / 360, wide = Math.tan(half) * camera.aspect;
+    // Ground distances (from the camera) at the bottom and top edges of the screen; a receiver standing
+    // up is seen nearer, hence the margin behind.
+    const lo = pitch + half, hi = pitch - half;
+    const dNear = lo < Math.PI - 0.01 ? h * Math.cos(lo) / Math.sin(lo) : -h;
+    const ahead = Math.min(this.shadowSpan * SHADOW_REACH, Math.max(10, 1.25 / this.fog.density - back));
+    const dFar = Math.min(hi > 0.02 ? h * Math.cos(hi) / Math.sin(hi) : Infinity, back + ahead);
+    const zn = Math.min(dNear - back - 1.2, 0), zf = Math.max(dFar - back, 4);
+    // Half widths there, from the depth along the view axis, plus a margin for the corners.
+    const cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const wn = Math.max(0, (zn + back) * cp + h * sp) * wide + 1, wf = Math.max(0, (zf + back) * cp + h * sp) * wide + 1;
+    // The smallest circle around that trapezoid: centred on its axis, between its middle and far edge.
+    const c = Math.min(zf, Math.max((zn + zf) / 2, (wf * wf - wn * wn + zf * zf - zn * zn) / (2 * (zf - zn))));
+    const r = Math.max(Math.hypot(wf, zf - c), Math.hypot(wn, c - zn));
+    // Light space: x is level across the light, y climbs towards it, foreshortening the ground.
+    const sinE = Math.max(0.05, dir.y), cosE = Math.sqrt(1 - sinE * sinE);
+    const ry = r * sinE + (SHADOW_LOW + SHADOW_HIGH) / 2 * cosE;
+    if (r > this.shadowX || r < this.shadowX - 2 * SHADOW_STEP || ry > this.shadowY || ry < this.shadowY - 2 * SHADOW_STEP) {
+      this.shadowX = Math.ceil(r / SHADOW_STEP) * SHADOW_STEP;
+      this.shadowY = Math.ceil(ry / SHADOW_STEP) * SHADOW_STEP;
+      cam.left = -this.shadowX; cam.right = this.shadowX; cam.top = this.shadowY; cam.bottom = -this.shadowY;
+      cam.updateProjectionMatrix();
+    }
+    // Snap the centre to the texel grid along the light's x and y axes (as the shadow camera's lookAt
+    // builds them); moving along those keeps every texel where it was.
+    const lh = Math.max(1e-4, Math.hypot(dir.x, dir.z));
+    const ax = dir.z / lh, az = -dir.x / lh; // x = up × dir
+    const bx = -dir.x * dir.y / lh, by = lh, bz = -dir.z * dir.y / lh; // y = dir × x
+    const tx = 2 * this.shadowX / shadow.mapSize.x, ty = 2 * this.shadowY / shadow.mapSize.y;
+    const cx = focus.x + _fwd.x * c, cy = focus.y + (SHADOW_HIGH - SHADOW_LOW) / 2, cz = focus.z + _fwd.z * c;
+    const u = cx * ax + cz * az, v = cx * bx + cy * by + cz * bz;
+    const du = Math.round(u / tx) * tx - u, dv = Math.round(v / ty) * ty - v;
+    const sx = cx + ax * du + bx * dv, sy = cy + by * dv, sz = cz + az * du + bz * dv;
+    this.sun.target.position.set(sx, sy, sz);
+    this.sun.position.set(sx + dir.x * 40, sy + dir.y * 40, sz + dir.z * 40);
     this.sun.target.updateMatrixWorld();
+    // A normal offset of about two and a half texels clears acne under the soft filter at a low sun, and is
+    // still thin beside the chunky characters, so their feet stay on their shadows.
+    shadow.normalBias = Math.min(0.05, Math.max(0.02, 2.5 * Math.max(tx, ty)));
   }
 
-  /** Gives the pool's point lights to the brightest light sources near the hero. */
+  /**
+   * Gives the pool's point lights to the brightest light sources near the hero. A source keeps its light
+   * while it stays chosen (and is favoured, so near ties do not swap), lights fade in and out instead of
+   * popping, and a newly chosen source takes a light once one has faded out.
+   */
   assignLights(f, t, focus, fx) {
-    const cands = [];
-    const consider = (l) => {
-      const dx = l.x - focus.x, dz = l.z - focus.z;
-      const d2 = dx * dx + dz * dz;
-      const reach = (l.radius || 5) + 9;
-      if (d2 > reach * reach) return;
-      cands.push({ l, score: d2 / ((l.intensity || 1) * (l.minor ? 0.4 : 1)) });
-    };
-    if (this.world) for (const l of this.world.lights) consider(l);
-    if (fx) for (const l of fx.lights) consider(l);
-    cands.sort((a, b) => a.score - b.score);
-    const dayDim = this.outdoors ? 1 - 0.75 * f.dl : 1;
-    for (let i = 0; i < this.pool.length; i++) {
-      const pl = this.pool[i];
-      const c = cands[i];
-      if (!c) { pl.intensity = 0; continue; }
-      const l = c.l;
-      let k = 1;
-      if (l.flicker) {
-        const s = (l.x * 3.7 + l.z * 1.3) % 10;
-        k = 0.82 + 0.1 * Math.sin(t * 9.1 + s) + 0.08 * Math.sin(t * 23.3 + s * 3.1);
-      }
-      pl.color.setHex(l.color);
-      pl.position.set(l.x, l.y, l.z);
-      pl.distance = (l.radius || 5) * 1.5;
-      pl.decay = 1.5;
-      pl.intensity = (l.intensity || 1) * 3.2 * k * dayDim;
+    const dt = Math.min(0.1, Math.max(0, t - this.lightT));
+    this.lightT = t;
+    const slots = this.slots, ns = slots.length, cands = this.cands, pick = this.pick;
+    if (!ns) return;
+    for (let i = 0; i < ns; i++) slots[i].on = false;
+    let n = 0;
+    if (this.world) for (let i = 0, ls = this.world.lights; i < ls.length; i++) n = this.consider(ls[i], false, focus, n);
+    if (fx) for (let i = 0, ls = fx.lights; i < ls.length; i++) n = this.consider(ls[i], true, focus, n);
+    // The best `ns` by score, in order.
+    let np = 0;
+    for (let i = 0; i < n; i++) {
+      const s = cands[i].score;
+      if (np === ns && !(s < cands[pick[np - 1]].score)) continue;
+      let j = np < ns ? np++ : ns - 1;
+      for (; j > 0 && cands[pick[j - 1]].score > s; j--) pick[j] = pick[j - 1];
+      pick[j] = i;
     }
+    // Chosen sources keep their lights, then the rest take lights that have faded out.
+    let waiting = 0;
+    for (let k = 0; k < np; k++) if (cands[pick[k]].slot >= 0) slots[cands[pick[k]].slot].on = true;
+    for (let k = 0; k < np; k++) {
+      const c = cands[pick[k]];
+      let i = c.slot;
+      if (i < 0) {
+        for (i = 0; i < ns; i++) if (!slots[i].on && slots[i].level === 0) break;
+        if (i === ns) { waiting++; continue; }
+      }
+      // Copy what to show: effect records are reused, and a light fades out where its source was last.
+      const s = slots[i], l = c.l;
+      s.on = true;
+      s.src = c.fx ? null : l;
+      s.fx = c.fx;
+      s.x = l.x; s.y = l.y; s.z = l.z;
+      s.color = l.color;
+      s.radius = l.radius || 5;
+      s.intensity = l.intensity || 1;
+      s.flicker = !!l.flicker;
+    }
+    const dayDim = this.outdoors ? 1 - 0.75 * f.dl : 1;
+    const up = dt / LIGHT_IN, down = dt / (waiting ? LIGHT_OUT_BUSY : LIGHT_OUT);
+    for (let i = 0; i < ns; i++) {
+      const s = slots[i], pl = this.pool[i];
+      s.level = this.lightSnap ? (s.on ? 1 : 0) : s.on ? Math.min(1, s.level + up) : Math.max(0, s.level - down);
+      if (s.level === 0) {
+        if (!s.on) { s.src = null; s.fx = false; }
+        pl.intensity = 0;
+        continue;
+      }
+      let k = 1;
+      if (s.flicker) {
+        const ph = (s.x * 3.7 + s.z * 1.3) % 10;
+        k = 0.82 + 0.1 * Math.sin(t * 9.1 + ph) + 0.08 * Math.sin(t * 23.3 + ph * 3.1);
+      }
+      if (pl.userData.color !== s.color) { pl.userData.color = s.color; pl.color.setHex(s.color); }
+      pl.position.set(s.x, s.y, s.z);
+      pl.distance = s.radius * 1.5;
+      pl.decay = 1.5;
+      pl.intensity = s.intensity * 3.2 * k * dayDim * s.level * s.level * (3 - 2 * s.level);
+    }
+    this.lightSnap = false;
+  }
+
+  /**
+   * Adds light source `l` to the candidates (as the n-th) if it is near enough to matter, and returns the
+   * new count. Finds the pool light it already holds: a level light by identity, an effect's light by
+   * colour and place, as its record may be another one next frame.
+   */
+  consider(l, isFx, focus, n) {
+    const dx = l.x - focus.x, dz = l.z - focus.z;
+    const d2 = dx * dx + dz * dz;
+    const reach = (l.radius || 5) + 9;
+    if (d2 > reach * reach) return n;
+    const slots = this.slots;
+    let slot = -1;
+    if (isFx) {
+      let best = LIGHT_TRACK * LIGHT_TRACK;
+      for (let i = 0; i < slots.length; i++) {
+        const s = slots[i];
+        if (!s.fx || s.color !== l.color) continue;
+        const ex = s.x - l.x, ey = s.y - l.y, ez = s.z - l.z, e2 = ex * ex + ey * ey + ez * ez;
+        if (e2 < best && !this.claimed(i, n)) { best = e2; slot = i; }
+      }
+    } else {
+      for (let i = 0; i < slots.length; i++) if (slots[i].src === l) { slot = i; break; }
+    }
+    let c = this.cands[n];
+    if (!c) c = this.cands[n] = { l: null, fx: false, slot: -1, score: 0 };
+    c.l = l;
+    c.fx = isFx;
+    c.slot = slot;
+    c.score = d2 / ((l.intensity || 1) * (l.minor ? 0.4 : 1)) * (slot >= 0 ? LIGHT_KEEP : 1);
+    return n + 1;
+  }
+
+  /** Whether one of the first n candidates already tracks pool light i. */
+  claimed(i, n) {
+    for (let k = 0; k < n; k++) if (this.cands[k].slot === i) return true;
+    return false;
   }
 
   /** A rare double flash of lightning in heavy rain; 0 almost all the time. */
