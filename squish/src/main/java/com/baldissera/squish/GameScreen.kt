@@ -246,6 +246,7 @@ private class GameController(
                 finale = false
             }
             play(bonus, finaleMode = true)
+            pace = 1f
             finale = false
         }
         moves = 0
@@ -273,14 +274,19 @@ private class GameController(
 
     /** Waits on the frame clock, so animations and waits stay in step (and pause together). */
     private suspend fun wait(seconds: Float) {
-        val end = view.time + seconds
+        val end = view.time + seconds * pace
         while (view.time < end) withFrameNanos { }
     }
 
     // ------------------------------------------------------------------ phases
 
+    /** Time scale for phase playback; the finale speeds up as it goes so long cascades don't drag. */
+    private var pace = 1f
+
     private suspend fun play(phases: List<Phase>, finaleMode: Boolean = false) {
+        pace = if (finaleMode) 0.75f else 1f
         for (phase in phases) {
+            if (finaleMode) pace = max(0.3f, pace * 0.94f)
             val prev = view.snap
             when (phase.kind) {
                 PhaseKind.SWAP -> {
@@ -302,7 +308,7 @@ private class GameController(
                 }
                 PhaseKind.FALL -> {
                     val total = fall(prev, phase.after)
-                    wait(total + 0.04f)
+                    wait(total / pace + 0.04f)
                 }
                 PhaseKind.SHUFFLE -> {
                     callout("Bland!", Color(0xFF63C7FF))
@@ -380,8 +386,8 @@ private class GameController(
                         fromR = o.r.toFloat(); fromC = o.c.toFloat()
                     }
                     val dist = max(0.3f, sqrt((rr - fromR) * (rr - fromR) + (c - fromC) * (c - fromC)))
-                    val delay = c * 0.018f + (if (o == null) 0.05f else 0f)
-                    val dur = 0.11f + 0.075f * sqrt(dist * 3f)
+                    val delay = (c * 0.018f + (if (o == null) 0.05f else 0f)) * pace
+                    val dur = (0.11f + 0.075f * sqrt(dist * 3f)) * pace
                     m[p.id] = Move(fromR, fromC, now + delay, dur, MOVE_FALL, clipTop = if (o == null) segTop else -1)
                     view.landed[p.id] = now + delay + dur
                     total = max(total, delay + dur)
