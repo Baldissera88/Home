@@ -11,6 +11,7 @@ import { Fx } from './fx.js';
 import { Atmosphere } from './atmosphere.js';
 import { ChaseCamera } from './camera.js';
 import { Overlay, loadFonts } from './overlay.js';
+import { detectTier, FramePacer, GpuTimer, StatsView } from './perf.js';
 import { OCCLUDE } from './occlude.js';
 import { FrameInterpolator } from './interp.js';
 
@@ -45,9 +46,16 @@ const GradeShader = {
     }`,
 };
 
+/**
+ * Render presets, picked by ?q= (see detectTier in perf.js: 'high' means the best the device can do).
+ * maxDpr/minDpr bound the dynamic resolution, shadowMap/shadowSpan size the sun's shadow, pointLights is the
+ * pool for fires and magic, bloom and msaa (samples) switch post effects, grass scales tuft density, and
+ * name is the preset's key. Engine.degrade() swaps in lowered copies and tells `engine.onQuality`.
+ */
 const QUALITY = {
-  high: { maxDpr: 2, minDpr: 1.1, shadowMap: 2048, shadowSpan: 15, pointLights: 6, bloom: true, msaa: 4, grass: 1 },
-  low: { maxDpr: 1.25, minDpr: 0.8, shadowMap: 1024, shadowSpan: 13, pointLights: 4, bloom: false, msaa: 0, grass: 0.5 },
+  high: { name: 'high', maxDpr: 2, minDpr: 1.1, shadowMap: 2048, shadowSpan: 15, pointLights: 6, bloom: true, msaa: 4, grass: 1 },
+  medium: { name: 'medium', maxDpr: 1.6, minDpr: 0.95, shadowMap: 1536, shadowSpan: 14, pointLights: 5, bloom: true, msaa: 2, grass: 0.75 },
+  low: { name: 'low', maxDpr: 1.25, minDpr: 0.8, shadowMap: 1024, shadowSpan: 13, pointLights: 4, bloom: false, msaa: 0, grass: 0.5 },
 };
 
 export class Engine {
@@ -67,6 +75,15 @@ export class Engine {
     this.chase = new ChaseCamera(innerWidth / innerHeight);
     this.camera = this.chase.camera;
     this.overlay = new Overlay();
+    // ?q= is the player's choice and 'high' means the best this device can do, so a weak GPU starts lower.
+    // The screenshot harness (capture, a fixed dpr, or tier: false) gets exactly the preset it names.
+    this.device = opts.tier === false || opts.capture || opts.dpr ? null : detectTier(r.getContext(), opts.quality);
+    if (this.device) this.quality = QUALITY[this.device.tier];
+    /** The preset the device started with; `quality` is it after `degraded` degrade() steps. */
+    this.preset = this.quality;
+    this.degraded = 0;
+    /** Called as onQuality(next, prev) when the live loop changes `quality`; the next level is built with it. */
+    this.onQuality = null;
     this.dpr = Math.min(devicePixelRatio || 1, this.quality.maxDpr);
     this.fixedDpr = opts.dpr || 0;
 
@@ -220,50 +237,213 @@ export class Engine {
     this.overlay.draw(this.frame, this.camera, this.ground, this.actors, this.level);
   }
 
-  /** Runs the render loop, trading resolution for frame rate when the phone struggles. */
+  /**
+   * Runs the render loop at a steady 60 fps, or a steady 30 (every second display frame, dt accumulated)
+   * when the phone can't hold 60 even at its lowest settings; adapt() steers between them. ?stats=1 shows
+   * a readout of what it measures.
+   */
   start() {
+    const p = this.pacer = new FramePacer();
+    const r = this.renderer, gl = r.getContext(), info = r.info, px = new Uint8Array(4);
+    const timer = this.gpuTimer = new GpuTimer(gl);
+    const stats = this.stats = new URLSearchParams(location.search).get('stats') === '1' ? new StatsView() : null;
+    this.paced = new Map();
+    this.paceKey = undefined;
+    if (this.device) console.info(`[perf] ${this.device.gpu || 'unknown GPU'}, ${this.device.cores} cores, ${this.device.memory} GB: ${this.quality.name}${timer.ok ? ', GPU timer' : ''}`);
     const loop = (now) => {
       requestAnimationFrame(loop);
-      const dt = this.lastTime ? Math.min(0.05, (now - this.lastTime) / 1000) : 1 / 60;
+      if (this.level && this.level !== p.level && !this.fixedDpr) this.relevel();
+      const dt = p.tick(now, this.level);
+      if (!dt) return;
       this.lastTime = now;
+      // Once a second the readout counts a whole frame's draw calls (all passes), then autoReset is back on.
+      const sample = stats !== null && now >= stats.infoAt;
       try {
-        if (this.step(dt)) this.adapt(dt);
+        if (sample) { info.autoReset = false; info.reset(); }
+        const t0 = performance.now();
+        let drawn = false;
+        timer.begin();
+        try { drawn = this.step(dt); } finally { timer.end(); }
+        if (!drawn) { p.drop(); return; }
+        const js = performance.now() - t0;
+        if (p.probeDue && now >= p.ignoreUntil) {
+          // A one-off sync: wait for the GPU to finish this frame, which shows how much room is left.
+          r.setRenderTarget(null);
+          gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+          p.probed(performance.now() - t0);
+        }
+        this.adapt(js);
       } catch (e) {
         this.report('frame failed: ' + (e && e.stack || e));
+      } finally {
+        if (sample) {
+          stats.calls = info.render.calls;
+          stats.tris = info.render.triangles;
+          info.autoReset = true;
+          stats.infoAt = now + 1000;
+        }
       }
     };
     requestAnimationFrame(loop);
   }
 
-  /** Still too slow at the lowest resolution: give up bloom, then shadow detail, then more resolution. */
-  degrade() {
-    const q = this.quality;
-    if (this.bloom && this.bloom.enabled) {
-      this.bloom.enabled = false;
-    } else if (this.atmosphere.sun.shadow.mapSize.x > 1024) {
-      const s = this.atmosphere.sun.shadow;
-      s.mapSize.set(1024, 1024);
-      if (s.map) { s.map.dispose(); s.map = null; }
-    } else if (q.minDpr > 0.75) {
-      this.quality = { ...q, minDpr: q.minDpr - 0.2 };
-    }
+  /** Sets the dynamic resolution (two decimals) and lets the frame pacer settle; false if unchanged. */
+  setDpr(v) {
+    const next = Math.round(v * 100) / 100;
+    if (this.fixedDpr || Math.abs(next - this.dpr) < 0.01) return false;
+    this.dpr = next;
+    this.resize();
+    if (this.pacer) this.pacer.settle();
+    return true;
   }
 
-  adapt(dt) {
+  /**
+   * The preset after `steps` degrade steps, or null past the last: bloom off, then a 1024 shadow map with
+   * one point light fewer and sparser grass, then lower minimum resolutions (down to 0.8) with fewer lights.
+   */
+  lowered(steps) {
+    let q = this.preset;
+    for (let i = 0; i < steps; i++) {
+      if (q.bloom) q = { ...q, bloom: false };
+      else if (q.shadowMap > 1024) q = { ...q, shadowMap: 1024, pointLights: Math.max(3, q.pointLights - 1), grass: Math.min(q.grass, 0.6) };
+      else if (q.minDpr > 0.81) q = { ...q, minDpr: Math.max(0.8, q.minDpr - 0.2), pointLights: Math.max(2, q.pointLights - 1), grass: Math.min(q.grass, 0.4) };
+      else return null;
+    }
+    return q;
+  }
+
+  /** Applies the preset lowered by `steps` (bloom pass, sun shadow map) and tells onQuality; false if past the last. */
+  setDegraded(steps) {
+    const q = this.lowered(steps);
+    if (!q) return false;
+    const prev = this.quality;
+    this.degraded = steps;
+    this.quality = q;
+    if (this.bloom) this.bloom.enabled = q.bloom;
+    const s = this.atmosphere.sun.shadow;
+    if (s.mapSize.x !== q.shadowMap) {
+      s.mapSize.set(q.shadowMap, q.shadowMap);
+      if (s.map) { s.map.dispose(); s.map = null; }
+    }
+    if (q !== prev && this.onQuality) this.onQuality(q, prev);
+    return true;
+  }
+
+  /**
+   * Still too slow at the lowest resolution: give up bloom, then shadow detail (announcing fewer point
+   * lights and sparser grass), then more resolution. False when there is nothing left to give.
+   */
+  degrade() {
+    if (!this.setDegraded(this.degraded + 1)) return false;
+    if (this.dpr > this.quality.minDpr) this.setDpr(this.quality.minDpr);
+    return true;
+  }
+
+  /**
+   * A new level: remember where the last kind of level (its biome) settled, and start this one where its
+   * kind last did, or from the full preset the first time, so a light dungeon gets back what a heavy
+   * overworld cost and a heavy one does not have to find its settings again.
+   */
+  relevel() {
+    const p = this.pacer, key = this.level.biome;
+    if (this.paceKey !== undefined) this.paced.set(this.paceKey, { dpr: this.dpr, fps: p.fps, degraded: this.degraded });
+    this.paceKey = key;
+    const m = this.paced.get(key);
+    this.setDegraded(m ? m.degraded : 0);
+    p.fps = m ? m.fps : 60;
+    if (m) this.setDpr(m.dpr);
+  }
+
+  /**
+   * Called after each drawn frame with its JS ms. Once per measured second it steers toward a steady frame
+   * rate: resolution down at once when frames run late, up slowly when there is room (and not back to one
+   * that just failed, for a while longer each time); at the lowest resolution effects go, then 60 fps
+   * gives way to a steady 30, which goes back to 60 when the work clearly fits.
+   */
+  adapt(js) {
+    const p = this.pacer;
+    p.record(js, this.gpuTimer.poll());
+    if (!p.measure()) return;
+    const s = p.stat, q = this.quality, now = p.now;
+    if (this.stats) this.stats.show(this, s);
     if (this.fixedDpr) return;
-    const ft = this.frameTimes;
-    ft.push(dt);
-    if (ft.length < 90) return;
-    const avg = ft.reduce((a, b) => a + b, 0) / ft.length;
-    ft.length = 0;
-    const q = this.quality;
-    let next = this.dpr;
-    if (avg > 1 / 45 && this.dpr <= q.minDpr + 0.01) this.degrade();
-    if (avg > 1 / 45) next = Math.max(q.minDpr, this.dpr - 0.2);
-    else if (avg < 1 / 58 && this.dpr < Math.min(devicePixelRatio || 1, q.maxDpr)) next = Math.min(q.maxDpr, this.dpr + 0.1);
-    if (Math.abs(next - this.dpr) > 0.01) {
-      this.dpr = next;
-      this.resize();
+    const top = Math.min(devicePixelRatio || 1, q.maxDpr);
+    const cost = p.cost();
+    const sure = p.fps === 30 || (p.gpuTrust && s.gpu >= 0);
+    // Without a trusted GPU timer, a sync probe measures the work while frames are on time: each second at
+    // 30 fps, where the stall fits in the spare frame, and now and then at 60 while resolution could grow.
+    p.probeDue = s.good && !(p.gpuTrust && s.gpu >= 0) && (p.fps === 30 || this.dpr < top - 0.01)
+      && now - p.probeAt > (p.fps === 30 ? 900 : p.probeGap);
+    if (s.slow) {
+      p.good = 0;
+      if (s.load < 1.3 && ++p.slow < 2) return; // only a little late: make sure first
+      p.slow = 0;
+      if (p.fps === 60 && now < p.trialUntil) {
+        p.toThirty(); // the way back from 30 did not hold
+        this.setDpr(p.trialDpr);
+      } else if (p.fps === 60 && s.js > s.budget * 0.85) {
+        p.toThirty(); // the CPU is the limit: fewer pixels would not help
+      } else if (this.dpr > q.minDpr + 0.01) {
+        if (now - p.upAt < 15000) {
+          // The last step up was too far: stay below it for a while, longer each time.
+          p.ceil = now < p.ceilUntil ? Math.min(p.ceil, this.dpr) : this.dpr;
+          p.ceilUntil = now + p.ceilTtl;
+          p.ceilTtl = Math.min(240000, p.ceilTtl * 2);
+        }
+        // Size the step by measured work only when it is exact; a little late never costs more than 15%.
+        const f = cost > 0 && sure ? Math.sqrt(0.8 * s.budget / cost) : 0.95 / Math.sqrt(s.load);
+        this.setDpr(Math.max(q.minDpr, Math.min(this.dpr - 0.05, Math.floor(this.dpr * Math.max(s.load < 1.3 ? 0.85 : 0.6, f) * 20) / 20)));
+      } else if (p.fps === 60 && s.load > 1.6) {
+        p.toThirty(); // far off even at the lowest resolution: effects alone won't get there
+      } else if (this.degrade()) {
+        p.settle();
+      } else if (p.fps === 60) {
+        p.toThirty();
+      }
+      return;
+    }
+    if (!s.good) {
+      p.good = 0;
+      p.slow = Math.max(0, p.slow - 0.5); // late now and then: a slow window soon after still counts twice
+      return;
+    }
+    p.slow = 0;
+    p.good++;
+    if (p.good < 3) return;
+    if (p.fps === 30 && now >= p.retryAt && cost > 0) {
+      // Try 60 when the measured work fits 70% of its budget, at a lower resolution if need be (assuming
+      // only half the work scales with pixels).
+      const t60 = p.vsync * Math.max(1, Math.round(1000 / 60 / p.vsync));
+      const fit = 0.7 * t60 / cost;
+      const d = fit >= 1 ? this.dpr : fit > 0.5 ? Math.floor(this.dpr * Math.sqrt((fit - 0.5) / 0.5) * 20) / 20 : 0;
+      if (d >= q.minDpr) {
+        p.trialDpr = this.dpr;
+        p.trialUntil = now + 6000;
+        p.retryAt = now + p.retry;
+        p.setFps(60);
+        this.setDpr(d);
+        return;
+      }
+    }
+    if (this.dpr < top - 0.01 && now - p.changedAt >= 4000) {
+      let next = this.dpr + 0.1;
+      if (cost > 0) {
+        // At 60 fps a probe also counts GPU work that would overlap the next frame, so there only a clear
+        // lack of room stops the climb (a near miss gets a small step; the ceiling catches overshoot).
+        const room = 0.75 * s.budget / cost;
+        if (room >= 1.1) next = Math.max(next, this.dpr * Math.min(1.25, Math.sqrt(room)));
+        else if (sure || room < 0.88) {
+          p.probeGap = Math.min(32000, p.probeGap * 2);
+          return;
+        }
+      }
+      // Below a resolution that failed while the ceiling lasts; after that, that resolution once more, and
+      // past it only once it has held.
+      if (now < p.ceilUntil) next = Math.min(next, p.ceil - 0.05);
+      else if (this.dpr >= p.ceil - 0.01) p.ceil = Infinity;
+      else next = Math.min(next, p.ceil);
+      next = Math.min(top, Math.floor(next * 20) / 20);
+      if (next > this.dpr + 0.02 && this.setDpr(next)) p.upAt = now;
     }
   }
 }
