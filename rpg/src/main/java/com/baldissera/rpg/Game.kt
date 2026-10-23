@@ -2538,7 +2538,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         revealedX = px
         revealedY = py
         revealedIn = explored
-        val r = if (inWorld) 9 else 7
+        val r = if (outdoors) 9 else 7
         for (y in py - r..py + r) for (x in px - r..px + r) {
             if (x in 0 until dungeon.w && y in 0 until dungeon.h && (x - px) * (x - px) + (y - py) * (y - py) <= r * r) {
                 val i = y * dungeon.w + x
