@@ -13,6 +13,7 @@ import { detectTier, FramePacer, GpuTimer, StatsView, lowerPreset } from './perf
 import { OCCLUDE } from './occlude.js';
 import { FrameInterpolator } from './interp.js';
 import { BloomPass, FinalPass, AOPass, RaysPass, makeGrade, blendGrade } from './post.js';
+import { charEnv, contact } from './charmat.js';
 
 /**
  * Render presets, picked by ?q= (see detectTier in perf.js: 'high' means the best the device can do).
@@ -253,6 +254,10 @@ export class Engine {
     }
     if (this.ao) this.ao.fadeFar = Math.min(40, 2.2 / Math.max(0.01, atm.fog.density));
     atm.setLook(g);
+    // Metal on the characters reflects more where the reflections are dim (underground), so it still reads.
+    charEnv.value = Math.min(1.5, Math.max(0.6, 0.5 / Math.max(0.05, g.env)));
+    // With screen-space occlusion on, the contact blobs under the actors can be lighter.
+    contact.dark = this.ao && this.ao.enabled ? 0.8 : 1;
     if (this.rays && this.rays.enabled) this.aimRays(f, g);
   }
 

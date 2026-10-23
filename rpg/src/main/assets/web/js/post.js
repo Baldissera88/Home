@@ -26,39 +26,39 @@ import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
  */
 export const GRADE = {
   OVERWORLD: {
-    exposure: 1.06, balance: [1.0, 1.0, 0.98], contrast: 0.2, saturation: 1.08, shadowSat: 0.9,
-    lift: [0.006, 0.008, 0.014], gain: [1.02, 1.0, 0.97], vignette: 0.26,
-    bloom: 0.32, threshold: 1.25, knee: 0.6, ao: 0.8, env: 0.65, scatter: 0.55, haze: 0.25,
+    exposure: 1.2, balance: [1.0, 1.0, 0.98], contrast: 0.3, saturation: 1.02, shadowSat: 0.88,
+    lift: [0.0, 0.008, 0.024], gain: [1.05, 1.0, 0.95], vignette: 0.3,
+    bloom: 0.3, threshold: 1.5, knee: 0.7, ao: 1.0, env: 0.32, scatter: 0.55, haze: 0.25,
     // Golden hour: warm light, warmer highlights, a little more contrast and glow.
-    dusk: { exposure: 1.12, balance: [1.1, 0.98, 0.84], contrast: 0.24, saturation: 1.14, shadowSat: 0.88, lift: [0.016, 0.008, 0.004], gain: [1.06, 0.99, 0.9], bloom: 0.5, threshold: 1.1, scatter: 1.2 },
+    dusk: { exposure: 1.12, balance: [1.1, 0.98, 0.84], contrast: 0.24, saturation: 1.14, shadowSat: 0.88, lift: [0.016, 0.008, 0.004], gain: [1.06, 0.99, 0.9], bloom: 0.42, threshold: 1.35, scatter: 1.2 },
     // Moonlight: the eye adapts up, the colour goes cool and grey.
-    night: { exposure: 1.32, balance: [0.86, 0.95, 1.12], contrast: 0.16, saturation: 0.86, shadowSat: 0.7, lift: [0.0, 0.006, 0.02], gain: [0.97, 0.99, 1.04], bloom: 0.55, threshold: 1.0, scatter: 0.35, env: 0.45 },
+    night: { exposure: 1.32, balance: [0.86, 0.95, 1.12], contrast: 0.16, saturation: 0.86, shadowSat: 0.7, lift: [0.0, 0.006, 0.02], gain: [0.97, 0.99, 1.04], bloom: 0.5, threshold: 1.25, scatter: 0.35, env: 0.45 },
   },
   // Cool, desaturated stone; torches stay warm in the highlights.
   CRYPT: {
-    exposure: 1.62, balance: [0.94, 0.98, 1.08], contrast: 0.22, saturation: 0.95, shadowSat: 0.62,
+    exposure: 1.72, balance: [0.94, 0.98, 1.08], contrast: 0.16, saturation: 0.95, shadowSat: 0.62,
     lift: [0.0, 0.006, 0.02], gain: [1.04, 1.0, 0.95], vignette: 0.34,
-    bloom: 0.5, threshold: 1.15, knee: 0.6, ao: 1.0, env: 0.38, scatter: 0, haze: 0.4,
+    bloom: 0.4, threshold: 1.8, knee: 0.8, ao: 1.0, env: 0.38, scatter: 0, haze: 0.4,
   },
   // Teal-green shadows against orange firelight.
   CAVE: {
-    exposure: 1.6, balance: [0.94, 1.02, 1.0], contrast: 0.22, saturation: 1.0, shadowSat: 0.72,
+    exposure: 1.72, balance: [0.94, 1.02, 1.0], contrast: 0.16, saturation: 1.0, shadowSat: 0.72,
     lift: [0.0, 0.016, 0.016], gain: [1.05, 1.0, 0.93], vignette: 0.34,
-    bloom: 0.5, threshold: 1.15, knee: 0.6, ao: 1.0, env: 0.4, scatter: 0, haze: 0.45,
+    bloom: 0.4, threshold: 1.8, knee: 0.8, ao: 1.0, env: 0.4, scatter: 0, haze: 0.45,
   },
   // Red-orange heat, deep red shadows.
   HELL: {
-    exposure: 1.42, balance: [1.08, 0.96, 0.86], contrast: 0.24, saturation: 1.08, shadowSat: 0.85,
-    lift: [0.022, 0.004, 0.0], gain: [1.05, 0.98, 0.9], vignette: 0.34,
-    bloom: 0.55, threshold: 1.2, knee: 0.7, ao: 0.9, env: 0.42, scatter: 0, haze: 0.35,
+    exposure: 1.48, balance: [1.06, 0.97, 0.88], contrast: 0.18, saturation: 1.04, shadowSat: 0.85,
+    lift: [0.02, 0.004, 0.0], gain: [1.04, 0.98, 0.92], vignette: 0.34,
+    bloom: 0.45, threshold: 1.9, knee: 0.9, ao: 0.9, env: 0.42, scatter: 0, haze: 0.35,
   },
   // Harsh sun: warm, contrasty, shadows a little desaturated. A starting point for the desert agent.
   DESERT: {
     exposure: 0.98, balance: [1.06, 1.0, 0.9], contrast: 0.28, saturation: 1.05, shadowSat: 0.78,
     lift: [0.012, 0.008, 0.004], gain: [1.04, 1.0, 0.94], vignette: 0.24,
-    bloom: 0.3, threshold: 1.35, knee: 0.6, ao: 0.75, env: 0.7, scatter: 0.75, haze: 0.2,
-    dusk: { exposure: 1.08, balance: [1.14, 0.97, 0.8], contrast: 0.26, saturation: 1.12, lift: [0.02, 0.008, 0.0], gain: [1.08, 0.98, 0.86], bloom: 0.5, threshold: 1.1, scatter: 1.3 },
-    night: { exposure: 1.3, balance: [0.88, 0.95, 1.1], contrast: 0.18, saturation: 0.82, shadowSat: 0.7, lift: [0.0, 0.006, 0.018], gain: [0.97, 0.99, 1.04], bloom: 0.5, threshold: 1.0, scatter: 0.3, env: 0.45 },
+    bloom: 0.28, threshold: 1.6, knee: 0.7, ao: 0.8, env: 0.42, scatter: 0.75, haze: 0.2,
+    dusk: { exposure: 1.08, balance: [1.14, 0.97, 0.8], contrast: 0.26, saturation: 1.12, lift: [0.02, 0.008, 0.0], gain: [1.08, 0.98, 0.86], bloom: 0.42, threshold: 1.35, scatter: 1.3 },
+    night: { exposure: 1.3, balance: [0.88, 0.95, 1.1], contrast: 0.18, saturation: 0.82, shadowSat: 0.7, lift: [0.0, 0.006, 0.018], gain: [0.97, 0.99, 1.04], bloom: 0.5, threshold: 1.25, scatter: 0.3, env: 0.45 },
   },
 };
 
@@ -328,8 +328,8 @@ export class AOPass extends Pass {
     super();
     this.needsSwap = false;
     this.camera = camera;
-    this.radius = 0.55;
-    this.intensity = 1.6;
+    this.radius = 0.7;
+    this.intensity = 2.8;
     this.depthTexture = null;
     const opts = { type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter };
     this.target = new THREE.WebGLRenderTarget(1, 1, opts);
@@ -338,7 +338,7 @@ export class AOPass extends Pass {
     this.material = quad(AO_FS, {
       tDepth: { value: null }, uProj: { value: new THREE.Vector4() }, uDepth: { value: new THREE.Vector3() },
       uTexel: { value: new THREE.Vector2() }, uRadius: { value: 0.5 }, uPxPerUnit: { value: 1 }, uMaxPx: { value: 40 },
-      uBias: { value: 0.12 }, uIntensity: { value: 1.6 }, uFadeFar: { value: 40 },
+      uBias: { value: 0.07 }, uIntensity: { value: 1.6 }, uFadeFar: { value: 40 },
     }, { defines: { SAMPLES: samples } });
     this.blur = quad(AO_BLUR_FS, { tAO: { value: null }, uStep: { value: new THREE.Vector2() } });
     this.fsQuad = new FullScreenQuad(this.material);

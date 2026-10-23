@@ -34,6 +34,8 @@ const SHADOW_MIN_RADIUS = 0.3;
 // Point light pool (assignLights): fade times in seconds, how much a source that holds a light is favoured
 // (its score is multiplied by this) and how far an effect's light may move in a frame and still be the same.
 const LIGHT_IN = 0.25, LIGHT_OUT = 0.35, LIGHT_OUT_BUSY = 0.12, LIGHT_KEEP = 0.6, LIGHT_TRACK = 2.5;
+// Point lights' distance falloff exponent (2 is inverse-square).
+const LIGHT_DECAY = 1.7;
 // The reflection map's cube size: the sky is soft and most materials rough, so 64 texels a face do.
 const ENV_SIZE = 64;
 const _fwd = new THREE.Vector3(), _box = new THREE.Box3(), _right = new THREE.Vector3(), _up = new THREE.Vector3(), _back = new THREE.Vector3();
@@ -241,7 +243,7 @@ export class Atmosphere {
     this.pool = [];
     this.slots = [];
     for (let i = 0; i < quality.pointLights; i++) {
-      const l = new THREE.PointLight(0xffffff, 0, 6, 2);
+      const l = new THREE.PointLight(0xffffff, 0, 6, LIGHT_DECAY);
       scene.add(l);
       this.pool.push(l);
       this.slots.push({ src: null, fx: false, on: false, level: 0, x: 0, y: 0, z: 0, color: 0xffffff, radius: 5, intensity: 0, flicker: false });
@@ -567,10 +569,12 @@ export class Atmosphere {
     const sunI = (1 - night) * Math.min(1, Math.max(0, sun.y) * 4) * (1 - rain * 0.65);
     const moonI = night * 1.1;
     if (night > 0.5) this.sun.color.setHex(0x8aa4e0); else this.sun.color.copy(sunColor);
-    this.sun.intensity = night > 0.5 ? moonI : 3.0 * sunI + 0.05;
-    this.hemi.color.copy(zenith).lerp(new THREE.Color(0xffffff), 0.35);
+    this.sun.intensity = night > 0.5 ? moonI : 3.75 * sunI + 0.05;
+    this.hemi.color.copy(zenith).lerp(SKY.white, 0.2);
     this.hemi.groundColor.setHex(0x5a4a36).lerp(new THREE.Color(0x1a2232), night);
-    this.hemi.intensity = 0.8 + 0.5 * day - 0.15 * rain + flash * 2.5;
+    // Sky fill well below the sun (with the sky's reflection map adding its share), so sunlit and shaded
+    // sides read apart as on a clear day; overcast evens them out.
+    this.hemi.intensity = 0.7 + 0.05 * day + 0.3 * rain * day - 0.15 * rain + flash * 2.5;
 
     this.fog.color.copy(fogCol);
     this.fog.density = 0.012 + f.fg * 0.09 + rain * 0.012 + night * 0.012;
@@ -741,11 +745,12 @@ export class Atmosphere {
       }
       if (pl.userData.color !== s.color) { pl.userData.color = s.color; pl.color.setHex(s.color); }
       pl.position.set(s.x + jx, s.y + jy, s.z + jz);
-      // Inverse-square falloff (with three's smooth cut-off at `distance`): hot near the flame, a soft pool
-      // farther out; brighter at the source than the old 1.5 decay so the pool keeps its size.
+      // Near inverse-square falloff (with three's smooth cut-off at `distance`): hot near the flame, a soft
+      // pool farther out; a little under 2, as a real flame is not a point and would not blow out the wall
+      // right behind it. Effect lights (often at the actors' feet) a little dimmer than the level's torches.
       pl.distance = s.radius * 1.7;
-      pl.decay = 2;
-      pl.intensity = s.intensity * 4.4 * k * dayDim * s.level * s.level * (3 - 2 * s.level);
+      pl.decay = LIGHT_DECAY;
+      pl.intensity = s.intensity * (s.fx ? 3.2 : 3.8) * k * dayDim * s.level * s.level * (3 - 2 * s.level);
     }
     this.lightSnap = false;
   }
