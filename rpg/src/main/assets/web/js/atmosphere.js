@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { SKY_VS, SKY_FS, makeSkyNoise, Rain } from './sky.js';
 import { PointBatch } from './fx.js';
-import { hash } from './defs.js';
+import { hash, TILE } from './defs.js';
 
 /**
  * Time of day, weather and light: a procedural sky with sun, moon, clouds and stars, the sun's
@@ -36,7 +36,168 @@ const SHADOW_MIN_RADIUS = 0.3;
 const LIGHT_IN = 0.25, LIGHT_OUT = 0.35, LIGHT_OUT_BUSY = 0.12, LIGHT_KEEP = 0.6, LIGHT_TRACK = 2.5;
 // The reflection map's cube size: the sky is soft and most materials rough, so 64 texels a face do.
 const ENV_SIZE = 64;
-const _fwd = new THREE.Vector3(), _box = new THREE.Box3();
+const _fwd = new THREE.Vector3(), _box = new THREE.Box3(), _right = new THREE.Vector3(), _up = new THREE.Vector3(), _back = new THREE.Vector3();
+const _envA = new THREE.Color(), _envB = new THREE.Color();
+
+/**
+ * Live uniforms of the patched fog (installFog), shared by every material: plain objects and a typed array,
+ * which three's uniform cloning passes on by reference, so one write per frame reaches every program.
+ * fogRay turns (gl_FragCoord.xy, 1) into the world-space view ray per unit of view depth; fogSun is the
+ * world direction toward the sun with the in-scattering strength in w, fogSunColor its colour; fogHeight is
+ * (height below which the fog is densest, thinning per unit above it, share of the density that thins).
+ */
+const FOG = {
+  fogRay: { value: new Float32Array(9) },
+  fogSun: { value: { x: 0, y: 1, z: 0, w: 0 } },
+  fogSunColor: { value: { x: 1, y: 0.85, z: 0.6 } },
+  fogHeight: { value: { x: 0, y: 0, z: 0 } },
+};
+
+/**
+ * Fog with height and light: thinner above the ground the hero walks on (tree crowns and wall tops stand out
+ * of the haze, low ground keeps it) and, under open sky, brighter and sun-coloured toward the sun. A
+ * material without these uniforms (a custom shader not built from UniformsLib.fog) gets three's plain fog.
+ */
+const FOG_FRAGMENT = `
+#ifdef USE_FOG
+	vec3 fogView = fogRay * vec3( gl_FragCoord.xy, 1.0 );
+	float fogThin = 1.0 - fogHeight.z + fogHeight.z * exp( - max( cameraPosition.y + fogView.y * vFogDepth - fogHeight.x, 0.0 ) * fogHeight.y );
+	#ifdef FOG_EXP2
+		float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth * fogThin );
+	#else
+		float fogFactor = smoothstep( fogNear, fogFar, vFogDepth ) * fogThin;
+	#endif
+	float fogSunAmt = fogSun.w * pow( max( dot( fogView, fogSun.xyz ) * inversesqrt( dot( fogView, fogView ) + 1e-8 ), 0.0 ), 5.0 );
+	gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor + fogSunColor * fogSunAmt, fogFactor );
+#endif
+`;
+
+let fogInstalled = false;
+function installFog() {
+  if (fogInstalled) return;
+  fogInstalled = true;
+  Object.assign(THREE.UniformsLib.fog, FOG);
+  for (const k in THREE.ShaderLib) {
+    const u = THREE.ShaderLib[k].uniforms;
+    if (u && u.fogColor) Object.assign(u, FOG);
+  }
+  THREE.ShaderChunk.fog_pars_fragment += `
+#ifdef USE_FOG
+	uniform mat3 fogRay;
+	uniform vec4 fogSun;
+	uniform vec3 fogSunColor, fogHeight;
+#endif
+`;
+  THREE.ShaderChunk.fog_fragment = FOG_FRAGMENT;
+}
+
+// Contact-hardening sun shadows (high preset): a blocker search on a rotated 6-tap disk finds how far the
+// occluder is above the receiver, which sizes a 12-tap rotated Vogel-disk filter from one texel (at the feet)
+// to PCSS_MAX texels (under a tall tree), with the depth of each tap moved along the receiver's plane so
+// the wider filter brings no acne. Lit pixels stop after the search, so it costs less than PCFSoft there.
+// The light's angular size comes in as the shadow's `radius` (texels per unit of shadow depth, placeShadow).
+const PCSS_MAX = 6;
+const vogel = (n, turn) => Array.from({ length: n }, (_, i) => {
+  const r = Math.sqrt((i + 0.5) / n), a = i * 2.3999632 + turn;
+  return `vec2(${(r * Math.cos(a)).toFixed(4)}, ${(r * Math.sin(a)).toFixed(4)})`;
+}).join(', ');
+const PCSS = `
+	const vec2 PCSS_SEARCH[6] = vec2[6](${vogel(6, 0.9)});
+	const vec2 PCSS_TAPS[12] = vec2[12](${vogel(12, 0.0)});
+	float pcssShadow( sampler2D map, vec2 size, float spread, vec3 c, vec2 plane ) {
+		vec2 texel = 1.0 / size;
+		float a = 6.2831853 * fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) );
+		mat2 rot = mat2( cos( a ), sin( a ), - sin( a ), cos( a ) );
+		float sum = 0.0, count = 0.0;
+		for ( int i = 0; i < 6; i ++ ) {
+			vec2 off = rot * PCSS_SEARCH[ i ] * ( ${PCSS_MAX.toFixed(1)} * texel );
+			float d = unpackRGBAToDepth( texture2D( map, c.xy + off ) );
+			if ( d < c.z + clamp( dot( plane, off ), - 0.006, 0.006 ) ) { sum += d; count += 1.0; }
+		}
+		if ( count < 0.5 ) return 1.0;
+		float pen = clamp( 1.0 + ( c.z - sum / count ) * spread, 1.0, ${PCSS_MAX.toFixed(1)} );
+		float lit = 0.0;
+		for ( int i = 0; i < 12; i ++ ) {
+			vec2 off = rot * PCSS_TAPS[ i ] * ( pen * texel );
+			lit += step( c.z + clamp( dot( plane, off ), - 0.006, 0.006 ), unpackRGBAToDepth( texture2D( map, c.xy + off ) ) );
+		}
+		return lit * ( 1.0 / 12.0 );
+	}
+`;
+
+let shadowsInstalled = false;
+/** Swaps PCFSoft's filter for the contact-hardening one in every lit shader compiled from now on. */
+function installSoftShadows() {
+  if (shadowsInstalled) return;
+  let s = THREE.ShaderChunk.shadowmap_pars_fragment;
+  const head = '\tfloat getShadow( sampler2D shadowMap,';
+  const bias = 'shadowCoord.z += shadowBias;';
+  const soft = '#elif defined( SHADOWMAP_TYPE_PCF_SOFT )';
+  const next = '#elif defined( SHADOWMAP_TYPE_VSM )';
+  const h = s.indexOf(head), b = s.indexOf(bias, h), a = s.indexOf(soft, b), e = s.indexOf(next, a);
+  if (h < 0 || b < 0 || a < 0 || e < 0) return; // three changed: keep its filter
+  shadowsInstalled = true;
+  // The receiver plane's depth slope over the shadow map, taken before any branch (derivatives need all
+  // pixels of a quad): the depth a tap at offset `off` should be compared with is z + dot(plane, off).
+  const plane = `${bias}
+		vec3 sdx = dFdx( shadowCoord.xyz ), sdy = dFdy( shadowCoord.xyz );
+		float sdet = sdx.x * sdy.y - sdx.y * sdy.x;
+		vec2 plane = abs( sdet ) > 1e-12 ? vec2( sdy.y * sdx.z - sdx.y * sdy.z, sdx.x * sdy.z - sdy.x * sdx.z ) / sdet : vec2( 0.0 );`;
+  s = s.slice(0, h) + PCSS + s.slice(h, b) + plane + s.slice(b + bias.length, a)
+    + `${soft}\n\t\t\tshadow = pcssShadow( shadowMap, shadowMapSize, shadowRadius, shadowCoord.xyz, plane );\n\t\t`
+    + s.slice(e);
+  THREE.ShaderChunk.shadowmap_pars_fragment = s;
+}
+
+/** Sun's angular radius for the soft shadow filter (tangent): about twice the real sun's, for a softer look. */
+const SUN_TAN = 0.012;
+
+/** Dungeon reflections and ambient: a room, not a colour. Dark vault above, torch-lit walls around (with a
+ * few hot spots), dim floor below; rendered into the reflection cube and prefiltered like the sky. */
+const ROOM_VS = `
+varying vec3 vDir;
+void main() {
+  vDir = position;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+const ROOM_FS = `
+uniform vec3 uCeil, uWall, uFloor, uTorch;
+varying vec3 vDir;
+void main() {
+  vec3 d = normalize(vDir);
+  vec3 c = mix(uWall, uCeil, smoothstep(0.15, 0.85, d.y));
+  c = mix(c, uFloor, 1.0 - smoothstep(-0.55, -0.05, d.y));
+  float az = atan(d.z, d.x);
+  float spots = pow(max(0.0, cos(az * 2.5 + 0.7)), 16.0) * (1.0 - smoothstep(0.0, 0.35, abs(d.y - 0.15)));
+  gl_FragColor = vec4(c + uTorch * spots, 1.0);
+}`;
+
+// Contact occlusion baked into the ground for presets without screen-space occlusion (bakeContact): texels
+// per tile, the radii (texels) of the tight and the broad blur and how dark full occlusion gets.
+const CONTACT_RES = 4, CONTACT_TIGHT = 2, CONTACT_BROAD = 5, CONTACT_DARK = 0.62;
+
+/** Two box blurs of radius r (about a Gaussian) over a w x h field, in place; tmp is scratch of the same size. */
+function blur2(a, tmp, w, h, r) {
+  for (let pass = 0; pass < 2; pass++) {
+    for (let y = 0; y < h; y++) {
+      let sum = 0;
+      const row = y * w;
+      for (let x = -r; x <= r; x++) sum += a[row + Math.min(w - 1, Math.max(0, x))];
+      for (let x = 0; x < w; x++) {
+        tmp[row + x] = sum / (2 * r + 1);
+        sum += a[row + Math.min(w - 1, x + r + 1)] - a[row + Math.max(0, x - r)];
+      }
+    }
+    for (let x = 0; x < w; x++) {
+      let sum = 0;
+      for (let y = -r; y <= r; y++) sum += tmp[Math.min(h - 1, Math.max(0, y)) * w + x];
+      for (let y = 0; y < h; y++) {
+        a[y * w + x] = sum / (2 * r + 1);
+        sum += tmp[Math.min(h - 1, y + r + 1) * w + x] - tmp[Math.max(0, y - r) * w + x];
+      }
+    }
+  }
+}
 
 export class Atmosphere {
   constructor(renderer, scene, quality) {
@@ -44,6 +205,18 @@ export class Atmosphere {
     this.scene = scene;
     this.quality = quality;
     this.pmrem = new THREE.PMREMGenerator(renderer);
+    // Before anything compiles: the fog with height and sun, and on high the soft shadow filter.
+    installFog();
+    if (quality.softShadows) installSoftShadows();
+    this.soft = shadowsInstalled;
+    /** Golden hour (0..1) and night (0..1) under open sky, for the grade; 0 underground. */
+    this.dusk = 0;
+    this.night = 0;
+    /** The grade's reflection intensity and fog scattering and haze (setLook). */
+    this.envIntensity = 0.5;
+    this.scatter = 0;
+    this.haze = 0;
+    this.vw = this.vh = 1;
 
     this.sun = new THREE.DirectionalLight(0xffffff, 2.5);
     this.sun.castShadow = true;
@@ -68,7 +241,7 @@ export class Atmosphere {
     this.pool = [];
     this.slots = [];
     for (let i = 0; i < quality.pointLights; i++) {
-      const l = new THREE.PointLight(0xffffff, 0, 6, 1.5);
+      const l = new THREE.PointLight(0xffffff, 0, 6, 2);
       scene.add(l);
       this.pool.push(l);
       this.slots.push({ src: null, fx: false, on: false, level: 0, x: 0, y: 0, z: 0, color: 0xffffff, radius: 5, intensity: 0, flicker: false });
@@ -134,6 +307,128 @@ export class Atmosphere {
 
   setPointScale(v) { this.motes.mat.uniforms.uScale.value = v; }
 
+  /** Size of the target the scene is drawn into (device pixels), for the fog's view rays. */
+  setViewport(w, h) {
+    this.vw = Math.max(1, w);
+    this.vh = Math.max(1, h);
+  }
+
+  /** Takes the biome grade's reflection intensity, fog scattering and haze (post.js GRADE, blended). */
+  setLook(g) {
+    this.envIntensity = g.env;
+    this.scatter = g.scatter;
+    this.haze = g.haze;
+    if (this.scene.environment) this.scene.environmentIntensity = g.env;
+  }
+
+  /**
+   * Points the shared fog uniforms at this frame: view rays from the camera, the sun and its scattering
+   * (open sky only), and the height above which the fog thins (a little over the hero's feet).
+   */
+  updateFog(focus, camera, sunColor) {
+    camera.updateMatrixWorld();
+    const m = camera.matrixWorld.elements, p = camera.projectionMatrix.elements;
+    _right.set(m[0], m[1], m[2]);
+    _up.set(m[4], m[5], m[6]);
+    _back.set(m[8], m[9], m[10]);
+    const sx = 2 / (this.vw * p[0]), sy = 2 / (this.vh * p[5]);
+    const ox = (p[8] - 1) / p[0], oy = (p[9] - 1) / p[5];
+    const r = FOG.fogRay.value;
+    r[0] = _right.x * sx; r[1] = _right.y * sx; r[2] = _right.z * sx;
+    r[3] = _up.x * sy; r[4] = _up.y * sy; r[5] = _up.z * sy;
+    r[6] = _right.x * ox + _up.x * oy - _back.x; r[7] = _right.y * ox + _up.y * oy - _back.y; r[8] = _right.z * ox + _up.z * oy - _back.z;
+    const sun = FOG.fogSun.value, dir = this.keyDir || _up.set(0, 1, 0);
+    sun.x = dir.x; sun.y = dir.y; sun.z = dir.z;
+    sun.w = this.outdoors ? this.scatter * Math.min(1, Math.max(0, dir.y * 4 + 0.2)) : 0;
+    if (sunColor) {
+      const c = FOG.fogSunColor.value;
+      c.x = sunColor.r * 0.55; c.y = sunColor.g * 0.55; c.z = sunColor.b * 0.55;
+    }
+    const h = FOG.fogHeight.value;
+    h.x = focus.y + 0.5;
+    h.y = 0.55;
+    h.z = this.haze;
+  }
+
+  /**
+   * Contact occlusion for presets without screen-space occlusion: where walls, rocks, trees, buildings and
+   * props stand, blurred at a tight and a broad radius into a small texture over the level, which the
+   * ground's shader multiplies into its ambient light (and a little of the direct), so floors darken into
+   * the corners and around what stands on them. Call before the level's shaders compile.
+   */
+  bakeContact(world) {
+    const lv = world.level, R = CONTACT_RES, W = lv.w * R, H = lv.h * R;
+    let mat = null;
+    world.group.traverse((o) => {
+      const m = o.material;
+      if (!mat && o.isMesh && m && !Array.isArray(m) && m.userData.uniforms && m.userData.uniforms.uSplat0) mat = m;
+    });
+    if (!mat || !W || !H) return;
+    const occ = new Float32Array(W * H);
+    const disc = (cx, cy, rad, v) => {
+      const x0 = Math.max(0, Math.floor((cx - rad) * R)), x1 = Math.min(W - 1, Math.ceil((cx + rad) * R));
+      const y0 = Math.max(0, Math.floor((cy - rad) * R)), y1 = Math.min(H - 1, Math.ceil((cy + rad) * R));
+      for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+          const dx = (x + 0.5) / R - cx, dy = (y + 0.5) / R - cy;
+          if (dx * dx + dy * dy <= rad * rad) occ[y * W + x] = Math.max(occ[y * W + x], v);
+        }
+      }
+    };
+    const rect = (x0, y0, x1, y1, v) => {
+      for (let y = Math.max(0, Math.floor(y0 * R)); y < Math.min(H, Math.ceil(y1 * R)); y++) {
+        for (let x = Math.max(0, Math.floor(x0 * R)); x < Math.min(W, Math.ceil(x1 * R)); x++) occ[y * W + x] = Math.max(occ[y * W + x], v);
+      }
+    };
+    for (let y = 0; y < lv.h; y++) {
+      for (let x = 0; x < lv.w; x++) {
+        const t = world.tile(x, y);
+        if (t === TILE.WALL) rect(x, y, x + 1, y + 1, 1);
+        else if (t === TILE.TREE) { rect(x, y, x + 1, y + 1, 0.3); disc(x + 0.5, y + 0.5, 0.32, 0.85); }
+        else if (t === TILE.ROCK) disc(x + 0.5, y + 0.5, 0.45, 0.9);
+        else if (t === TILE.BLOCK) disc(x + 0.5, y + 0.5, 0.4, 0.8);
+      }
+    }
+    if (lv.bld) for (const [sprite, bx, by, bw, bh] of lv.bld) {
+      if (sprite === 6) disc(bx + bw / 2, by + bh / 2, 0.15, 0.8);
+      else rect(bx + 0.15, by + 0.15, bx + bw - 0.15, by + bh - 0.15, 1);
+    }
+    for (const p of world.props || []) {
+      const o = p.obj;
+      if (o && o.position) disc(o.position.x, o.position.z, 0.32, 0.7);
+    }
+    const tight = Float32Array.from(occ), tmp = new Float32Array(W * H);
+    blur2(tight, tmp, W, H, CONTACT_TIGHT);
+    blur2(occ, tmp, W, H, CONTACT_BROAD);
+    const data = new Uint8Array(W * H);
+    for (let i = 0; i < data.length; i++) {
+      const o = Math.min(1, 0.55 * tight[i] + 0.45 * occ[i]);
+      data[i] = Math.round(255 * (1 - CONTACT_DARK * o * (2 - o)));
+    }
+    if (this.contactTex) this.contactTex.dispose();
+    const tex = this.contactTex = new THREE.DataTexture(data, W, H, THREE.RedFormat, THREE.UnsignedByteType);
+    tex.magFilter = tex.minFilter = THREE.LinearFilter;
+    tex.needsUpdate = true;
+    const size = new THREE.Vector2(lv.w, lv.h);
+    const base = mat.onBeforeCompile, key = mat.customProgramCacheKey();
+    mat.onBeforeCompile = (shader, renderer) => {
+      base.call(mat, shader, renderer);
+      shader.uniforms.uContact = { value: tex };
+      shader.uniforms.uContactSize = { value: size };
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform sampler2D uContact;\nuniform vec2 uContactSize;')
+        .replace('#include <aomap_fragment>', `#include <aomap_fragment>
+  {
+    float contact = texture2D(uContact, vGroundPos.xz / uContactSize).r;
+    reflectedLight.indirectDiffuse *= contact;
+    reflectedLight.indirectSpecular *= contact;
+    reflectedLight.directDiffuse *= mix(1.0, contact, 0.45);
+  }`);
+    };
+    mat.customProgramCacheKey = () => key + '-contact';
+    mat.needsUpdate = true;
+  }
+
   /** Switches between the open world and the underground look. */
   setLevel(world) {
     this.world = world;
@@ -184,27 +479,35 @@ export class Atmosphere {
   }
 
   /**
-   * Re-renders the reflection map from the sky (or a dungeon's dim colour) when the light has changed
-   * enough to notice: into a small cube, then prefiltered into the same target every time, so a refresh
-   * neither allocates nor draws the sky at full size.
+   * Re-renders the reflection map from the sky (or, underground, a generated torch-lit room) when the light
+   * has changed enough to notice: into a small cube, then prefiltered into the same target every time, so a
+   * refresh neither allocates nor draws the sky at full size. Its intensity is the biome grade's (setLook).
    */
   updateEnvironment(dungeon) {
     if (!this.envCube) {
       this.envCube = new THREE.WebGLCubeRenderTarget(ENV_SIZE, { type: THREE.HalfFloatType });
       this.envCam = new THREE.CubeCamera(0.1, 100, this.envCube);
-      this.envDark = new THREE.Scene();
-      this.envDark.background = new THREE.Color();
+      this.envRoom = new THREE.Scene();
+      this.roomUniforms = { uCeil: { value: new THREE.Color() }, uWall: { value: new THREE.Color() }, uFloor: { value: new THREE.Color() }, uTorch: { value: new THREE.Color() } };
+      const room = new THREE.Mesh(this.sky.geometry, new THREE.ShaderMaterial({
+        uniforms: this.roomUniforms, vertexShader: ROOM_VS, fragmentShader: ROOM_FS, side: THREE.BackSide, depthWrite: false, fog: false,
+      }));
+      room.scale.setScalar(50);
+      this.envRoom.add(room);
     }
     if (dungeon) {
-      const d = DUNGEON[this.biome] || DUNGEON.CRYPT;
-      this.envDark.background.setHex(d.hemiSky).multiplyScalar(0.25);
-      this.envCam.update(this.renderer, this.envDark);
-      this.scene.environmentIntensity = 0.35;
+      const d = DUNGEON[this.biome] || DUNGEON.CRYPT, u = this.roomUniforms;
+      // Linear colours: a vault lost in the fog, walls in the lantern's and torches' light, a dim floor.
+      u.uCeil.value.setHex(d.fog).multiplyScalar(0.6);
+      u.uWall.value.setHex(d.lantern).multiplyScalar(0.12).add(_envA.setHex(d.hemiSky).multiplyScalar(0.08));
+      u.uFloor.value.setHex(d.hemiGround).multiplyScalar(0.25);
+      u.uTorch.value.setHex(d.lantern).multiplyScalar(0.9);
+      this.envCam.update(this.renderer, this.envRoom);
     } else {
       this.envSky.scale.setScalar(50);
       this.envCam.update(this.renderer, this.envScene);
-      this.scene.environmentIntensity = 0.55;
     }
+    this.scene.environmentIntensity = this.envIntensity;
     this.envTarget = this.pmrem.fromCubemap(this.envCube.texture, this.envTarget);
     this.scene.environment = this.envTarget.texture;
   }
@@ -213,6 +516,7 @@ export class Atmosphere {
     if (fx) fx.particleLight.value = this.outdoors ? 0.35 + 0.65 * f.dl : 0.45;
     if (this.outdoors) this.updateOutdoors(f, t, focus);
     else this.updateDungeon(f, t, focus);
+    this.updateFog(focus, camera, this.outdoors ? this.sun.color : null);
     this.placeShadow(focus, camera);
     this.assignLights(f, t, focus, fx);
     this.updateRain(f, dt, focus, camera);
@@ -234,6 +538,8 @@ export class Atmosphere {
 
     // Clear blue, overcast grey, a warm dusk and a deep moonlit blue; fog is the horizon's colour.
     const warm = dusk * (1 - night) * (1 - rain);
+    this.dusk = warm;
+    this.night = night;
     const zenith = _zenith.copy(SKY.zenith).lerp(SKY.zenithRain, rain).lerp(SKY.zenithDusk, warm * 0.6).lerp(SKY.zenithNight, night);
     const horizon = _horizon.copy(SKY.horizon).lerp(SKY.horizonRain, rain).lerp(SKY.horizonDusk, warm * 0.75).lerp(SKY.horizonNight, night);
     zenith.multiplyScalar(1 - 0.3 * rain * night);
@@ -293,6 +599,7 @@ export class Atmosphere {
 
   updateDungeon(f, t, focus) {
     const d = DUNGEON[this.biome] || DUNGEON.CRYPT;
+    this.dusk = this.night = 0;
     this.keyDir = (this.keyDir0 ||= new THREE.Vector3(0.35, 1, 0.55).normalize());
     this.sun.color.setHex(d.key);
     this.sun.intensity = d.keyI;
@@ -360,8 +667,11 @@ export class Atmosphere {
     this.sun.position.set(sx + dir.x * 40, sy + dir.y * 40, sz + dir.z * 40);
     this.sun.target.updateMatrixWorld();
     // A normal offset of about two and a half texels clears acne under the soft filter at a low sun, and is
-    // still thin beside the chunky characters, so their feet stay on their shadows.
-    shadow.normalBias = Math.min(0.05, Math.max(0.02, 2.5 * Math.max(tx, ty)));
+    // still thin beside the chunky characters, so their feet stay on their shadows. The contact-hardening
+    // filter compares along the receiver's plane, so it needs less (and gets its light size as `radius`:
+    // penumbra texels per unit of shadow depth).
+    shadow.normalBias = Math.min(0.05, Math.max(this.soft ? 0.012 : 0.02, (this.soft ? 1.5 : 2.5) * Math.max(tx, ty)));
+    if (this.soft) shadow.radius = (cam.far - cam.near) * SUN_TAN / (0.5 * (tx + ty));
   }
 
   /**
@@ -418,16 +728,24 @@ export class Atmosphere {
         pl.intensity = 0;
         continue;
       }
-      let k = 1;
+      let k = 1, jx = 0, jy = 0, jz = 0;
       if (s.flicker) {
+        // A flame: a slow breath, a quicker waver and fast licks, now and then a gutter; the light wanders
+        // a few centimetres with it, so the shading under it moves like firelight.
         const ph = (s.x * 3.7 + s.z * 1.3) % 10;
-        k = 0.82 + 0.1 * Math.sin(t * 9.1 + ph) + 0.08 * Math.sin(t * 23.3 + ph * 3.1);
+        const gutter = Math.max(0, Math.sin(t * 1.3 + ph * 2.1)) ** 12;
+        k = 0.84 + 0.07 * Math.sin(t * 7.3 + ph) + 0.05 * Math.sin(t * 17.9 + ph * 2.3) + 0.04 * Math.sin(t * 31.7 + ph * 4.1) - 0.18 * gutter;
+        jx = 0.035 * Math.sin(t * 11.1 + ph * 1.7);
+        jy = 0.025 * Math.sin(t * 13.7 + ph * 2.9);
+        jz = 0.035 * Math.sin(t * 9.7 + ph * 3.3);
       }
       if (pl.userData.color !== s.color) { pl.userData.color = s.color; pl.color.setHex(s.color); }
-      pl.position.set(s.x, s.y, s.z);
-      pl.distance = s.radius * 1.5;
-      pl.decay = 1.5;
-      pl.intensity = s.intensity * 3.2 * k * dayDim * s.level * s.level * (3 - 2 * s.level);
+      pl.position.set(s.x + jx, s.y + jy, s.z + jz);
+      // Inverse-square falloff (with three's smooth cut-off at `distance`): hot near the flame, a soft pool
+      // farther out; brighter at the source than the old 1.5 decay so the pool keeps its size.
+      pl.distance = s.radius * 1.7;
+      pl.decay = 2;
+      pl.intensity = s.intensity * 4.4 * k * dayDim * s.level * s.level * (3 - 2 * s.level);
     }
     this.lightSnap = false;
   }
