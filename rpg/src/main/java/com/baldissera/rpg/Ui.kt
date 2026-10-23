@@ -852,7 +852,13 @@ private fun SkillsScreen(game: Game, tick: Int, onClose: () -> Unit) {
     val tree = SkillTree.of(p.heroClass)
     var refresh by remember { mutableIntStateOf(0) }
     refresh.let { }
-    var selected by remember { mutableStateOf(tree.nodes.firstOrNull { game.canLearn(it) } ?: tree.node(p.heroClass.skills[0])) }
+    // Opens on something worth a point, a skill if possible.
+    var selected by remember {
+        mutableStateOf(
+            tree.nodes.firstOrNull { it.skill != null && game.canLearn(it) } ?: tree.nodes.firstOrNull { game.canLearn(it) }
+                ?: tree.node(p.heroClass.skills[0])
+        )
+    }
     var confirmReset by remember { mutableStateOf(false) }
     fun changed() {
         refresh++
@@ -934,10 +940,8 @@ private fun TreeView(game: Game, tree: ClassTree, selected: TreeNode?, version: 
             Spacer(Modifier.width(TIER_GUTTER))
             tree.branches.forEachIndexed { b, branch ->
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        "${branch.icon} ${branch.title}", color = branch.color, fontSize = 12.sp, style = serifBold,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
+                    Text(branch.icon, fontSize = 15.sp)
+                    Text(branch.title, color = branch.color, fontSize = 11.sp, style = serifBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     val points = tree.spent(p, b)
                     Text(if (points == 1) "1 rank" else "$points ranks", color = parchment.copy(alpha = 0.55f), fontSize = 9.sp)
                 }

@@ -330,7 +330,7 @@ enum class Talent(val label: String, val icon: String, val maxRank: Int, val per
     VITALITY("Vitality", "❤️", 5, 6f, Color(0xFFFF5370), "+#% maximum life"),
     WISDOM("Wisdom", "🔷", 5, 8f, Color(0xFF64B5F6), "+#% maximum mana and mana regeneration"),
     SWIFTNESS("Fleet Foot", "👟", 5, 4f, Color(0xFF81C784), "+#% movement speed"),
-    ALACRITY("Alacrity", "⏳", 5, 4f, Color(0xFF80DEEA), "Skill cooldowns run out #% faster"),
+    ALACRITY("Alacrity", "⏳", 5, 4f, Color(0xFF80DEEA), "Skill cooldowns are #% shorter"),
     LEECH("Vampirism", "🦇", 5, 1f, Color(0xFFE53935), "#% of the damage you deal heals you"),
     THORNS("Thorns", "🌵", 5, 20f, Color(0xFF9CCC65), "Monsters that strike you in melee take #% of the damage back"),
     IRON_SKIN("Iron Skin", "⛓️", 5, 10f, Color(0xFFB0BEC5), "+#% armor"),
