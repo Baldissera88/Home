@@ -276,6 +276,65 @@ class GameRenderTest {
             h.cast(Skill.LEAP)
             step(h, 14)
         }
+
+        // The Scorched Sands: arriving under the midday sun with desert monsters about.
+        fun desertHero(level: Int): Game = newGame().also { s ->
+            s.player.level = level
+            s.player.hp = s.player.maxHp
+            learnAll(s)
+        }
+        val s = desertHero(10)
+        s.time = 0f
+        s.enterFloor(DESERT_FIRST)
+        s.enemies.clear()
+        for ((i, t) in listOf(EnemyType.SCORPION, EnemyType.MUMMY, EnemyType.DJINN, EnemyType.SCORPION, EnemyType.WOLF).withIndex()) {
+            val ang = i * 1.26f + 0.5f
+            val ex = s.player.x + kotlin.math.cos(ang) * 2.8f
+            val ey = s.player.y + kotlin.math.sin(ang) * 2.2f
+            if (s.dungeon.walkableAt(ex, ey)) s.enemies += Enemy(t, ex, ey, DESERT_LEVEL)
+        }
+        step(s, 30)
+        render(s, a, "21_desert")
+
+        // The oasis: the hero on the southern shore of the pool.
+        s.time = 40f
+        s.enemies.clear()
+        s.player.hp = s.player.maxHp
+        val od = s.dungeon
+        val pool = od.tiles.indices.filter { od.tiles[it] == WATER }
+        if (pool.isNotEmpty()) {
+            val wx = pool.map { it % od.w }.average().toFloat() + 0.5f
+            val wy = pool.maxOf { it / od.w } + 2.5f
+            val spot = od.tiles.indices.filter { od.walkable(it % od.w, it / od.w) }
+                .minByOrNull { hypot(it % od.w + 0.5f - wx, it / od.w + 0.5f - wy) }
+            if (spot != null) {
+                s.player.x = spot % od.w + 0.5f
+                s.player.y = spot / od.w + 0.5f
+                s.player.faceX = 0f
+                s.player.faceY = -1f
+            }
+        }
+        step(s, 20)
+        render(s, a, "22_desert_oasis")
+
+        // The Sand Pharaoh in his court, his sandstorm raging around the hero.
+        val b = desertHero(18)
+        b.time = 20f
+        b.enterFloor(DESERT_LAST)
+        b.boss?.let { pharaoh ->
+            b.enemies.retainAll { it === pharaoh || hypot(it.x - pharaoh.x, it.y - pharaoh.y) > 12f }
+            approach(b, pharaoh)
+            step(b, 30)
+            // Call the storm now and let it gather.
+            pharaoh.blinkCd = 0f
+            var wait = 0
+            while (b.zones.none { it.kind == ZoneKind.SANDSTORM } && wait++ < 120) step(b, 1)
+            b.player.hp = b.player.maxHp
+            step(b, 50)
+        }
+        if (b.zones.none { it.kind == ZoneKind.SANDSTORM }) b.zones += Zone(b.player.x, b.player.y, SANDSTORM_RADIUS, 5f, ZoneKind.SANDSTORM, 0f)
+        if (b.dead) b.dead = false
+        render(b, a, "23_sand_pharaoh")
     }
 
     @Test
@@ -285,7 +344,8 @@ class GameRenderTest {
             val h = newGame(cls)
             h.player.level = 20
             learnAll(h, 4)
-            for (floor in listOf(1, 5, 8, 0)) {
+            // The main dungeon, all three depths of the Scorched Sands, then the wilds.
+            for (floor in listOf(1, 5, 8) + (1..DESERT_FLOORS).map { desertFloor(it) } + 0) {
                 h.enterFloor(floor)
                 repeat(900) { i ->
                     if (i % 30 == 0) {
@@ -307,9 +367,9 @@ class GameRenderTest {
         val g = newGame()
         g.player.level = 25
         learnAll(g, 4)
-        for (floor in listOf(0, 1, 2, 3, 4, 6, 7, 9, 10, 12)) {
+        for (floor in listOf(0, 1, 2, 3, 4, 6, 7, 9, 10, 12, DESERT_FIRST, DESERT_LAST)) {
             g.enterFloor(floor)
-            g.enemies += Enemy(EnemyType.BANDIT, g.player.x + 3f, g.player.y, floor + 1, elite = true, affixes = Affix.entries, title = "Test")
+            g.enemies += Enemy(EnemyType.BANDIT, g.player.x + 3f, g.player.y, g.dangerLevel + 1, elite = true, affixes = Affix.entries, title = "Test")
             repeat(1800) { i ->
                 if (i % 30 == 0) {
                     g.joyX = r.nextFloat() * 2f - 1f
@@ -321,7 +381,7 @@ class GameRenderTest {
                 if (i % 400 == 0) g.cast(Skill.CONSECRATE)
                 if (i % 150 == 75) g.cast(Skill.HOLY_SHIELD)
                 if (i % 500 == 0) g.drinkPotion()
-                if (i == 900 && floor > 0) g.townPortal()
+                if (i == 900 && floor != 0) g.townPortal()
                 if (g.dead) g.respawn()
                 if (g.victory) g.victory = false
                 g.update(1f / 30f)
@@ -382,6 +442,9 @@ class GameRenderTest {
             val d = Dungeon.overworld(seed * 7919L)
             check(d.walkable(d.start.cx, d.start.cy)) { "village start blocked for seed $seed" }
             for (e in d.entrances) check(d.tile(e.x, e.y) == ENTRANCE)
+            // The way to the desert is always open from the village.
+            val sands = d.entrances.first { it.region == Region.DESERT }
+            check(Dungeon.flood(d.tiles, d.w, d.h, d.start.cx, d.start.cy)[sands.y * d.w + sands.x]) { "desert entrance unreachable for seed $seed" }
         }
         val r = Random(3)
         for (b in listOf(Biome.CRYPT, Biome.CAVE, Biome.HELL)) repeat(40) {
@@ -389,5 +452,85 @@ class GameRenderTest {
             check(d.walkable(d.start.cx, d.start.cy))
             check(d.tile(d.exit.cx, d.exit.cy) == STAIRS)
         }
+        // Desert depths: one connected stretch of sand with the stairs, an oasis, ruins and the desert's materials.
+        val codes = setOf(SMat.SAND, SMat.DUNE, SMat.HARDPAN, SMat.PAVING, SMat.GRASS, SMat.WATER)
+        repeat(60) { k ->
+            val d = Dungeon.desert(r, 1 + k % DESERT_FLOORS)
+            check(d.biome == Biome.DESERT && d.walkable(d.start.cx, d.start.cy))
+            check(d.tile(d.exit.cx, d.exit.cy) == STAIRS)
+            val reach = Dungeon.flood(d.tiles, d.w, d.h, d.start.cx, d.start.cy)
+            for (i in d.tiles.indices) if (d.walkable(i % d.w, i / d.w)) check(reach[i]) { "cut-off sand at ${i % d.w},${i / d.w}" }
+            check(d.tiles.any { it == WATER }) { "no oasis" }
+            check(d.rooms.size >= 6) { "only ${d.rooms.size} rooms" }
+            val mat = TerrainMap(d).mat.map { it.toInt() }.toSet()
+            check(mat.all { it in codes }) { "unexpected desert materials $mat" }
+            check(SMat.PAVING in mat && SMat.GRASS in mat) { "no ruins or oasis grass in $mat" }
+        }
+    }
+
+    @Test
+    fun desertRegion() {
+        // Sealed until the Skeleton King falls.
+        val s = newGame()
+        val gate = s.dungeon.entrances.first { it.region == Region.DESERT }
+        s.player.x = gate.x + 0.5f
+        s.player.y = gate.y + 0.5f
+        step(s, 3)
+        check(s.inWorld) { "the sands opened before the Skeleton King fell" }
+
+        // Desert floors never count as the deepest floor, and the stairs lead on through the sands.
+        val g = newGame()
+        g.player.level = 30
+        g.player.hp = g.player.maxHp
+        g.enterFloor(DESERT_FIRST)
+        check(g.inDesert && g.outdoors && g.depth == 1 && g.dungeon.biome == Biome.DESERT)
+        check(g.deepest == 0) { "desert counted as deepest" }
+        check(g.areaTitle.startsWith("The Scorched Sands")) { g.areaTitle }
+        check(g.enemies.isNotEmpty() && g.enemies.all { it.level == DESERT_LEVEL })
+        g.enemies.clear()
+        g.player.x = g.dungeon.exit.cx + 0.5f
+        g.player.y = g.dungeon.exit.cy + 0.5f
+        step(g, 40)
+        check(g.floor == desertFloor(2)) { "stairs on depth 1 led to ${g.floor}" }
+
+        // The pharaoh: sandstorms, summons and volleys, then his hoard, then the stairs lead home.
+        g.enterFloor(DESERT_LAST)
+        val boss = g.boss ?: error("no boss on the last desert depth")
+        check(boss.type == EnemyType.SAND_PHARAOH) { "the boss is ${boss.type}" }
+        check(g.dungeon.walkableAt(boss.x, boss.y))
+        g.enemies.retainAll { it === boss }
+        g.player.x = boss.x
+        g.player.y = boss.y + 2.2f
+        var storms = 0
+        var onWire = false
+        repeat(60 * 25) {
+            g.player.hp = g.player.maxHp
+            val before = g.zones.count { it.kind == ZoneKind.SANDSTORM }
+            g.update(1f / 60f)
+            if (g.zones.count { it.kind == ZoneKind.SANDSTORM } > before) {
+                storms++
+                // Zones go out as [x, y, radius, kind, progress].
+                val zones = Wire.frame(g, 0f).substringAfter("\"zo\":").substringBefore(",\"me\":")
+                onWire = onWire || zones.contains(",${ZoneKind.SANDSTORM.ordinal},")
+            }
+            g.dead = false
+        }
+        check(storms >= 2) { "only $storms sandstorms" }
+        check(onWire) { "sandstorm missing from the wire" }
+        g.enemies.retainAll { it === boss }
+        g.player.hp = g.player.maxHp
+        boss.hp = 0f
+        g.update(1f / 60f)
+        check(g.boss == null)
+        val gear = g.loot.mapNotNull { (it.kind as? LootKind.Gear)?.item }
+        check(gear.any { it.rarity >= Rarity.LEGENDARY }) { "no legendary in ${gear.map { it.rarity }}" }
+        val gold = g.loot.sumOf { (it.kind as? LootKind.Gold)?.amount ?: 0 }
+        check(gold >= 1500) { "only $gold gold" }
+        check(g.questStage == 0 && !g.victory) { "the desert touched the main quest" }
+        g.player.x = g.dungeon.exit.cx + 0.5f
+        g.player.y = g.dungeon.exit.cy + 0.5f
+        step(g, 40)
+        check(g.floor == 0) { "stairs on the last depth led to ${g.floor}" }
+        check(g.deepest == 0)
     }
 }
