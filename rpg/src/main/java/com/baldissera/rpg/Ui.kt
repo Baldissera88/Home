@@ -406,13 +406,13 @@ private fun mapImage(game: Game): ImageBitmap {
     for (i in px.indices) {
         if (!game.explored[i]) continue
         px[i] = when (d.tiles[i]) {
-            WALL -> if (game.inWorld) 0xFF8D6E63.toInt() else 0xFF3A332D.toInt()
+            WALL -> if (game.inWorld) 0xFF8D6E63.toInt() else if (game.inDesert) 0xFF8A6440.toInt() else 0xFF3A332D.toInt()
             STAIRS, ENTRANCE -> 0xFF4FC3F7.toInt()
             TREE -> 0xFF2E5E1E.toInt()
             ROCK -> 0xFF7A7570.toInt()
             WATER -> 0xFF2B6C8F.toInt()
             BLOCK -> 0xFF6D4C41.toInt()
-            else -> if (game.inWorld) 0xFF5E7A3A.toInt() else 0xFF7A6E64.toInt()
+            else -> if (game.inWorld) 0xFF5E7A3A.toInt() else if (game.inDesert) 0xFFD8B676.toInt() else 0xFF7A6E64.toInt()
         }
     }
     val image = android.graphics.Bitmap.createBitmap(px, d.w, d.h, android.graphics.Bitmap.Config.ARGB_8888).asImageBitmap()
@@ -420,6 +420,13 @@ private fun mapImage(game: Game): ImageBitmap {
     MapCache.version = game.exploredVersion
     MapCache.image = image
     return image
+}
+
+/** Map marker of a dungeon entrance: blue, hell's red, the desert's sand orange. */
+private fun entranceColor(r: Region) = when (r) {
+    Region.HELL -> Color(0xFFFF3D00)
+    Region.DESERT -> Color(0xFFFFB74D)
+    else -> Color(0xFF4FC3F7)
 }
 
 @Composable
@@ -436,8 +443,7 @@ private fun Minimap(game: Game) {
         val st = d.exit
         if (!game.inWorld && game.explored[st.cy * d.w + st.cx]) drawCircle(Color(0xFF4FC3F7), cell * 2f, Offset((st.cx + 0.5f) * cell, (st.cy + 0.5f) * cell))
         for (e in d.entrances) {
-            val c = if (e.region == Region.HELL) Color(0xFFFF3D00) else Color(0xFF4FC3F7)
-            drawCircle(c, cell * 2.4f, Offset((e.x + 0.5f) * cell, (e.y + 0.5f) * cell))
+            drawCircle(entranceColor(e.region), cell * 2.4f, Offset((e.x + 0.5f) * cell, (e.y + 0.5f) * cell))
         }
         d.village?.let { v ->
             drawRect(GOLD.copy(alpha = 0.6f), Offset(v.x * cell, v.y * cell), Size(v.w * cell, v.h * cell), style = Stroke(cell * 0.8f))
@@ -1172,7 +1178,7 @@ private fun MapScreen(game: Game, onClose: () -> Unit) {
                     IntSize((d.w * cell).roundToInt(), (d.h * cell).roundToInt()), filterQuality = FilterQuality.None,
                 )
                 for (e in d.entrances) {
-                    drawCircle(if (e.region == Region.HELL) Color(0xFFFF3D00) else Color(0xFF4FC3F7), cell * 2.2f, Offset((e.x + 0.5f) * cell, (e.y + 0.5f) * cell))
+                    drawCircle(entranceColor(e.region), cell * 2.2f, Offset((e.x + 0.5f) * cell, (e.y + 0.5f) * cell))
                 }
                 for (pr in d.props) {
                     val i = floorInt(pr.y) * d.w + floorInt(pr.x)
