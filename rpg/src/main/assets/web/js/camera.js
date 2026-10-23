@@ -1,8 +1,9 @@
 import * as THREE from 'three';
-import { TILE } from './defs.js';
+import { OUTDOOR, TILE } from './defs.js';
 
 const HEAD = 1.05; // Look-at height above the hero's feet.
 const WALL_TOP = 1.9; // World.buildWalls' wall height.
+const DESERT_TOP = 2.6; // About where the desert's ridges top out near open ground.
 const WALL_CODE = 48 + TILE.WALL; // '0' in level.tiles.
 const PITCH_UP = 0.28; // Most the pitch rises to keep the camera out of wall mass...
 const PULL_IN = 0.28; // ...and the share of the distance it gives up.
@@ -95,6 +96,7 @@ export class ChaseCamera {
     this.tiles = null;
     this.tw = 0;
     this.th = 0;
+    this.wallTop = WALL_TOP;
     this.ready = false;
   }
 
@@ -109,12 +111,16 @@ export class ChaseCamera {
     if (dist != null) this.wantDist = Math.max(3.2, Math.min(12, dist));
   }
 
-  /** The tile grid walls are kept out of (dungeons only). */
+  /**
+   * The tile grid walls are kept out of: where WALL tiles are solid mass, in dungeons and the desert's
+   * rock ridges (taller, hence wallTop), not the overworld's village palisade.
+   */
   setLevel(level) {
-    const indoor = level && level.biome !== 'OVERWORLD' && typeof level.tiles === 'string';
-    this.tiles = indoor ? level.tiles : null;
-    this.tw = indoor ? level.w : 0;
-    this.th = indoor ? level.h : 0;
+    const solid = level && typeof level.tiles === 'string' && (!OUTDOOR.has(level.biome) || level.biome === 'DESERT');
+    this.tiles = solid ? level.tiles : null;
+    this.tw = solid ? level.w : 0;
+    this.th = solid ? level.h : 0;
+    this.wallTop = level && level.biome === 'DESERT' ? DESERT_TOP : WALL_TOP;
   }
 
   resize(aspect) {
@@ -133,7 +139,7 @@ export class ChaseCamera {
 
   /** Whether a box of half-size r around the point reaches into a wall block (plus margin above it). */
   inWall(x, y, z, r, margin) {
-    if (y >= WALL_TOP + margin) return false;
+    if (y >= this.wallTop + margin) return false;
     return this.wall(x - r, z - r) || this.wall(x + r, z - r) || this.wall(x - r, z + r) || this.wall(x + r, z + r);
   }
 
@@ -154,7 +160,7 @@ export class ChaseCamera {
       // (The bigger box and margin only add to the small one: when this one is clear, so is that.)
       if (this.inWall(x, y, z, 0.45, 0.5)) continue;
       // Thick wall right behind and below a low camera fills the bottom of the view.
-      const low = Math.min(1, Math.max(0, 1 - (y - WALL_TOP - 0.5) / 2));
+      const low = Math.min(1, Math.max(0, 1 - (y - this.wallTop - 0.5) / 2));
       if (low > 0) {
         let mass = 0;
         for (let s = 0; s < 5; s++) {
@@ -269,7 +275,7 @@ export class ChaseCamera {
     }
 
     // Last resort when the camera swings faster than the walls can be eased out of: sit just above them.
-    if (this.tiles && this.inWall(x, y, z, 0.2, 0.15)) y = WALL_TOP + 0.15;
+    if (this.tiles && this.inWall(x, y, z, 0.2, 0.15)) y = this.wallTop + 0.15;
     // Soft rise over bumps, then never below the ground + 0.6.
     const floor = ground(x, z) + 0.6;
     const want = Math.max(0, floor + 0.25 - y);

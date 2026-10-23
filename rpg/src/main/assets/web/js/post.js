@@ -206,6 +206,11 @@ export class FinalPass extends Pass {
       uFlash: { value: 0 },
       uAspect: { value: 1 },
       uWarm: { value: 0 },
+      // A biome's own grade (the desert's warm cinematic look): tints for the shadows and the highlights and a
+      // saturation; white, white and 1 leave the picture as it is.
+      uGradeShadow: { value: new THREE.Color(1, 1, 1) },
+      uGradeLight: { value: new THREE.Color(1, 1, 1) },
+      uGradeSat: { value: 1 },
     };
     this.material = new THREE.RawShaderMaterial({
       uniforms: this.uniforms,
@@ -215,7 +220,8 @@ precision highp float;
 precision highp sampler2D;
 uniform sampler2D tDiffuse, tBloom;
 uniform vec2 uTexel;
-uniform float uBloom, uSharpen, uVignette, uHurt, uFlash, uAspect, uWarm;
+uniform float uBloom, uSharpen, uVignette, uHurt, uFlash, uAspect, uWarm, uGradeSat;
+uniform vec3 uGradeShadow, uGradeLight;
 varying vec2 vUv;
 #include <tonemapping_pars_fragment>
 #include <colorspace_pars_fragment>
@@ -237,6 +243,7 @@ void main() {
   float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
   col *= mix(vec3(0.94, 0.98, 1.06), vec3(1.05, 1.0, 0.94), smoothstep(0.05, 0.8, l));
   col *= 1.0 + uWarm * vec3(0.06, 0.01, -0.05);
+  col = mix(vec3(l), col, uGradeSat) * mix(uGradeShadow, uGradeLight, smoothstep(0.02, 0.7, l));
   col = mix(col, vec3(0.6, 0.0, 0.0), uHurt * smoothstep(0.45, 1.1, r) * 0.7);
   col += uFlash * vec3(1.0, 0.95, 0.85);
 #ifdef TONE

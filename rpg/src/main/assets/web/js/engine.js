@@ -13,6 +13,7 @@ import { detectTier, FramePacer, GpuTimer, StatsView } from './perf.js';
 import { OCCLUDE } from './occlude.js';
 import { FrameInterpolator } from './interp.js';
 import { BloomPass, FinalPass } from './post.js';
+import { applyLook } from './desert.js';
 
 /**
  * Render presets, picked by ?q= (see detectTier in perf.js: 'high' means the best the device can do).
@@ -197,6 +198,7 @@ export class Engine {
     g.uWarm.value = this.world.outdoors ? 1 - f.dl : 0.6;
     this.renderer.toneMappingExposure = this.world.outdoors ? 1.0 : 1.45;
     if (this.bloom) this.bloom.strength = this.world.outdoors ? 0.38 + 0.35 * (1 - f.dl) : 0.65;
+    applyLook(this.world, f, this.renderer, this.bloom, g);
     return true;
   }
 

@@ -18,7 +18,7 @@ void main() {
 
 export const SKY_FS = /* glsl */`
 uniform vec3 uSun, uMoon, uZenith, uHorizon, uSunColor, uGround, uFog;
-uniform float uTime, uNight, uCloud, uRain, uHaze, uFlash;
+uniform float uTime, uNight, uCloud, uRain, uHaze, uFlash, uCover;
 uniform sampler2D uNoise;
 varying vec3 vDir;
 float hash3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
@@ -92,7 +92,8 @@ void main() {
     vec2 uvL = L.xz / (max(L.y, 0.02) + 0.2);
     vec2 toL = normalize(uvL - uv + 1e-4) * 0.02;
     float densL = texture2D(uNoise, p1 + toL).r - erode;
-    float cover = mix(0.44, 0.0, uCloud);
+    // uCover: the fair-weather threshold (0.44 over the green lands, higher in the desert's clear skies).
+    float cover = mix(uCover, 0.0, uCloud);
     float m = smoothstep(cover, cover + 0.08, dens);
     float thick = smoothstep(cover + 0.03, cover + 0.3, dens);
     float rim = clamp(0.5 + (dens - densL) * 14.0, 0.0, 1.0);

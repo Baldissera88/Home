@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import { Ground, makeWater } from './terrain.js';
 import { Flora } from './flora.js';
-import { PROP, TILE, hash } from './defs.js';
+import { OUTDOOR, PROP, TILE, hash } from './defs.js';
 import { applyOcclusion } from './occlude.js';
 import { buildDressing } from './dressing.js';
 import { batchStatic } from './batch.js';
 import { buildBackdrop, updateBackdrop } from './backdrop.js';
+import { DesertField, SAND, SAND_LAYERS, bakeSandLayers, desertNoise } from './desert.js';
+import { buildDesert, updateDesert } from './cliffs.js';
 
 const WALL_HEIGHT = 1.9;
 
@@ -14,6 +16,8 @@ const BIOME = {
   CRYPT: { layers: ['tex_floorset_crypt.jpg', 'tex_floorset_crypt_h.png', 4], wall: 'crypt' },
   CAVE: { layers: ['tex_floorset_cave.jpg', 'tex_floorset_cave_h.png', 4], wall: 'cave' },
   HELL: { layers: ['tex_floorset_hell.jpg', 'tex_floorset_hell_h.png', 4], wall: 'hell' },
+  // Baked at load (desert.js): fine sand, dune sand, hardpan, paving, oasis grass; the pool bed is sand.
+  DESERT: { layers: [null, null, SAND_LAYERS], water: 0 },
 };
 
 /** Fits a kit model to a footprint: scales by width, centres it and puts it on the ground. */
@@ -78,7 +82,8 @@ export class World {
     this.quality = quality;
     this.group = new THREE.Group();
     this.biome = level.biome;
-    this.outdoors = level.biome === 'OVERWORLD';
+    this.outdoors = OUTDOOR.has(level.biome);
+    this.desert = level.biome === 'DESERT';
     this.lights = []; // { x, y, z, color, radius, flicker }
     this.flames = [];
     this.props = [];
@@ -93,22 +98,44 @@ export class World {
   async build() {
     const lv = this.level;
     const cfg = BIOME[this.biome] || BIOME.CRYPT;
-    const layers = await this.assets.layeredStrip(cfg.layers[0], cfg.layers[1], cfg.layers[2]);
-    this.ground = new Ground(lv, layers, { apron: this.outdoors });
-    const mat = this.ground.material({ count: cfg.layers[2], waterLayer: cfg.water ?? 1, texScale: 4, bump: this.outdoors ? 1.6 : 2.2, macro: this.outdoors ? 0.22 : 0.3, quality: this.quality });
+    let layers, ground = lv, relief = null, desert = null;
+    if (this.desert) {
+      // The ridges' distance field shapes the dunes, the cliffs and where scenery may stand.
+      this.field = new DesertField(lv);
+      layers = bakeSandLayers(this.assets.renderer);
+      ground = this.field.groundLevel();
+      relief = this.field.relief;
+      SAND.uNoise.value = desertNoise();
+      desert = SAND;
+    } else {
+      layers = await this.assets.layeredStrip(cfg.layers[0], cfg.layers[1], cfg.layers[2]);
+    }
+    this.ground = new Ground(ground, layers, { apron: this.outdoors, relief });
+    const mat = this.ground.material({
+      count: cfg.layers[2], waterLayer: cfg.water ?? 1, texScale: 4, bump: this.desert ? 2.6 : this.outdoors ? 1.6 : 2.2,
+      macro: this.desert ? 0.3 : this.outdoors ? 0.22 : 0.3, quality: this.quality, desert,
+    });
     this.group.add(this.ground.build(mat));
     this.flameMat = flameSprite();
     if (this.outdoors) {
       if (lv.tiles.includes(String(TILE.WATER))) {
-        this.water = makeWater(lv.w, lv.h, this.assets, this.ground);
+        this.water = makeWater(lv.w, lv.h, this.assets, this.ground, this.desert);
         this.water.userData.dynamic = true;
         this.group.add(this.water);
       }
-      this.flora = new Flora(lv, this.ground, this.quality);
+      this.flora = new Flora(lv, this.ground, this.quality, this.desert ? this.field : null);
       const flora = this.flora.build();
       flora.userData.dynamic = true;
       this.group.add(flora);
-      this.buildRocks();
+      if (this.desert) {
+        // Sandstone ridges and ruins, their torches, the scenery and the stairs down.
+        buildDesert(this);
+        this.buildTorches();
+        this.buildExit();
+      } else {
+        this.buildRocks();
+      }
+      // Village buildings and the entrances to the regions, wherever the level has them.
       this.buildBuildings();
       this.buildEntrances();
       this.backdrop = buildBackdrop(this);
@@ -267,8 +294,14 @@ export class World {
     };
     mesh(side, wallMaterial(this.assets.texture(`tex_${cfg.wall}_wall.png`), false));
     mesh(top, wallMaterial(this.assets.texture(`tex_${cfg.wall}_top.png`), true));
-    // Torches on the walls they belong to, facing the floor.
-    for (const idx of lv.torch) {
+    this.buildTorches();
+    buildDressing(this);
+  }
+
+  /** Torches on the walls they belong to, facing the floor. */
+  buildTorches() {
+    const lv = this.level;
+    for (const idx of lv.torch || []) {
       const x = idx % lv.w, y = Math.floor(idx / lv.w);
       let fx = 0, fz = 1;
       if (this.tile(x, y + 1) !== TILE.WALL) { fx = 0; fz = 1; } else if (this.tile(x + 1, y) !== TILE.WALL) { fx = 1; fz = 0; } else if (this.tile(x - 1, y) !== TILE.WALL) { fx = -1; fz = 0; } else { fx = 0; fz = -1; }
@@ -283,7 +316,6 @@ export class World {
       this.addFlame(px + fx * 0.08, 1.42, pz + fz * 0.08, 0.32);
       this.lights.push({ x: px + fx * 0.3, y: 1.5, z: pz + fz * 0.3, color: 0xff9a4a, radius: 6.5, intensity: 2.2, flicker: true });
     }
-    buildDressing(this);
   }
 
   addFlame(x, y, z, size) {
@@ -567,7 +599,8 @@ export class World {
         if (p.name === 'ALTAR') this.lights.push({ x: p.obj.position.x, y: 0.9, z: p.obj.position.z, color: 0xff2040, radius: 4, intensity: 1.5 });
       }
     }
-    if (this.flora) this.flora.update(t, 1 + f.rn * 1.5);
+    if (this.flora) this.flora.update(t, this.desert ? 1.3 : 1 + f.rn * 1.5);
+    if (this.desert) updateDesert(this, f, t);
     if (this.water) this.water.material.uniforms.uTime.value = t;
     if (this.backdrop) updateBackdrop(this.backdrop, f, t);
   }

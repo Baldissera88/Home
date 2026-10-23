@@ -130,6 +130,15 @@ const PAL = {
 };
 const COL = {};
 for (const k in PAL) COL[k] = new THREE.Color(PAL[k]);
+const COLORS = COL;
+// The desert's horizon: sand dunes, banded mesas and a far range in violet haze.
+const DPAL = {
+  rock: 0x8a6a6a, rockLow: 0x6a5a68, snow: 0x9a8090,
+  duneLit: 0xe8b878, duneShade: 0xa87048, duneFoot: 0xd4a46c,
+  mesaTop: 0xc88a58, mesaRed: 0xa0583a, mesaPale: 0xd8a878, mesaDark: 0x7a4430, talus: 0xc89060,
+};
+const DCOL = {};
+for (const k in DPAL) DCOL[k] = new THREE.Color(DPAL[k]);
 const _c = new THREE.Color(), _c0 = new THREE.Color(), _c1 = new THREE.Color(), _light = new THREE.Color();
 const _n = new THREE.Vector3();
 
@@ -210,7 +219,7 @@ class Builder {
 }
 
 /** The far range: ridged peaks with snow on the tallest, foothills in front, the most haze of all. */
-function mountains(b, cx, cz, radius, seed) {
+function mountains(b, cx, cz, radius, seed, COL = COLORS) {
   const peak = ringNoise(seed + 11, 15, 4), reach = ringNoise(seed + 12, 5, 2), snow = ringNoise(seed + 13, 7, 2);
   const mass = ringNoise(seed + 14, 4, 2);
   const height = (u) => {
@@ -293,8 +302,69 @@ function forest(b, cx, cz, half, seed) {
   }
 }
 
+/**
+ * The desert's dune sea just past the ridges: crests winding around the map, their sunward faces lit and
+ * the slip faces behind them in shade.
+ */
+function dunes(b, cx, cz, half, seed) {
+  const ring = (a) => half / Math.pow(Math.pow(Math.abs(Math.cos(a)), 4) + Math.pow(Math.abs(Math.sin(a)), 4), 0.25);
+  const rise = ringNoise(seed + 41, 23, 3), reach = ringNoise(seed + 42, 9, 2);
+  for (const [off, scale, haze] of [[10, 1, 0.04], [34, 1.8, 0.12]]) {
+    b.band(520, 4, (u, k) => {
+      const a = u * TAU, R = ring(a) + off + 10 * (reach(u) - 0.5);
+      const H = (1.5 + 5 * Math.pow(rise(u + off * 0.01), 1.5)) * scale;
+      // Foot, the long lit slope, the sharp crest and the steep slip face down behind it.
+      const rows = [[-8, -0.6, DCOL.duneFoot], [-2, H * 0.6, DCOL.duneLit], [0, H, DCOL.duneLit], [5, H * 0.25, DCOL.duneShade]];
+      const [dr, y, c] = rows[k];
+      const facing = 0.75 + 0.35 * Math.max(0, Math.cos(a - 2.4));
+      b.vert(cx + Math.cos(a) * (R + dr * scale), y, cz + Math.sin(a) * (R + dr * scale), c, haze + (k === 3 ? 0.05 : 0), k === 3 ? 0.8 : facing);
+    });
+  }
+}
+
+/** Mesas and buttes: flat-topped towers of banded rock on a talus skirt, scattered around the horizon. */
+function mesas(b, cx, cz, radius, seed) {
+  const count = 34;
+  for (let i = 0; i < count; i++) {
+    const a = (i + hash(i, 1, seed) * 0.8) / count * TAU;
+    const d = radius * (0.8 + 0.6 * hash(i, 2, seed));
+    const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
+    const w = 5 + 16 * Math.pow(hash(i, 3, seed), 1.5), H = 7 + 18 * hash(i, 4, seed) * (0.5 + w / 32);
+    const haze = 0.15 + 0.25 * (d / radius - 0.8);
+    const sides = 9, turn = hash(i, 5, seed) * TAU;
+    const pts = [];
+    for (let k = 0; k < sides; k++) {
+      const t = turn + k / sides * TAU, rr = w * (0.7 + 0.5 * hash(i, 10 + k, seed)) * (k % 2 ? 0.9 : 1);
+      pts.push([Math.cos(t) * rr, Math.sin(t) * rr * 0.75]);
+    }
+    // Rows up a side: talus foot, banded cliff (red, pale, red, dark cap rock) and the rim.
+    const rows = [[1.6, -1, DCOL.talus], [1.05, H * 0.28, DCOL.talus], [1.0, H * 0.32, DCOL.mesaRed], [1.0, H * 0.55, DCOL.mesaPale],
+      [0.99, H * 0.7, DCOL.mesaRed], [0.98, H * 0.92, DCOL.mesaDark], [0.98, H, DCOL.mesaTop]];
+    for (let k = 0; k < sides; k++) {
+      const [x0, z0] = pts[k], [x1, z1] = pts[(k + 1) % sides];
+      _n.set(z1 - z0, 0, -(x1 - x0)).normalize();
+      if (_n.x * (x0 + x1) + _n.z * (z0 + z1) < 0) _n.negate();
+      const shade = 0.55 + 0.6 * Math.max(0, _n.x * SUN.x + _n.z * SUN.z + 0.3);
+      for (let r = 0; r + 1 < rows.length; r++) {
+        const [s0, y0, c0] = rows[r], [s1, y1, c1] = rows[r + 1];
+        const v = b.count;
+        b.vert(x + x0 * s0, y0, z + z0 * s0, c0, haze, shade);
+        b.vert(x + x1 * s0, y0, z + z1 * s0, c0, haze, shade);
+        b.vert(x + x1 * s1, y1, z + z1 * s1, c1, haze, shade);
+        b.vert(x + x0 * s1, y1, z + z0 * s1, c1, haze, shade);
+        b.idx.push(v, v + 1, v + 2, v, v + 2, v + 3);
+      }
+    }
+    // The flat top.
+    const v = b.count;
+    b.vert(x, H, z, DCOL.mesaTop, haze, 1.15);
+    for (let k = 0; k < sides; k++) b.vert(x + pts[k][0] * 0.98, H, z + pts[k][1] * 0.98, DCOL.mesaTop, haze, 1.15);
+    for (let k = 0; k < sides; k++) b.idx.push(v, v + 1 + k, v + 1 + (k + 1) % sides);
+  }
+}
+
 /** Birds and butterflies: one instanced wing pair each, flown entirely in the vertex shader. */
-function life(seed, uniforms) {
+function life(seed, uniforms, butterflies = BUTTERFLIES) {
   const geo = new THREE.InstancedBufferGeometry();
   const wing = [], idx = [];
   for (const side of [-1, 1]) {
@@ -304,7 +374,7 @@ function life(seed, uniforms) {
   }
   geo.setAttribute('position', new THREE.Float32BufferAttribute(wing, 3));
   geo.setIndex(idx);
-  const n = FLOCKS * PER_FLOCK + BUTTERFLIES;
+  const n = FLOCKS * PER_FLOCK + butterflies;
   const lifeA = new Float32Array(n * 4), path = new Float32Array(n * 4);
   let i = 0;
   for (let f = 0; f < FLOCKS; f++) {
@@ -318,7 +388,7 @@ function life(seed, uniforms) {
       path.set([fx, fz, r, y], i * 4);
     }
   }
-  for (let k = 0; k < BUTTERFLIES; k++, i++) {
+  for (let k = 0; k < butterflies; k++, i++) {
     lifeA.set([1, 0.1 + 0.85 * hash(k, 51, seed), hash(k, 52, seed), 0], i * 4);
     path.set([hash(k, 53, seed) * 24, hash(k, 54, seed) * 24, 0.45 + 0.9 * hash(k, 55, seed), 0], i * 4);
   }
@@ -340,9 +410,16 @@ export function buildBackdrop(world) {
   const seed = lv.seed | 0;
   const cx = lv.w / 2, cz = lv.h / 2, corner = Math.hypot(lv.w, lv.h) / 2;
   const b = new Builder();
-  forest(b, cx, cz, Math.max(lv.w, lv.h) / 2 + 16, seed);
-  hills(b, cx, cz, corner * 2.3, seed);
-  mountains(b, cx, cz, corner * 3.4, seed);
+  if (world.desert) {
+    // Past the ridges: the dune sea, mesas standing out of it and a far range in the haze.
+    dunes(b, cx, cz, Math.max(lv.w, lv.h) / 2 + 6, seed);
+    mesas(b, cx, cz, corner * 2.4, seed);
+    mountains(b, cx, cz, corner * 3.6, seed, DCOL);
+  } else {
+    forest(b, cx, cz, Math.max(lv.w, lv.h) / 2 + 16, seed);
+    hills(b, cx, cz, corner * 2.3, seed);
+    mountains(b, cx, cz, corner * 3.4, seed);
+  }
 
   const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
     uLight: { value: new THREE.Color(1, 1, 1) },
@@ -357,7 +434,8 @@ export function buildBackdrop(world) {
     uTime: { value: 0 }, uBirds: { value: 0 }, uFlies: { value: 0 }, uHero: { value: new THREE.Vector3() },
   }]);
   lifeUniforms.uLight = uniforms.uLight;
-  const critters = life(seed, lifeUniforms);
+  // Over the desert only birds of prey wheel, high up; no butterflies.
+  const critters = life(seed, lifeUniforms, world.desert ? 0 : BUTTERFLIES);
 
   const group = new THREE.Group();
   group.add(ranges, critters);

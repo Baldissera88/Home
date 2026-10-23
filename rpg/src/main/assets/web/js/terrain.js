@@ -103,9 +103,12 @@ export class Ground {
       }
     }
     const heights = new Float32Array(gw * gh);
+    // opts.relief(x, y) raises the land (the desert's dunes), easing off around the lakes.
+    const relief = this.opts && this.opts.relief;
     for (let i = 0; i < gw * gh; i++) {
       const k = Math.min(1, Math.max(0, (water[i] - 0.25) / 0.6));
       heights[i] = -0.62 * k * k * (3 - 2 * k);
+      if (relief) heights[i] += relief((i % gw) / res, Math.floor(i / gw) / res) * Math.max(0, 1 - water[i] * 3);
     }
     this.gw = gw;
     this.gh = gh;
@@ -216,6 +219,9 @@ export class Ground {
   material(extra = {}) {
     const quality = (extra.quality && extra.quality.name) || extra.quality || 'high';
     const bump = quality !== 'low';
+    // extra.desert: the sand's uniforms (see desert.js SAND): wind-blown drift, wet sand on the shore,
+    // caustics on the pool bed and, at the high preset, heat shimmer over the far sand.
+    const desert = extra.desert || null;
     const [splat0, splat1] = this.splatTextures(extra.count || 7, extra.waterLayer ?? 4, SPLAT_RES[quality] || SPLAT_RES.high);
     const mat = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0.0 });
     const uniforms = {
@@ -229,8 +235,14 @@ export class Ground {
       uMacro: { value: extra.macro ?? 0.22 },
       uTint: { value: new THREE.Color(extra.tint ?? 0xffffff) },
     };
+    if (desert) {
+      Object.assign(uniforms, desert);
+      mat.defines = { DESERT: '' };
+      if (quality === 'high') mat.defines.SHIMMER = '';
+    }
     mat.userData.uniforms = uniforms;
-    mat.customProgramCacheKey = () => (bump ? 'ground-bump' : 'ground');
+    const key = (bump ? 'ground-bump' : 'ground') + (desert ? '-desert-' + quality : '');
+    mat.customProgramCacheKey = () => key;
     mat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);
       shader.vertexShader = shader.vertexShader
@@ -244,7 +256,12 @@ uniform highp sampler2DArray uLayers;
 uniform vec2 uSize;
 uniform float uTexScale, uHeightBlend, uBump, uMacro;
 uniform vec3 uTint;
-float splatH = 0.0;
+float splatH = 0.0, groundWet = 0.0;
+#ifdef DESERT
+uniform sampler2D uNoise;
+uniform vec2 uWind;
+uniform float uTime, uDay;
+#endif
 // Keeps the two strongest layers as (weight, layer, weight, layer).
 void splatPick(inout vec4 best, float w, float layer) {
   if (w > best.x) best = vec4(w, layer, best.xy);
@@ -263,6 +280,11 @@ void splatPick(inout vec4 best, float w, float layer) {
   splatPick(best, w1.y, 5.0);
   splatPick(best, w1.z, 6.0);
   vec2 uv = tp / uTexScale;
+#ifdef SHIMMER
+  // Heat shimmer: the far sand wavers in the rising air.
+  float far = smoothstep(16.0, 42.0, distance(vGroundPos.xz, cameraPosition.xz));
+  uv += (texture(uNoise, tp * 0.07 + vec2(0.0, uTime * 0.21)).rg - 0.5) * 0.05 * far * uDay;
+#endif
   vec4 c1 = texture(uLayers, vec3(uv, best.y)), c2 = texture(uLayers, vec3(uv, best.w));
   // Height blend: the higher texture wins near the seam; the second layer's height counts only where it is present.
   float s1 = best.x + c1.a * uHeightBlend;
@@ -271,11 +293,32 @@ void splatPick(inout vec4 best, float w, float layer) {
   float b1 = max(s1 - top, 0.0), b2 = max(s2 - top, 0.0);
   vec4 col = (c1 * b1 + c2 * b2) / (b1 + b2);
   splatH = col.a;
+#ifdef DESERT
+  // Drift: pale streaks of sand running over the dunes with the wind, by day.
+  float sandy = ((best.y < 1.5 ? b1 : 0.0) + (best.w < 1.5 ? b2 : 0.0)) / (b1 + b2);
+  float wl = length(uWind);
+  vec2 wd = uWind / max(wl, 1e-3);
+  vec2 q = vec2(dot(tp, wd), dot(tp, vec2(-wd.y, wd.x)));
+  float dr = texture(uNoise, vec2(q.x * 0.045 - uTime * 0.05 * wl, q.y * 0.4)).r * 0.6
+    + texture(uNoise, vec2(q.x * 0.1 - uTime * 0.12 * wl, q.y * 0.85 + 0.3)).g * 0.4;
+  col.rgb *= 1.0 + smoothstep(0.56, 0.78, dr) * sandy * uDay * 0.1;
+  // Wet sand on the shore above the water line, dark and glossy; light rippling over the pool bed.
+  float wet = 1.0 - smoothstep(-0.22, -0.02, vGroundPos.y);
+  float under = smoothstep(-0.2, -0.32, vGroundPos.y);
+  if (under > 0.0) {
+    float ca = texture(uNoise, tp * 0.31 + uTime * vec2(0.021, 0.013)).b, cb = texture(uNoise, tp * 0.37 - uTime * vec2(0.017, -0.024)).b;
+    col.rgb *= 1.0 + pow(1.0 - abs(ca - cb), 12.0) * 1.6 * under * (0.3 + 0.7 * uDay);
+  }
+  groundWet = wet;
+  diffuseColor.rgb *= col.rgb * (1.0 + (w1.w * 1.5 - 0.75) * uMacro) * (1.0 - 0.42 * wet) * uTint;
+#else
   // Darker where wet: lake shores just above the water line and the beds below it.
   float wet = 1.0 - smoothstep(-0.2, -0.09, vGroundPos.y);
   diffuseColor.rgb *= col.rgb * (1.0 + (w1.w * 1.5 - 0.75) * uMacro) * (1.0 - 0.3 * wet) * uTint;
+#endif
 }
-`);
+`)
+        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, 0.32, groundWet);');
       if (bump) {
         shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_maps>', `
 #include <normal_fragment_maps>
@@ -480,7 +523,7 @@ function waves() {
  * glints and a soft foam line where it meets the shore. One pass, no render targets. Fitted to the
  * ground's basins (the last Ground built unless one is passed), so it only covers the lakes.
  */
-export function makeWater(w, h, assets, ground = lastGround) {
+export function makeWater(w, h, assets, ground = lastGround, clear = false) {
   const uniforms = THREE.UniformsUtils.merge([
     THREE.UniformsLib.fog,
     {
@@ -489,8 +532,10 @@ export function makeWater(w, h, assets, ground = lastGround) {
       uSunColor: { value: new THREE.Color(1, 0.95, 0.85) },
       uSky: { value: new THREE.Color(0.55, 0.7, 0.9) },
       uHorizon: { value: new THREE.Color(0.8, 0.85, 0.9) },
-      uDeep: { value: new THREE.Color(0.01, 0.045, 0.06) },
-      uShallow: { value: new THREE.Color(0.07, 0.19, 0.17) },
+      // A desert pool (clear) is turquoise over pale sand and see-through much deeper.
+      uDeep: { value: clear ? new THREE.Color(0.0, 0.16, 0.2) : new THREE.Color(0.01, 0.045, 0.06) },
+      uShallow: { value: clear ? new THREE.Color(0.06, 0.5, 0.46) : new THREE.Color(0.07, 0.19, 0.17) },
+      uClear: { value: clear ? 1 : 0 },
       uWaves: { value: null },
       uLight: { value: 1.0 },
     },
@@ -515,7 +560,7 @@ export function makeWater(w, h, assets, ground = lastGround) {
         #include <fog_vertex>
       }`,
     fragmentShader: /* glsl */`
-      uniform float uTime, uLight;
+      uniform float uTime, uLight, uClear;
       uniform vec3 uSun, uSunColor, uSky, uHorizon, uDeep, uShallow;
       uniform sampler2D uWaves;
       varying vec3 vPos;
@@ -535,7 +580,7 @@ export function makeWater(w, h, assets, ground = lastGround) {
         vec3 r = reflect(-v, n);
         vec3 sky = mix(uHorizon, uSky, smoothstep(0.1, 0.9, r.y)) * uLight;
         // Colour by depth: clear and green over the shallows, dark in the deep; ripples catch the light.
-        float deep = 1.0 - exp(-d * 6.0);
+        float deep = 1.0 - exp(-d * mix(6.0, 2.6, uClear));
         vec3 body = mix(uShallow, uDeep, deep) * (0.35 + 0.65 * uLight) * (0.75 + 0.5 * max(dot(n, l), 0.0));
         vec3 col = mix(body, sky, 0.16 + 0.7 * fres);
         // Sun glints: a soft sheen and sharp sparkles off the ripple facets.
@@ -555,7 +600,7 @@ export function makeWater(w, h, assets, ground = lastGround) {
         col += uSunColor * glint * (1.0 - foam);
         col = mix(col, mix(uHorizon, vec3(1.0), 0.6) * (0.15 + 0.85 * uLight), foam);
         // See-through over the shallows, opaque in the deep and at grazing angles; glints and foam stay solid.
-        float alpha = min(mix(0.3, 0.88, deep) + fres * 0.35, 1.0) * smoothstep(0.0, 0.04, ds);
+        float alpha = min(mix(mix(0.3, 0.12, uClear), mix(0.88, 0.8, uClear), deep) + fres * 0.35, 1.0) * smoothstep(0.0, 0.04, ds);
         gl_FragColor = vec4(col, max(max(alpha, foam), min(glint, 1.0)));
         #include <fog_fragment>
       }`,
