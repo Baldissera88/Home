@@ -100,18 +100,19 @@ class Assets(private val res: Resources) {
     val icons = load(R.drawable.spr_icons)
     val decals = load(R.drawable.tex_decals)
 
+    // The desert reuses the camp's sandy floor and the cave's rock for its cliffs (the renderer warms them to sandstone).
     private val floorTex = mapOf(
         Biome.OVERWORLD to load(R.drawable.tex_camp_floor), Biome.CRYPT to load(R.drawable.tex_crypt_floor),
         Biome.CAVE to load(R.drawable.tex_cave_floor), Biome.HELL to load(R.drawable.tex_hell_floor),
-    )
+    ).let { it + (Biome.DESERT to it.getValue(Biome.OVERWORLD)) }
     private val wallTex = mapOf(
         Biome.OVERWORLD to load(R.drawable.tex_camp_wall), Biome.CRYPT to load(R.drawable.tex_crypt_wall),
         Biome.CAVE to load(R.drawable.tex_cave_wall), Biome.HELL to load(R.drawable.tex_hell_wall),
-    )
+    ).let { it + (Biome.DESERT to it.getValue(Biome.CAVE)) }
     private val topTex = mapOf(
         Biome.OVERWORLD to load(R.drawable.tex_camp_top), Biome.CRYPT to load(R.drawable.tex_crypt_top),
         Biome.CAVE to load(R.drawable.tex_cave_top), Biome.HELL to load(R.drawable.tex_hell_top),
-    )
+    ).let { it + (Biome.DESERT to it.getValue(Biome.CAVE)) }
 
     fun floor(b: Biome) = floorTex.getValue(b)
     fun wall(b: Biome) = wallTex.getValue(b)
@@ -155,5 +156,10 @@ class Assets(private val res: Resources) {
         EnemyType.SPIDER_QUEEN -> Triple(spider, 2.1f, true)
         EnemyType.DEMON_LORD -> Triple(demon, 1f, true)
         EnemyType.SHADOW_KING -> Triple(demon, 1.2f, true)
+        // The desert's monsters borrow sheets, tinted by the renderer.
+        EnemyType.SCORPION -> Triple(spider, 1.05f, true)
+        EnemyType.MUMMY -> Triple(skeleton, 1.05f, true)
+        EnemyType.DJINN -> Triple(ghost, 1.1f, true)
+        EnemyType.SAND_PHARAOH -> Triple(skelKing, 1.6f, true)
     }
 }

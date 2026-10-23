@@ -37,16 +37,41 @@ object DMat {
     const val DAMP = 3
 }
 
-/** The texture set a level's ground is baked from. */
-enum class FloorSet(val tex: Int, val height: Int, val clutter: Int, val count: Int) {
+/**
+ * Ground materials of the Scorched Sands, as the "mat" codes the 3D view reads. Water is 7, as in the overworld.
+ * The 2D fallback bakes them from overworld strips ([FloorSet.DESERT]).
+ */
+object SMat {
+    const val SAND = 0
+    const val DUNE = 1
+    const val HARDPAN = 2
+    const val PAVING = 3
+    const val GRASS = 4
+    const val WATER = 7
+}
+
+/**
+ * The texture set a level's ground is baked from. [strips] picks the strip of [tex] for each material when they
+ * are not in the same order.
+ */
+enum class FloorSet(val tex: Int, val height: Int, val clutter: Int, val count: Int, val strips: IntArray? = null) {
     WILDS(R.drawable.tex_terrain, R.drawable.tex_terrain_h, R.drawable.tex_clutter, Mat.TEXTURED),
     CRYPT(R.drawable.tex_floorset_crypt, R.drawable.tex_floorset_crypt_h, R.drawable.tex_clutter_dungeon, 4),
     CAVE(R.drawable.tex_floorset_cave, R.drawable.tex_floorset_cave_h, R.drawable.tex_clutter_dungeon, 4),
     HELL(R.drawable.tex_floorset_hell, R.drawable.tex_floorset_hell_h, R.drawable.tex_clutter_dungeon, 4),
+    /** Desert materials ([SMat]) drawn with the overworld's sand, dirt, cobble and grass. */
+    DESERT(
+        R.drawable.tex_terrain, R.drawable.tex_terrain_h, R.drawable.tex_clutter, Mat.TEXTURED,
+        intArrayOf(Mat.SAND, Mat.SAND, Mat.DIRT, Mat.COBBLE, Mat.GRASS, Mat.DRY, Mat.MUD),
+    ),
     ;
+
+    /** The strip of [tex] holding material [m]. */
+    fun strip(m: Int): Int = strips?.getOrNull(m) ?: m
 
     companion object {
         fun of(d: Dungeon) = when {
+            d.biome == Biome.DESERT -> DESERT
             d.ground != null -> WILDS
             d.biome == Biome.CAVE -> CAVE
             d.biome == Biome.HELL -> HELL
@@ -170,12 +195,12 @@ class TerrainSource(res: Resources, val set: FloorSet) {
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
         val tex = BitmapFactory.decodeResource(res, set.tex, opts)
-        color = Array(set.count) { m -> IntArray(TEX * TEX).also { tex.getPixels(it, 0, TEX, m * TEX, 0, TEX, TEX) } }
+        color = Array(set.count) { m -> IntArray(TEX * TEX).also { tex.getPixels(it, 0, TEX, set.strip(m) * TEX, 0, TEX, TEX) } }
         tex.recycle()
         val hb = BitmapFactory.decodeResource(res, set.height, opts)
         val row = IntArray(TEX * TEX)
         height = Array(set.count) { m ->
-            hb.getPixels(row, 0, TEX, m * TEX, 0, TEX, TEX)
+            hb.getPixels(row, 0, TEX, set.strip(m) * TEX, 0, TEX, TEX)
             // Centred on the material's mean so every material competes evenly at a border.
             var mean = 0f
             val h = FloatArray(TEX * TEX) { i -> ((row[i] shr 16) and 255) / 255f }
@@ -210,7 +235,41 @@ class TerrainMap(val d: Dungeon) {
     val signature: Int
 
     init {
-        signature = if (d.ground != null) wilds() else dungeon()
+        signature = when {
+            d.biome == Biome.DESERT -> desert()
+            d.ground != null -> wilds()
+            else -> dungeon()
+        }
+    }
+
+    /**
+     * The desert ([SMat]): the generator's ground cells for paving, oasis grass and hardpan, rock under the cliffs,
+     * and the open sand split into fine sand and rippled dunes.
+     */
+    private fun desert(): Int {
+        val gr = d.ground ?: IntArray(w * h) { DesertGround.SAND }
+        var sig = 29 + 104729
+        for (y in 0 until h) for (x in 0 until w) {
+            val i = y * w + x
+            val t = d.tiles[i]
+            val g = gr[i]
+            sig = sig * 31 + t * 11 + g
+            mat[i] = when {
+                t == WATER -> SMat.WATER
+                g == DesertGround.PAVING -> SMat.PAVING
+                g < DesertGround.HARDPAN -> SMat.GRASS
+                t == WALL || g == DesertGround.HARDPAN -> SMat.HARDPAN
+                tileNoise(x + 0.37f * y, y.toFloat(), 6f, 43) > 0.55f -> SMat.DUNE
+                else -> SMat.SAND
+            }.toByte()
+        }
+        // The water surface shows through on the pool and all around its banks.
+        for (y in 0 until h) for (x in 0 until w) {
+            var water = false
+            for (dy in -1..1) for (dx in -1..1) if (x + dx in 0 until w && y + dy in 0 until h && d.tile(x + dx, y + dy) == WATER) water = true
+            if (water) wet[y * w + x] = true
+        }
+        return sig
     }
 
     /** Dungeons: the main floor broken up by rubble along the walls, patches of loose ground and damp spots. */
@@ -486,6 +545,10 @@ private class TerrainBaker(private val src: TerrainSource, private val m: Terrai
 
     /** Grass tufts, flowers, pebbles, leaves and reeds, scattered by a hash of each tile. */
     private fun clutter(tx0: Int, ty0: Int) {
+        if (m.set == FloorSet.DESERT) {
+            desertClutter(tx0, ty0)
+            return
+        }
         if (m.set != FloorSet.WILDS) {
             dungeonClutter(tx0, ty0)
             return
@@ -537,6 +600,38 @@ private class TerrainBaker(private val src: TerrainSource, private val m: Terrai
                 }
                 Mat.MUD -> if (nearWater && next() < 0.5f) put(C_REEDS)
                 Mat.COBBLE -> if (next() < 0.06f) put(C_TUFT2)
+            }
+        }
+    }
+
+    /** Pebbles on the sand, dry tufts on the hardpan, grass and reeds round the oasis. */
+    private fun desertClutter(tx0: Int, ty0: Int) {
+        val d = m.d
+        for (y in ty0 - 1..ty0 + TERRAIN_CHUNK) for (x in tx0 - 1..tx0 + TERRAIN_CHUNK) {
+            if (x < 0 || y < 0 || x >= m.w || y >= m.h) continue
+            val t = d.tile(x, y)
+            if (t == WATER || t == WALL || t == STAIRS) continue
+            var h = hash(x, y, m.signature)
+            fun next(): Float {
+                h = h * 1664525 + 1013904223
+                return ((h ushr 8) and 0xFFFF) / 65535f
+            }
+            fun put(sprite: Int) {
+                val px = ((x + 0.1f + next() * 0.8f) * TERRAIN_PX).toInt() - CLUTTER / 2
+                val py = ((y + 0.1f + next() * 0.8f) * TERRAIN_PX).toInt() - CLUTTER / 2
+                stamp(src.clutter[sprite], px - tx0 * TERRAIN_PX, py - ty0 * TERRAIN_PX, next() < 0.5f)
+            }
+            when (m.at(x, y)) {
+                SMat.SAND, SMat.DUNE -> if (next() < 0.1f) put(C_PEBBLES_SAND)
+                SMat.HARDPAN -> {
+                    if (next() < 0.3f) put(C_PEBBLES)
+                    if (next() < 0.12f) put(C_TUFT_DRY)
+                }
+                SMat.PAVING -> if (next() < 0.05f) put(C_TUFT_DRY)
+                SMat.GRASS -> {
+                    repeat((next() * 2.4f).toInt()) { put(if (next() < 0.5f) C_TUFT else C_TUFT3) }
+                    if (m.wet[y * m.w + x] && next() < 0.45f) put(C_REEDS)
+                }
             }
         }
     }

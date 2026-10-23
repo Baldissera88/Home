@@ -71,6 +71,13 @@ private val whiteFlash = ColorFilter.tint(Color.White, BlendMode.SrcAtop)
 private val redFlash = ColorFilter.tint(Color(0xFFFF1744), BlendMode.SrcAtop)
 private val corpseTint = ColorFilter.tint(Color(0xFF5A4A44), BlendMode.Modulate)
 private val ghostTint = ColorFilter.tint(Color(0xFF90CAF9), BlendMode.SrcAtop)
+// The desert's monsters borrow other sheets in desert colours.
+private val scorpionTint = ColorFilter.tint(Color(0xFFE0B860), BlendMode.Modulate)
+private val mummyTint = ColorFilter.tint(Color(0xFFF2E6C8), BlendMode.Modulate)
+private val djinnTint = ColorFilter.tint(Color(0xFF6FB7FF), BlendMode.Modulate)
+private val pharaohTint = ColorFilter.tint(Color(0xFFFFD54F), BlendMode.Modulate)
+/** Sandstone cliffs, the desert entrance and the sandy haze: the cave and world textures warmed to sand. */
+private val sandstoneTint = ColorFilter.tint(Color(0xFFF0C890), BlendMode.Modulate)
 
 /** Row in a directional sheet for a facing vector (x right, y down/south). */
 fun dirRow(fx: Float, fy: Float): Int {
@@ -239,7 +246,7 @@ private fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styl
         )
     }
 
-    if (g.inWorld) drawSunShadows(g, a, cam, x0, x1, y0, y1)
+    if (g.outdoors) drawSunShadows(g, a, cam, x0, x1, y0, y1)
 
     // Shockwaves from skills spread along the ground.
     for (w in g.waves) {
@@ -268,7 +275,7 @@ private fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styl
     bbs.sortBy { it.y }
 
     // Contact shadows go under everything; softer when the sun casts proper shadows.
-    val contact = if (g.inWorld) 0.45f - 0.2f * sunShadowStrength(g) else 0.45f
+    val contact = if (g.outdoors) 0.45f - 0.2f * sunShadowStrength(g) else 0.45f
     for (b in bbs) {
         val (sx, sy, r) = when (b) {
             is PlayerBB -> Triple(g.player.x, g.player.y, 0.32f)
@@ -294,6 +301,7 @@ private fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styl
     var bi = 0
     val wallImg = a.wall(d.biome)
     val topImg = a.top(d.biome)
+    val wallTint = if (d.biome == Biome.DESERT) sandstoneTint else null
     fun drawBillboard(b: Billboard) {
         when (b) {
             is PlayerBB -> drawPlayer(g, cam, a)
@@ -304,7 +312,7 @@ private fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styl
         }
     }
     for (y in y0..y1) {
-        for (x in x0..x1) if (d.tile(x, y) == WALL) drawWallTile(d, x, y, cam, g.time, wallImg, topImg, a.wallSkirts)
+        for (x in x0..x1) if (d.tile(x, y) == WALL) drawWallTile(d, x, y, cam, g.time, wallImg, topImg, a.wallSkirts, wallTint)
         while (bi < bbs.size && bbs[bi].y < y + 0.8f) drawBillboard(bbs[bi++])
         for (x in x0..x1) drawWorldTile(g, x, y, cam, a, measurer, styles)
         for (b in d.buildings) if (b.y + b.h - 1 == y) drawBuilding(b, g, cam, a)
@@ -346,8 +354,8 @@ private fun DrawScope.drawWorld(g: Game, a: Assets, measurer: TextMeasurer, styl
 
     for (b in g.bolts) drawBolt(b, cam)
     if (g.inWorld && g.daylight > 0.35f) drawButterflies(g, cam, x0, x1, y0, y1)
-    if (!g.inWorld) drawDustMotes(g, cam, x0, x1, y0, y1)
-    if (g.inWorld) drawCloudShadows(g, a, cam)
+    if (!g.outdoors) drawDustMotes(g, cam, x0, x1, y0, y1)
+    if (g.outdoors) drawCloudShadows(g, a, cam)
 
     drawFog(g, a, cam)
     if (g.rain > 0.02f) drawRain(g)
@@ -439,6 +447,7 @@ private fun DrawScope.drawWallTile(
     d: Dungeon, x: Int, y: Int, cam: Camera, time: Float,
     wallImg: androidx.compose.ui.graphics.ImageBitmap, topImg: androidx.compose.ui.graphics.ImageBitmap,
     skirts: androidx.compose.ui.graphics.ImageBitmap,
+    tint: ColorFilter? = null,
 ) {
     val t = cam.t
     val h = (t * WALL_HEIGHT).roundToInt()
@@ -453,7 +462,7 @@ private fun DrawScope.drawWallTile(
     if (nearFloor) {
         // Rock tops span 4x4 tiles, sampled by position so no tile grid shows.
         val src = if (topImg.width >= 512) IntOffset((x and 3) * 128, (y and 3) * 128) else IntOffset.Zero
-        drawImage(topImg, src, IntSize(128, 128), IntOffset(l, tp - h), IntSize(r - l, bt - tp), filterQuality = FilterQuality.Medium)
+        drawImage(topImg, src, IntSize(128, 128), IntOffset(l, tp - h), IntSize(r - l, bt - tp), colorFilter = tint, filterQuality = FilterQuality.Medium)
         if (d.tile(x, y - 1) != WALL) drawRect(Color.Black.copy(alpha = 0.5f), Offset(l.toFloat(), (tp - h).toFloat()), Size((r - l).toFloat(), t * 0.04f))
         if (d.tile(x - 1, y) != WALL) drawRect(Color.Black.copy(alpha = 0.35f), Offset(l.toFloat(), (tp - h).toFloat()), Size(t * 0.04f, (bt - tp).toFloat()))
         if (d.tile(x + 1, y) != WALL) drawRect(Color.Black.copy(alpha = 0.35f), Offset(r - t * 0.04f, (tp - h).toFloat()), Size(t * 0.04f, (bt - tp).toFloat()))
@@ -463,13 +472,13 @@ private fun DrawScope.drawWallTile(
     if (!frontVisible) return
 
     val variant = ((d.variant[y * d.w + x] * 2).toInt()).coerceIn(0, 1)
-    drawImage(wallImg, IntOffset(variant * 128, 0), IntSize(128, 96), IntOffset(l, bt - h), IntSize(r - l, h), filterQuality = FilterQuality.Medium)
+    drawImage(wallImg, IntOffset(variant * 128, 0), IntSize(128, 96), IntOffset(l, bt - h), IntSize(r - l, h), colorFilter = tint, filterQuality = FilterQuality.Medium)
     drawRect(Color.White.copy(alpha = 0.08f), Offset(l.toFloat(), (bt - h).toFloat()), Size((r - l).toFloat(), t * 0.025f))
 
     // Rubble piled along the foot of the wall breaks up the straight line where it meets the floor.
     val skirtRow = when (d.biome) {
         Biome.CRYPT -> 0
-        Biome.CAVE -> 1
+        Biome.CAVE, Biome.DESERT -> 1
         Biome.HELL -> 2
         else -> -1
     }
@@ -478,7 +487,7 @@ private fun DrawScope.drawWallTile(
         val sh = ((r - l) * 0.5f).roundToInt()
         drawImage(
             skirts, IntOffset(sv * 128, skirtRow * 64), IntSize(128, 64),
-            IntOffset(l, bt - (sh * 0.62f).roundToInt()), IntSize(r - l, sh), filterQuality = FilterQuality.Medium,
+            IntOffset(l, bt - (sh * 0.62f).roundToInt()), IntSize(r - l, sh), colorFilter = tint, filterQuality = FilterQuality.Medium,
         )
     }
 
@@ -630,6 +639,7 @@ private fun DrawScope.drawHeroSilhouette(g: Game, cam: Camera, a: Assets) {
 
 private val holyGold = Color(0xFFFFE082)
 private val venomGreen = Color(0xFF9CCC65)
+private val stormSand = Color(0xFFE6C17A)
 
 private fun DrawScope.drawPlayer(g: Game, cam: Camera, a: Assets) {
     val p = g.player
@@ -676,6 +686,7 @@ private fun DrawScope.drawPlayer(g: Game, cam: Camera, a: Assets) {
     val alpha = if (p.stealth > 0f) 0.35f + 0.08f * sin(g.time * 7f) else 1f
     drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE, alpha = alpha, filter = if (p.stealth > 0f) ghostTint else null)
     if (p.chill > 0f) drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE, alpha = min(0.55f, p.chill), filter = frozenTint)
+    if (g.heroPoisoned) drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE, alpha = 0.4f, filter = poisonTint)
     if (p.hurt > 0f) drawSprite(sheet, col, row, cx, cy, t, scale = CHAR_SCALE, alpha = p.hurt * 1.1f, filter = redFlash)
     if (p.venom > 0f && (g.time * 6f).toInt() % 2 == 0) {
         drawCircle(venomGreen.copy(alpha = 0.5f), t * 0.04f, Offset(cx + t * 0.3f, cy - t * 0.45f))
@@ -716,6 +727,28 @@ private fun DrawScope.drawZones(g: Game, cam: Camera) {
                 drawOval(Brush.radialGradient(listOf(Color(0xFFFF6D00).copy(alpha = 0.5f * k), Color(0xFF3E0E00).copy(alpha = 0.2f * k)), c, rx), Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f))
                 for (i in 0 until 5) drawFlame(c.x + sin(i * 2.4f) * rx * 0.55f, c.y + kotlin.math.cos(i * 1.7f) * rx * 0.3f, t * 0.3f * k, g.time, i * 3f)
             }
+            ZoneKind.SANDSTORM -> {
+                // A swirling wall of sand: dusty haze, a dashed rim while it gathers, then spinning streaks.
+                val gathering = z.age < SANDSTORM_WARN
+                drawOval(
+                    Brush.radialGradient(listOf(stormSand.copy(alpha = 0.45f * k), stormSand.copy(alpha = 0.12f * k)), c, rx),
+                    Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f),
+                )
+                drawOval(
+                    (if (gathering) Color(0xFFFF7043) else stormSand).copy(alpha = 0.8f * k), Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f),
+                    style = Stroke(t * (if (gathering) 0.05f else 0.03f)),
+                )
+                for (i in 0 until 10) {
+                    val ang = -g.time * 4f + i * (PI.toFloat() / 5f)
+                    val rr = rx * (0.35f + 0.06f * i)
+                    drawArc(
+                        stormSand.copy(alpha = 0.55f * k), Math.toDegrees(ang.toDouble()).toFloat(), 50f, useCenter = false,
+                        topLeft = Offset(c.x - rr, c.y - rr * 0.6f - t * 0.25f), size = Size(rr * 2f, rr * 1.2f), style = Stroke(t * 0.04f, cap = StrokeCap.Round),
+                    )
+                }
+            }
+            // The new skills' areas are drawn by their own code.
+            else -> {}
         }
     }
     for (m in g.meteors) {
@@ -787,11 +820,17 @@ private fun DrawScope.drawEnemy(e: Enemy, g: Game, cam: Camera, a: Assets, measu
         e.type == EnemyType.SHADOW_KING -> shadowTint
         e.type == EnemyType.TROLL -> trollTint
         e.type == EnemyType.GHOST -> ghostEnemyTint
+        e.type == EnemyType.SCORPION -> scorpionTint
+        e.type == EnemyType.MUMMY -> mummyTint
+        e.type == EnemyType.DJINN -> djinnTint
+        e.type == EnemyType.SAND_PHARAOH -> pharaohTint
         else -> null
     }
     val ghostly = e.type == EnemyType.GHOST
-    drawSprite(sheet, col, row, cx, cy - (if (ghostly) t * 0.08f * sin(e.anim * 3f + e.phase) else 0f), t, scale = scale,
-        alpha = if (ghostly) 0.72f else 1f, filter = filter)
+    // Wraiths and djinn hover and bob.
+    val floating = ghostly || e.type == EnemyType.DJINN
+    drawSprite(sheet, col, row, cx, cy - (if (floating) t * (0.08f * sin(e.anim * 3f + e.phase) + (if (ghostly) 0f else 0.25f)) else 0f), t, scale = scale,
+        alpha = if (ghostly) 0.72f else if (floating) 0.9f else 1f, filter = filter)
     if (e.flash > 0f) drawSprite(sheet, col, row, cx, cy, t, scale = scale, alpha = e.flash / 0.12f * 0.75f, filter = whiteFlash)
     if (e.shield > 0f) {
         val r = t * 0.75f * e.size
@@ -1000,7 +1039,7 @@ private val RAIN_LIGHT = Color(0xFF8E97A3)
 
 /** The colour the whole scene is multiplied by before any light falls on it. */
 private fun ambientLight(g: Game): Color {
-    if (!g.inWorld) return lerp(Color.White, g.dungeon.biome.darkness, g.dungeon.biome.darknessAlpha)
+    if (!g.outdoors) return lerp(Color.White, g.dungeon.biome.darkness, g.dungeon.biome.darknessAlpha)
     val d = g.daylight
     val c = if (d > 0.5f) lerp(GOLDEN_LIGHT, DAY_LIGHT, ((d - 0.5f) / 0.3f).coerceIn(0f, 1f))
     else lerp(NIGHT_LIGHT, GOLDEN_LIGHT, ((d - 0.22f) / 0.28f).coerceIn(0f, 1f))
@@ -1036,7 +1075,7 @@ fun DrawScope.drawLighting(g: Game) {
     }
 
     val p = g.player
-    light(p.x, p.y - 0.3f, t * (if (g.inWorld) 7f else 6.2f) * flicker(g.time, 0.3f), if (g.inWorld) PLAYER_LIGHT_WORLD else PLAYER_LIGHT_DUNGEON, 1f)
+    light(p.x, p.y - 0.3f, t * (if (g.outdoors) 7f else 6.2f) * flicker(g.time, 0.3f), if (g.outdoors) PLAYER_LIGHT_WORLD else PLAYER_LIGHT_DUNGEON, 1f)
     for (e in d.entrances) {
         if (e.region == Region.HELL) light(e.x + 0.5f, e.y + 0.3f, t * 3.4f, Color(0xFFFF5A1F), 0.9f)
         else light(e.x + 0.5f, e.y + 0.3f, t * 1.6f, COOL_LIGHT, 0.6f)
@@ -1138,7 +1177,7 @@ private fun DrawScope.drawWorldTile(g: Game, x: Int, y: Int, cam: Camera, a: Ass
         ENTRANCE -> {
             val e = d.entrances.firstOrNull { it.x == x && it.y == y } ?: return
             val foot = cam.sy(y + 0.95f)
-            drawSprite(a.world, e.region.sprite, 0, cx, foot, t)
+            drawSprite(a.world, e.region.sprite, 0, cx, foot, t, filter = if (e.region == Region.DESERT) sandstoneTint else null)
             if (e.region == Region.HELL) {
                 val c = Offset(cx, foot - t * 1.25f)
                 val pulse = 0.8f + 0.2f * sin(g.time * 4f)
@@ -1444,6 +1483,7 @@ private fun DrawScope.drawFog(g: Game, a: Assets, cam: Camera) {
     val filter = when (g.dungeon.biome) {
         Biome.HELL -> hellFog
         Biome.CAVE -> caveFog
+        Biome.DESERT -> sandstoneTint
         else -> null
     }
     for (layer in 0..1) {

@@ -360,8 +360,11 @@ enum class Talent(val label: String, val icon: String, val maxRank: Int, val per
     fun bonus(rank: Int): Float = per * rank / 100f
 }
 
-/** Lasting ground effects: hallowed ground and the burning crater a meteor leaves. */
-enum class ZoneKind { CONSECRATE, FIRE }
+/**
+ * Lasting ground effects: hallowed ground, the burning crater a meteor leaves, the new skills' areas and the Sand
+ * Pharaoh's sandstorm (the only one that hurts the hero instead of monsters). The wire sends the ordinal.
+ */
+enum class ZoneKind { CONSECRATE, FIRE, BLIZZARD, BLACK_HOLE, TRAP, HOLY_LIGHT, BLEED, SANDSTORM }
 
 class Zone(val x: Float, val y: Float, val radius: Float, val life: Float, val kind: ZoneKind, val dps: Float) {
     var age = 0f
@@ -632,6 +635,14 @@ enum class EnemyType(
     SPIDER_QUEEN("The Spider Queen", "spider queens", 700, 24, 1.8f, 0.6f, 360, 1.4f, 0.5f, 1.3f, 8f, boss = true),
     DEMON_LORD("The Demon Lord", "demon lords", 900, 28, 1.5f, 0.7f, 480, 1.6f, 0.6f, 1.4f, 9f, boss = true),
     SHADOW_KING("The Shadow King", "shadow kings", 1300, 34, 1.7f, 0.75f, 900, 1.7f, 0.55f, 1.3f, 10f, boss = true),
+    // The Scorched Sands.
+    /** Quick on its legs; its sting poisons the hero. */
+    SCORPION("Giant Scorpion", "giant scorpions", 34, 8, 2.3f, 0.34f, 15, 0.95f, 0.35f, 1.0f, 6.5f),
+    /** Shambles slowly, takes a beating and hits hard. */
+    MUMMY("Mummy", "mummies", 72, 13, 1.05f, 0.32f, 22, 1.05f, 0.65f, 1.7f, 6f),
+    /** Floats at a distance hurling fire, and vanishes in a puff of smoke when the hero closes in. */
+    DJINN("Djinn", "djinn", 36, 10, 1.9f, 0.3f, 20, 6f, 0.55f, 2.1f, 8f, ranged = true),
+    SAND_PHARAOH("The Sand Pharaoh", "sand pharaohs", 760, 26, 1.5f, 0.6f, 520, 1.5f, 0.6f, 1.4f, 9f, boss = true),
 }
 
 const val HEART_LIFE = 20f

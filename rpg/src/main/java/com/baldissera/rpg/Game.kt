@@ -73,7 +73,14 @@ private val villagerLines = listOf(
     "The Elder has work for you.", "The crypt is crawling with skeletons…", "I heard a troll in the forest to the south-east.",
     "The merchant has new wares.", "More monsters come out at night.", "Have you seen the Gate of Hell to the south?",
     "My husband went down into the caves and never came home.",
+    "Caravans speak of a pharaoh's tomb in the Scorched Sands, south-west of here.",
 )
+
+/** Reach of the Sand Pharaoh's sandstorm, in tiles, and how long it gathers before it starts to hurt. */
+const val SANDSTORM_RADIUS = 2.6f
+const val SANDSTORM_WARN = 0.7f
+private val SAND_DUST = Color(0xFFE6C17A)
+private val STING_GREEN = Color(0xFF9CCC65)
 
 val QUESTS = listOf(
     "Cleanse the Crypt" to "Defeat the Skeleton King at depth 3 (the Crypt, north-west of the village)",
@@ -227,6 +234,19 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     }
 
     val inWorld: Boolean get() = floor == 0
+    /** On one of the Scorched Sands' depths (floors below zero, see [DESERT_FIRST]). */
+    val inDesert: Boolean get() = isDesertFloor(floor)
+    /** Under the open sky, with daylight and sun shadows: the wilds and the desert. */
+    val outdoors: Boolean get() = inWorld || inDesert
+    /** The depth shown to the player: the floor, or the desert's own 1 to 3. */
+    val depth: Int get() = if (inDesert) desertDepth(floor) else floor
+    /** Monster and loot level of the current dungeon floor; the desert counts as a mid-game area. */
+    val dangerLevel: Int get() = if (inDesert) DESERT_LEVEL + desertDepth(floor) - 1 else floor
+    /** Scorpion venom in the hero's veins: seconds left and damage per second. It wears off and never kills. */
+    private var heroPoison = 0f
+    private var heroPoisonDps = 0f
+    private var heroPoisonTick = 0f
+    val heroPoisoned: Boolean get() = heroPoison > 0f
     val inVillage: Boolean get() = inWorld && (dungeon.village?.contains(player.x, player.y) == true)
     val merchantX: Float get() = dungeon.merchantX
     val merchantY: Float get() = dungeon.merchantY
@@ -265,7 +285,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     val areaTitle: String get() = when {
         inVillage -> "The Village"
         inWorld -> "The Wilds — zone ${zoneLevel(player.x, player.y)}"
-        else -> "${dungeon.biome.title} — depth $floor"
+        else -> "${dungeon.biome.title} — depth $depth"
     }
     val potionPrice: Int get() = 20 + max(1, deepest) * 6
 
@@ -273,7 +293,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     val musicTrack: Int get() = when {
         boss?.aggro == true -> R.raw.mus_boss
         inVillage -> R.raw.mus_village
-        inWorld -> R.raw.mus_world
+        inWorld || inDesert -> R.raw.mus_world
         dungeon.biome == Biome.CAVE -> R.raw.mus_cave
         dungeon.biome == Biome.HELL -> R.raw.mus_hell
         else -> R.raw.mus_crypt
@@ -282,11 +302,13 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     /** 0 = midnight, 1 = noon. A full day lasts six minutes. */
     val daylight: Float get() = 0.5f + 0.5f * cos(time * 2f * PI.toFloat() / 360f)
-    val darknessAlpha: Float get() = if (inWorld) min(0.85f, 0.08f + (1f - daylight) * 0.62f + rain * 0.18f) else dungeon.biome.darknessAlpha
+    val darknessAlpha: Float get() = if (outdoors) min(0.85f, 0.08f + (1f - daylight) * 0.62f + rain * 0.18f) else dungeon.biome.darknessAlpha
 
     /** How thick the drifting fog is right now. */
     val fogAmount: Float get() = when {
         inWorld -> 0.04f + rain * 0.1f + max(0f, 0.25f - abs(daylight - 0.45f)) * 0.6f
+        // A thin haze of blown sand.
+        inDesert -> 0.06f
         dungeon.biome == Biome.CAVE -> 0.2f
         dungeon.biome == Biome.CRYPT -> 0.12f
         else -> 0.1f
@@ -302,19 +324,28 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     /** Monster level out in the open grows with the distance from the village. */
     fun zoneLevel(x: Float, y: Float): Int {
-        val v = dungeon.village ?: return floor
+        val v = dungeon.village ?: return dangerLevel
         return (1 + hypot(x - v.cx, y - v.cy) / 11f).toInt().coerceIn(1, 5)
     }
 
-    private fun levelHere(x: Float = player.x, y: Float = player.y) = if (inWorld) zoneLevel(x, y) else floor
+    private fun levelHere(x: Float = player.x, y: Float = player.y) = if (inWorld) zoneLevel(x, y) else dangerLevel
 
     // ---------------------------------------------------------------- floors & saving
 
     fun enterFloor(target: Int) {
         fade = 1f
         floor = target
+        // Desert floors are below zero, so they never count as the deepest dungeon floor reached.
         if (floor > deepest) deepest = floor
-        dungeon = if (floor == 0) Dungeon.overworld(worldSeed) else Dungeon.generate(rnd, Biome.forFloor(floor))
+        dungeon = when {
+            floor == 0 -> Dungeon.overworld(worldSeed)
+            inDesert -> Dungeon.desert(rnd, desertDepth(floor))
+            else -> Dungeon.generate(rnd, Biome.forFloor(floor))
+        }
+        heroPoison = 0f
+        heroPoisonDps = 0f
+        // The rain of the wilds does not follow the hero into the desert.
+        if (inDesert) rain = 0f
         explored = BooleanArray(dungeon.w * dungeon.h)
         exploredVersion++
         enemies.clear()
@@ -343,24 +374,26 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             placeWorldShards()
             showMessage("The Village — a moment of peace", Color(0xFFFFE0A3))
         } else {
-            val pool = spawnPool()
-            for (room in dungeon.rooms) {
-                if (room === dungeon.start) continue
-                repeat(rnd.nextInt(2, 5) + floor / 3) {
-                    val ex = room.x + 0.5f + rnd.nextInt(room.w)
-                    val ey = room.y + 0.5f + rnd.nextInt(room.h)
-                    if (dungeon.walkableAt(ex, ey)) {
-                        enemies += spawn(pool.random(rnd), ex, ey, floor, elite = floor >= 2 && rnd.nextFloat() < 0.07f)
+            if (inDesert) populateDesert() else {
+                val pool = spawnPool()
+                for (room in dungeon.rooms) {
+                    if (room === dungeon.start) continue
+                    repeat(rnd.nextInt(2, 5) + floor / 3) {
+                        val ex = room.x + 0.5f + rnd.nextInt(room.w)
+                        val ey = room.y + 0.5f + rnd.nextInt(room.h)
+                        if (dungeon.walkableAt(ex, ey)) {
+                            enemies += spawn(pool.random(rnd), ex, ey, floor, elite = floor >= 2 && rnd.nextFloat() < 0.07f)
+                        }
                     }
                 }
             }
             placeFloorShard()
             val bossType = bossFor(floor)
             if (bossType != null) {
-                enemies += Enemy(bossType, dungeon.exit.cx + 0.5f, dungeon.exit.cy - 0.5f, floor)
-                showMessage("${dungeon.biome.title} — depth $floor\n${bossType.label} awaits…", HURT_COLOR)
+                enemies += Enemy(bossType, dungeon.exit.cx + 0.5f, dungeon.exit.cy - 0.5f, dangerLevel)
+                showMessage("${dungeon.biome.title} — depth $depth\n${bossType.label} awaits…", HURT_COLOR)
             } else {
-                showMessage("${dungeon.biome.title} — depth $floor", Color.White)
+                showMessage("${dungeon.biome.title} — depth $depth", Color.White)
             }
         }
         save()
@@ -392,7 +425,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     /** Every dungeon depth hides one fragment in a room far from the stairs down. */
     private fun placeFloorShard() {
-        val key = "f$floor"
+        val key = if (inDesert) "s$depth" else "f$floor"
         if (key in shardsFound) return
         val start = dungeon.start
         val room = dungeon.rooms.filter { it !== start && it.w >= 3 && it.h >= 3 }
@@ -417,8 +450,12 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             val nearWater = (-2..2).any { dy -> (-2..2).any { dx -> d.tile(x + dx, y + dy) == WATER } }
             val nearTrees = (-2..2).count { dy -> (-2..2).count { dx -> d.tile(x + dx, y + dy) == TREE } > 0 } >= 3
             val nearCrypt = hypot(x - 14f, y - 15f) < 12f
+            // Scorpions crawl out of the sands once the way to the desert is open.
+            val nearDesert = questStage >= Region.DESERT.quest &&
+                d.entrances.any { it.region == Region.DESERT && hypot(x - it.x.toFloat(), y - it.y.toFloat()) < 9f }
             val type = when {
                 nearCrypt -> EnemyType.SKELETON
+                nearDesert -> EnemyType.SCORPION
                 nearWater -> EnemyType.SLIME
                 nearTrees && rnd.nextFloat() < 0.4f -> EnemyType.WOLF
                 nearTrees && rnd.nextBoolean() -> EnemyType.GOBLIN
@@ -467,9 +504,44 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         Biome.CAVE -> listOf(EnemyType.SPIDER, EnemyType.SPIDER, EnemyType.BAT, EnemyType.SLIME, EnemyType.BRUTE, EnemyType.WOLF)
         Biome.HELL -> listOf(EnemyType.CULTIST, EnemyType.IMP, EnemyType.IMP, EnemyType.BRUTE, EnemyType.SKELETON, EnemyType.GHOST, EnemyType.BAT)
         Biome.OVERWORLD -> listOf(EnemyType.BANDIT)
+        // Out on the open sand; raiders are bandits and the jackals wolves.
+        Biome.DESERT -> buildList {
+            addAll(listOf(EnemyType.SCORPION, EnemyType.SCORPION, EnemyType.SCORPION, EnemyType.DJINN, EnemyType.MUMMY))
+            addAll(listOf(EnemyType.BANDIT, EnemyType.WOLF, EnemyType.WOLF))
+            if (depth >= 2) { add(EnemyType.DJINN); add(EnemyType.MUMMY) }
+        }
+    }
+
+    /**
+     * Packs in the Scorched Sands by where they lair: mummies in the temples, raiders and jackals at the oasis,
+     * scorpions and djinn out on the open sand. None wait right where the hero arrives.
+     */
+    private fun populateDesert() {
+        val d = dungeon
+        val lvl = dangerLevel
+        val pool = spawnPool()
+        val ground = d.ground
+        for (room in d.rooms) {
+            if (room === d.start) continue
+            val ruin = room !== d.exit && ground != null && ground[room.cy * d.w + room.cx] == DesertGround.PAVING
+            val oasis = (room.y until room.y + room.h).any { yy -> (room.x until room.x + room.w).any { xx -> d.tile(xx, yy) == WATER } }
+            val lair = when {
+                ruin -> listOf(EnemyType.MUMMY, EnemyType.MUMMY, EnemyType.SCORPION, EnemyType.DJINN)
+                oasis -> listOf(EnemyType.BANDIT, EnemyType.BANDIT, EnemyType.WOLF)
+                else -> pool
+            }
+            repeat(rnd.nextInt(2, 5) + lvl / 3) {
+                val ex = room.x + 0.5f + rnd.nextInt(room.w)
+                val ey = room.y + 0.5f + rnd.nextInt(room.h)
+                if (d.walkableAt(ex, ey) && hypot(ex - player.x, ey - player.y) > 9f) {
+                    enemies += spawn(lair.random(rnd), ex, ey, lvl, elite = rnd.nextFloat() < 0.07f)
+                }
+            }
+        }
     }
 
     private fun bossFor(f: Int): EnemyType? = when {
+        isDesertFloor(f) -> if (f == DESERT_LAST) EnemyType.SAND_PHARAOH else null
         f == 3 -> EnemyType.SKELETON_KING
         f == 6 -> EnemyType.SPIDER_QUEEN
         f == 9 -> EnemyType.DEMON_LORD
@@ -645,7 +717,10 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             if (messageTimer <= 0f) showMessage("${e.region.title} is sealed — ${e.region.lockText}", HURT_COLOR)
             return
         }
-        val target = if (deepest >= e.region.firstFloor) {
+        val target = if (e.region == Region.DESERT) {
+            // The desert keeps no record of the deepest floor, so every crossing starts at its first depth.
+            DESERT_FIRST
+        } else if (deepest >= e.region.firstFloor) {
             val last = if (e.region == Region.HELL) Int.MAX_VALUE else e.region.firstFloor + 2
             min(deepest, last)
         } else {
@@ -939,9 +1014,16 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 if (messageTimer <= 0f) showMessage("Defeat ${boss!!.type.label} first!", HURT_COLOR)
             } else {
                 sfx.stairs()
-                enterFloor(floor + 1)
+                enterFloor(nextFloor())
             }
         }
+    }
+
+    /** Where the stairs lead: one floor deeper, deeper into the desert, or home once the pharaoh's court is cleared. */
+    private fun nextFloor(): Int = when {
+        !inDesert -> floor + 1
+        floor == DESERT_LAST -> 0
+        else -> floor - 1
     }
 
     private fun dist(e: Enemy) = hypot(e.x - player.x, e.y - player.y)
@@ -1366,6 +1448,11 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 zi.remove()
                 continue
             }
+            // The pharaoh's sandstorm hurts the hero, not monsters.
+            if (z.kind == ZoneKind.SANDSTORM) {
+                sandstorm(z, dt)
+                continue
+            }
             z.tick -= dt
             if (z.tick > 0f) continue
             z.tick = 0.5f
@@ -1548,11 +1635,12 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             if (questStage >= 1 || deepest >= 3) addAll(listOf(EnemyType.SPIDER, EnemyType.CULTIST, EnemyType.BRUTE))
             if (questStage >= 1) add(EnemyType.GHOST)
             if (questStage >= 2) { add(EnemyType.BAT); add(EnemyType.IMP) }
+            if (questStage >= Region.DESERT.quest) { add(EnemyType.SCORPION); add(EnemyType.MUMMY) }
         }.shuffled(rnd).take(3)
         for (t in pool) {
             val need = when (t) {
                 EnemyType.BRUTE -> rnd.nextInt(4, 8)
-                EnemyType.CULTIST -> rnd.nextInt(6, 11)
+                EnemyType.CULTIST, EnemyType.MUMMY -> rnd.nextInt(6, 11)
                 else -> rnd.nextInt(10, 21)
             }
             val lvl = max(1, max(deepest, player.level / 2))
@@ -1724,9 +1812,15 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         EnemyType.GHOST -> Color(0xFFB3E5FC)
         EnemyType.IMP -> Color(0xFFFF6E40)
         EnemyType.DEMON_LORD, EnemyType.SHADOW_KING -> Color(0xFFFF5722)
+        EnemyType.SCORPION -> Color(0xFFC0CA33)
+        EnemyType.MUMMY -> Color(0xFFD7C9A7)
+        EnemyType.DJINN -> Color(0xFF4FC3F7)
+        EnemyType.SAND_PHARAOH -> Color(0xFFFFD54F)
     }
 
-    private fun bleeds(t: EnemyType) = t != EnemyType.SKELETON && t != EnemyType.SKELETON_KING && t != EnemyType.SLIME && t != EnemyType.GHOST
+    /** Whether a kill leaves blood on the ground; bones, slime, spirits and the desert's dead and dust do not. */
+    private fun bleeds(t: EnemyType) = t != EnemyType.SKELETON && t != EnemyType.SKELETON_KING && t != EnemyType.SLIME && t != EnemyType.GHOST &&
+        t != EnemyType.SCORPION && t != EnemyType.MUMMY && t != EnemyType.DJINN && t != EnemyType.SAND_PHARAOH
 
     private fun damageEnemy(e: Enemy, base: Float, knock: Float, forceCrit: Boolean = false) {
         if (e.shield > 0f) {
@@ -1850,6 +1944,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 questStage++
                 showMessage("${e.type.label} is defeated!\nQuest complete: ${QUESTS[idx].first}", GOLD)
                 if (questStage == QUESTS.size) victory = true
+            } else if (e.type == EnemyType.SAND_PHARAOH) {
+                showMessage("${e.type.label} is defeated!\nThe treasure of his tomb is yours", GOLD)
             } else {
                 showMessage("${e.type.label} is defeated!", GOLD)
             }
@@ -1939,6 +2035,16 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 dropGear(e.x, e.y, makeItem(lvl + player.level / 2, min, boss))
             }
         }
+        if (e.type == EnemyType.SAND_PHARAOH) pharaohHoard(e)
+    }
+
+    /** The Sand Pharaoh's treasure: a sure legendary (one time in five mythic) and a fortune in gold. */
+    private fun pharaohHoard(e: Enemy) {
+        val rarity = if (rnd.nextFloat() < 0.2f) Rarity.MYTHIC else Rarity.LEGENDARY
+        dropGear(e.x, e.y, makeItem(e.level + player.level / 2 + 2, rarity, true, exact = true))
+        repeat(8) { loot += pop(Loot(e.x, e.y, LootKind.Gold(goldAmount(rnd.nextInt(40, 81) * e.level))), 1.6f) }
+        repeat(2) { loot += pop(Loot(e.x, e.y, LootKind.Potion)) }
+        ring(e.x, e.y, 0.4f, GOLD, 48, 5f)
     }
 
     /**
@@ -2083,7 +2189,61 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     // ---------------------------------------------------------------- world simulation
 
+    /** A scorpion's sting: the venom lasts a few seconds; a fresh sting refreshes it and keeps the stronger dose. */
+    private fun poisonHero(dps: Float) {
+        if (heroPoison <= 0f) heroPoisonTick = 0.5f
+        heroPoison = 3.5f
+        heroPoisonDps = max(heroPoisonDps, dps)
+        burst(player.x, player.y - 0.4f, STING_GREEN, 8, glow = true)
+    }
+
+    /** Venom ticks twice a second, past armour; it can bring the hero low but never kills. */
+    private fun updateHeroPoison(dt: Float) {
+        if (heroPoison <= 0f) return
+        heroPoison -= dt
+        heroPoisonTick -= dt
+        if (rnd.nextFloat() < dt * 8f) particles += Particle(player.x + jitter(), player.y, 0f, -0.5f, STING_GREEN, 0.05f, 0.6f, glow = true, z = 0.6f)
+        if (heroPoisonTick <= 0f) {
+            heroPoisonTick = 0.5f
+            val dmg = heroPoisonDps * 0.5f * player.damageTaken
+            if (player.hp > 1f && dmg > 0f) {
+                player.hp = max(1f, player.hp - dmg)
+                player.sinceHurt = 0f
+                texts += FloatText(player.x, player.y - 1.2f, "-${max(1, dmg.roundToInt())}", STING_GREEN)
+            }
+        }
+        if (heroPoison <= 0f) {
+            heroPoison = 0f
+            heroPoisonDps = 0f
+        }
+    }
+
+    /** A djinn the hero closes in on vanishes in smoke and reappears a few tiles away. Returns true when it blinked. */
+    private fun djinnBlink(e: Enemy, d: Float, dt: Float): Boolean {
+        e.blinkCd -= dt
+        if (d > 2.4f || e.blinkCd > 0f) return false
+        for (k in 0 until 10) {
+            val ang = rnd.nextFloat() * 6.283f
+            val nx = player.x + cos(ang) * 4.6f
+            val ny = player.y + sin(ang) * 4.6f
+            if (dungeon.walkableAt(nx, ny) && !blocked(nx, ny, e.type.radius)) {
+                particles += Particle(e.x, e.y, 0f, -0.6f, Color(0x9990A4AE), 0.35f, 0.9f, z = 0.6f, soft = true)
+                burst(e.x, e.y - 0.4f, Color(0xFF4FC3F7), 12, glow = true)
+                e.x = nx
+                e.y = ny
+                burst(e.x, e.y - 0.4f, Color(0xFFFF9100), 12, glow = true)
+                sfx.portal()
+                e.blinkCd = 5f + rnd.nextFloat() * 2f
+                e.cooldown = min(e.cooldown, 0.4f)
+                return true
+            }
+        }
+        e.blinkCd = 1f
+        return false
+    }
+
     private fun updateEnemies(dt: Float) {
+        updateHeroPoison(dt)
         val spawned = mutableListOf<Enemy>()
         val iter = enemies.iterator()
         while (iter.hasNext()) {
@@ -2161,7 +2321,15 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             if (e.windup > 0f) {
                 e.windup -= dt
                 if (e.windup <= 0f) {
-                    if (e.type.ranged) {
+                    if (e.type == EnemyType.DJINN) {
+                        // A fan of three fire bolts.
+                        val base = atan2(e.faceY, e.faceX)
+                        for (a in listOf(-0.22f, 0f, 0.22f)) {
+                            projectiles += Projectile(e.x, e.y, cos(base + a) * 6.5f, sin(base + a) * 6.5f, e.dmg * 0.55f, hostile = true,
+                                color = Color(0xFFFF9100), life = 2.2f, radius = 0.15f)
+                        }
+                        sfx.fireball()
+                    } else if (e.type.ranged) {
                         projectiles += Projectile(e.x, e.y, e.faceX * 6f, e.faceY * 6f, e.dmg, hostile = true,
                             color = if (e.type == EnemyType.IMP) Color(0xFFFF6D00) else Color(0xFFD500F9), life = 2.5f, radius = 0.16f)
                         sfx.fireball()
@@ -2171,7 +2339,10 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                         e.ky += e.faceY * 9f
                         if (d <= e.type.range + 1.2f) hurtPlayer(e.dmg, e)
                     } else if (d <= e.type.range * e.size + 0.5f) {
+                        val before = player.hp
                         hurtPlayer(e.dmg, e)
+                        // A scorpion's sting poisons, unless the hero dodged it.
+                        if (e.type == EnemyType.SCORPION && player.hp < before) poisonHero(e.dmg * 0.45f)
                     }
                     e.cooldown = e.attackCooldown
                 }
@@ -2191,6 +2362,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             }
 
             if (e.type.ranged) {
+                if (e.type == EnemyType.DJINN && djinnBlink(e, d, dt)) continue
                 if (d < 7f && e.cooldown <= 0f) {
                     e.windup = e.type.windup
                     continue
@@ -2315,8 +2487,10 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             EnemyType.SPIDER_QUEEN -> Triple(8, Color(0xFF76FF03), 4.2f)
             EnemyType.DEMON_LORD -> Triple(10, Color(0xFFFF3D00), 3.5f)
             EnemyType.SHADOW_KING -> Triple(14, Color(0xFFAA00FF), 3f)
+            EnemyType.SAND_PHARAOH -> Triple(12, Color(0xFFFFC400), 4.4f)
             else -> null
         }
+        if (e.type == EnemyType.SAND_PHARAOH) pharaohStorm(e, dt)
         if (volley != null && e.special <= 0f) {
             e.special = volley.third
             sfx.fireball()
@@ -2336,6 +2510,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             EnemyType.SKELETON_KING -> EnemyType.SKELETON
             EnemyType.SPIDER_QUEEN -> EnemyType.SPIDER
             EnemyType.SHADOW_KING -> EnemyType.CULTIST
+            // The pharaoh raises his dead or calls scorpions out of the sand.
+            EnemyType.SAND_PHARAOH -> if (rnd.nextBoolean()) EnemyType.MUMMY else EnemyType.SCORPION
             else -> null
         }
         if (minion != null && e.summon <= 0f && enemies.size + spawned.size < 90) {
@@ -2350,6 +2526,46 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 }
             }
         }
+    }
+
+    /**
+     * The Sand Pharaoh's sandstorm rises where the hero stands every few seconds, and faster once he is below half
+     * his life, when he also calls his volleys and minions sooner. He never has champion affixes, so the blink timer
+     * paces the storms.
+     */
+    private fun pharaohStorm(e: Enemy, dt: Float) {
+        val enraged = e.hp < e.maxHp * 0.5f
+        if (enraged) {
+            e.special -= dt * 0.4f
+            e.summon -= dt * 0.4f
+        }
+        e.blinkCd -= dt
+        if (e.blinkCd > 0f || hypot(player.x - e.x, player.y - e.y) > 11f) return
+        e.blinkCd = if (enraged) 5f else 7.5f
+        zones += Zone(player.x, player.y, SANDSTORM_RADIUS, 5f, ZoneKind.SANDSTORM, e.dmg * 0.4f)
+        ring(player.x, player.y, 0.5f, SAND_DUST, 30, 3f)
+        texts += FloatText(e.x, e.y - 2f, "Sandstorm!", SAND_DUST)
+        shake = max(shake, 0.4f)
+        sfx.rumble(60, 120)
+    }
+
+    /**
+     * Sand whirls inside a sandstorm. Once it has gathered (after [SANDSTORM_WARN] s) it scours the hero twice a
+     * second while he stays inside; monsters are unharmed.
+     */
+    private fun sandstorm(z: Zone, dt: Float) {
+        if (particles.size < 500 && rnd.nextFloat() < 0.9f) {
+            val a = rnd.nextFloat() * 2f * PI.toFloat()
+            val r = rnd.nextFloat() * z.radius
+            particles += Particle(
+                z.x + cos(a) * r, z.y + sin(a) * r * 0.7f, -sin(a) * 2.6f, cos(a) * 1.8f, SAND_DUST.copy(alpha = 0.7f),
+                0.06f, 0.7f, z = 0.2f + rnd.nextFloat() * 1.2f, soft = rnd.nextBoolean(),
+            )
+        }
+        z.tick -= dt
+        if (z.tick > 0f) return
+        z.tick = 0.5f
+        if (z.age > SANDSTORM_WARN && hypot(player.x - z.x, player.y - z.y) < z.radius) hurtPlayer(z.dps * 0.5f)
     }
 
     private fun updateProjectiles(dt: Float) {
@@ -2450,7 +2666,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         revealedX = px
         revealedY = py
         revealedIn = explored
-        val r = if (inWorld) 9 else 7
+        val r = if (outdoors) 9 else 7
         for (y in py - r..py + r) for (x in px - r..px + r) {
             if (x in 0 until dungeon.w && y in 0 until dungeon.h && (x - px) * (x - px) + (y - py) * (y - py) <= r * r) {
                 val i = y * dungeon.w + x
