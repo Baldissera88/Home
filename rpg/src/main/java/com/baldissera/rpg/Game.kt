@@ -236,6 +236,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     val nearMerchant: Boolean get() = dungeon.hasMerchant && hypot(player.x - merchantX, player.y - merchantY) < 1.6f
     /** Keys of the heart fragments found so far ("w3" out in the world, "f5" on dungeon depth 5). */
     val shardsFound = mutableSetOf<String>()
+    /** Names of the boss types slain at least once; the first kill of each is worth a skill point. */
+    val bossesSlain = mutableSetOf<String>()
 
     /** Items kept in the stash chest in the village. */
     val stash = mutableListOf<Item>()
@@ -486,6 +488,9 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         o.put("stash", JSONArray().apply { stash.forEach { put(it.toJson()) } })
         o.put("shards", JSONArray().apply { shardsFound.forEach { put(it) } })
         o.put("skills", JSONObject().apply { player.skills.forEach { (s, l) -> put(s.name, l) } })
+        o.put("talents", JSONObject().apply { for (t in Talent.entries) if (player.talentRank(t) > 0) put(t.name, player.talentRank(t)) })
+        o.put("loadout", JSONArray().apply { player.loadout.forEach { put(it?.name ?: "") } })
+        o.put("bosses", JSONArray().apply { bossesSlain.forEach { put(it) } })
         bounty?.let { o.put("bounty", it.toJson()) }
         prefs.edit().putString("save3", o.toString()).apply()
     }
@@ -521,11 +526,29 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             val cls = HeroClass.entries.firstOrNull { it.name == o.optString("class") }
             player.heroClass = cls ?: HeroClass.KNIGHT
             player.skills.clear()
-            player.heroClass.skills.forEachIndexed { i, s -> player.skills[s] = saved.getValue(s).coerceAtLeast(if (i < 2) 1 else 0) }
+            player.heroClass.allSkills.forEachIndexed { i, s -> player.skills[s] = saved.getValue(s).coerceAtLeast(if (i < 2) 1 else 0) }
             if (cls == null) {
                 // A hero from before classes: becomes a knight and gets back the points spent on spells.
-                val spent = saved.filterKeys { it !in player.heroClass.skills }.values.sum()
+                val spent = saved.filterKeys { it !in player.heroClass.allSkills }.values.sum()
                 player.skillPoints += (spent - 1).coerceAtLeast(0)
+            }
+            // The skill tree: talents, the skills on the HUD buttons and the bosses already slain (older saves have none).
+            val tree = SkillTree.of(player.heroClass)
+            player.clearTalents()
+            val tal = o.optJSONObject("talents")
+            if (tal != null) for (t in Talent.entries) if (tal.has(t.name) && tree.node(t) != null) player.setTalent(t, tal.optInt(t.name))
+            val lo = o.optJSONArray("loadout")
+            for (i in 0 until LOADOUT_SIZE) {
+                val name = lo?.optString(i) ?: ""
+                player.loadout[i] = if (lo == null) player.heroClass.skills.getOrNull(i) else player.heroClass.allSkills.firstOrNull { it.name == name }
+            }
+            bossesSlain.clear()
+            o.optJSONArray("bosses")?.let { a -> for (i in 0 until a.length()) bossesSlain += a.getString(i) }
+            if (tal == null) {
+                // A hero from before the skill tree gets the points it would have earned since: a bonus every fifth level
+                // and one for each quest boss already beaten.
+                player.skillPoints += player.level / 5
+                for (b in questBosses.take(questStage)) if (bossesSlain.add(b.name)) player.skillPoints++
             }
             player.hp = player.maxHp
             player.mana = player.maxMana
@@ -553,7 +576,12 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         shardsFound.clear()
         player.hearts = 0
         player.skills.clear()
-        heroClass.skills.forEachIndexed { i, sk -> player.skills[sk] = if (i < 2) 1 else 0 }
+        heroClass.allSkills.forEachIndexed { i, sk -> player.skills[sk] = if (i < 2) 1 else 0 }
+        player.clearTalents()
+        player.resetLoadout()
+        player.hitCount = 0
+        player.undyingCd = 0f
+        bossesSlain.clear()
         when (heroClass) {
             HeroClass.KNIGHT -> {
                 player.equipment[Slot.WEAPON] = Item(Slot.WEAPON, "Rusty Sword", Rarity.COMMON, Icons.SWORD, 1, damage = 2)
@@ -832,7 +860,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             if (rnd.nextFloat() < dt * 12f) particles += Particle(p.x + jitter(), p.y, 0f, -0.4f, Color(0xFFB3E5FC), 0.05f, 0.6f, z = 0.6f)
         }
         p.sinceHurt += dt
-        for (e in p.cooldowns.entries) e.setValue(max(0f, e.value - dt))
+        for (e in p.cooldowns.entries) e.setValue(max(0f, e.value - dt * p.cooldownRate))
+        if (p.undyingCd > 0f) p.undyingCd -= dt
         if (p.buffTime > 0f) {
             p.buffTime -= dt
             if (p.buffTime <= 0f) p.buff = null
@@ -1219,6 +1248,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 burst(p.x, p.y - 0.5f, Color(0xFF9CCC65), 20, glow = true)
                 sfx.potion()
             }
+            else -> {} // implemented by the class skill agents
         }
     }
 
@@ -1376,7 +1406,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             p.hp >= p.maxHp -> showMessage("You are at full health", Color.White)
             else -> {
                 p.potions--
-                p.hp = min(p.maxHp, p.hp + p.maxHp * 0.5f)
+                p.hp = min(p.maxHp, p.hp + p.maxHp * 0.5f * p.potionMult)
                 sfx.potion()
                 burst(p.x, p.y, Color(0xFFFF5370), 22, glow = true)
                 save()
@@ -1558,13 +1588,71 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         return item
     }
 
+    /** Puts a skill point into [skill] if the skill tree allows it. */
     fun learn(skill: Skill) {
+        SkillTree.of(player.heroClass).node(skill)?.let { learnNode(it) }
+    }
+
+    /** Puts a skill point into talent [t] if the skill tree allows it. */
+    fun learnTalent(t: Talent) {
+        SkillTree.of(player.heroClass).node(t)?.let { learnNode(it) }
+    }
+
+    /** A point can go into [node] now: one is free, the node is not maxed and its level and parent requirements are met. */
+    fun canLearn(node: TreeNode): Boolean = player.skillPoints > 0 && node.rank(player) < node.maxRank && node.unlocked(player)
+
+    fun learnNode(node: TreeNode): Boolean {
+        if (!canLearn(node)) return false
         val p = player
-        val lvl = p.skills[skill] ?: 0
-        if (p.skillPoints <= 0 || lvl >= 5) return
-        p.skills[skill] = lvl + 1
+        val rank = node.rank(p) + 1
+        val s = node.skill
+        val t = node.talent
+        if (s != null) p.skills[s] = rank else if (t != null) p.setTalent(t, rank)
         p.skillPoints--
         sfx.levelUp()
+        save()
+        return true
+    }
+
+    /** Gold a skill reset costs. */
+    val resetPrice: Int get() = 50 * player.level
+
+    /** Points a reset would give back: every rank in the tree except the free first ranks of the two starting skills. */
+    fun spentPoints(): Int {
+        val p = player
+        val free = p.heroClass.skills.take(2)
+        var n = p.talentPoints
+        for ((s, r) in p.skills) n += r - (if (s in free) min(r, 1) else 0)
+        return n
+    }
+
+    /** Pays [resetPrice] to take every point out of the tree and give it back. */
+    fun resetSkills(): Boolean {
+        val p = player
+        val refund = spentPoints()
+        if (refund <= 0 || p.gold < resetPrice) return false
+        p.gold -= resetPrice
+        p.skills.clear()
+        p.heroClass.allSkills.forEachIndexed { i, sk -> p.skills[sk] = if (i < 2) 1 else 0 }
+        p.clearTalents()
+        p.resetLoadout()
+        p.skillPoints += refund
+        p.hp = min(p.hp, p.maxHp)
+        p.mana = min(p.mana, p.maxMana)
+        sfx.portal()
+        showMessage("Skills reset: $refund points to spend again ✨", GOLD)
+        save()
+        return true
+    }
+
+    /** Puts a learned active on HUD button [slot] (0-3); if it already sits on another button the two swap. */
+    fun equipSkill(skill: Skill, slot: Int) {
+        val p = player
+        if (slot !in 0 until LOADOUT_SIZE || (p.skills[skill] ?: 0) <= 0 || skill !in p.heroClass.allSkills) return
+        val from = p.loadout.indexOf(skill)
+        if (from >= 0) p.loadout[from] = p.loadout[slot]
+        p.loadout[slot] = skill
+        sfx.equip()
         save()
     }
 
@@ -1647,9 +1735,13 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             }
             return
         }
-        val crit = forceCrit || player.stealth > 0f || rnd.nextInt(100) < player.critChance
+        // Relentless: every fifth hit is a sure critical.
+        val sure = player.relentless && ++player.hitCount >= 5
+        if (sure) player.hitCount = 0
+        val crit = sure || forceCrit || player.stealth > 0f || rnd.nextInt(100) < player.critChance
         if (player.stealth > 0f) player.stealth = 0f
-        val dmg = base * (0.85f + rnd.nextFloat() * 0.3f) * (if (crit) 2f else 1f)
+        val execute = if (player.executioner && e.hp < e.maxHp * 0.3f) 1.5f else 1f
+        val dmg = base * (0.85f + rnd.nextFloat() * 0.3f) * (if (crit) player.critMult else 1f) * execute
         e.hp -= dmg
         e.flash = 0.12f
         e.aggro = true
@@ -1680,6 +1772,13 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         if (from != null) championHit(from, raw)
         var dmg = raw * 100f / (100f + player.armorValue * 4f)
         dmg *= player.damageTaken
+        if (player.lastStand && player.hp < player.maxHp * 0.35f) dmg *= 0.6f
+        if (player.manaShield) {
+            val absorbed = min(dmg * 0.3f, player.mana)
+            player.mana -= absorbed
+            dmg -= absorbed
+        }
+        if (from != null && player.thorns > 0f && from.hp > 0f) damageEnemy(from, raw * player.thorns, 0f)
         player.hp -= dmg
         player.hurt = 0.3f
         player.sinceHurt = 0f
@@ -1689,6 +1788,15 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         texts += FloatText(player.x, player.y - 1.2f, "-${dmg.roundToInt()}", HURT_COLOR)
         burst(player.x, player.y + 0.1f, Color(0xFF8E1B1B), 4)
         if (player.hp <= 0f) {
+            if (player.undying && player.undyingCd <= 0f) {
+                player.undyingCd = 90f
+                player.hp = 1f
+                player.fury = max(player.fury, 4f)
+                ring(player.x, player.y, 0.3f, Color(0xFFFF5252), 40, 4f)
+                sfx.levelUp()
+                showMessage("Undying Rage!", Color(0xFFFF5252))
+                return
+            }
             if (player.has(Power.PHOENIX) && !player.phoenixUsed) {
                 player.phoenixUsed = true
                 player.hp = player.maxHp * 0.5f
@@ -1718,6 +1826,12 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         burst(e.x, e.y, bloodColor(e.type), 20)
         if (bleeds(e.type)) addDecal(e.x, e.y, rnd.nextInt(4), 0.9f * e.size * (if (e.type.boss) 2f else 1f))
         if (player.has(Power.VAMPIRE)) player.hp = min(player.maxHp, player.hp + player.maxHp * 0.05f)
+        if (player.soulHarvest > 0f) {
+            player.hp = min(player.maxHp, player.hp + player.maxHp * player.soulHarvest)
+            player.mana = min(player.maxMana, player.mana + player.maxMana * player.soulHarvest)
+        }
+        val firstSlain = e.type.boss && bossesSlain.add(e.type.name)
+        if (firstSlain) player.skillPoints++
         bounty?.let { b ->
             if (b.type == e.type && !b.done) {
                 b.got++
@@ -1741,6 +1855,10 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             burst(e.x, e.y, GOLD, 70, glow = true)
             save()
         }
+        if (firstSlain) {
+            showMessage("${message ?: "${e.type.label} is defeated!"}\n+1 skill point ✨ for a first victory", GOLD)
+            texts += FloatText(player.x, player.y - 2.1f, "+1 skill point", GOLD, big = true)
+        }
     }
 
     private fun gainXp(amount: Int) {
@@ -1750,12 +1868,19 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         while (p.xp >= p.xpToNext) {
             p.xp -= p.xpToNext
             p.level++
-            p.skillPoints++
+            // One point a level, and a bonus point every fifth level (which also opens a new tier of the skill tree).
+            val bonus = p.level % 5 == 0
+            p.skillPoints += if (bonus) 2 else 1
             p.hp = p.maxHp
             p.mana = p.maxMana
             levelFlash = 1.2f
             sfx.levelUp()
-            showMessage("Level ${p.level}! +1 skill point ✨", GOLD)
+            showMessage(
+                if (bonus) "Level ${p.level}! +2 skill points ✨\nBonus point every 5th level" +
+                    (if (p.level <= TIER_LEVELS.last()) " · new skill tier open" else "")
+                else "Level ${p.level}! +1 skill point ✨",
+                GOLD,
+            )
             ring(p.x, p.y, 0.3f, GOLD, 40, 4f)
             save()
         }

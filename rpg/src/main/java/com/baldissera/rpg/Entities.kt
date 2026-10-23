@@ -212,6 +212,43 @@ enum class Skill(val label: String, val icon: String, val mana: Float, val coold
     NOVA("Frost Nova", "❄️", 25f, 6f, Color(0xFF80DEEA), { l -> "Freezes every nearby enemy for ${"%.1f".format(2f + l * 0.5f)} s. ${100 + (l - 1) * 25}% damage." }),
     CHAIN("Chain Lightning", "⚡", 16f, 0.7f, Color(0xFF9FE7FF), { l -> "A bolt leaps between up to ${2 + l} enemies. ${110 + (l - 1) * 30}% damage." }),
     METEOR("Meteor", "☄️", 35f, 5f, Color(0xFFFF7043), { l -> "Call a meteor down on the nearest foe: a huge blast that leaves the ground burning. ${300 + (l - 1) * 60}% damage." }),
+
+    // Learned deeper in the skill tree (SkillTree.kt), four per class in the order of HeroClass.allSkills.
+    // Knight.
+    JUDGMENT("Hammer of Judgment", "🔨", 30f, 8f, Color(0xFFFFD54F), { l ->
+        "A giant hammer of light crashes down on the nearest foe, stunning everything around it. ${250 + (l - 1) * 50}% damage."
+    }),
+    LIGHT_LANCE("Lance of Light", "🌠", 22f, 4f, Color(0xFFFFF9C4), { l -> "A beam of holy light pierces everything in a line before you. ${180 + (l - 1) * 40}% damage." }),
+    BULWARK("Iron Bulwark", "🏰", 25f, 18f, Color(0xFF90A4AE), { l ->
+        "Brace behind your shield for ${3 + l} s: take ${50 + 4 * l}% less damage, taunt nearby enemies and reflect melee blows."
+    }),
+    HEAVENS_FURY("Heaven's Fury", "🌟", 50f, 30f, Color(0xFFFFF176), { l -> "For 4 s pillars of light strike the enemies around you. ${150 + (l - 1) * 35}% damage per strike." }),
+
+    // Barbarian.
+    HARPOON("Ancient Spear", "🔱", 15f, 5f, Color(0xFFBCAAA4), { l -> "Hurl a spear that drags the first enemy hit to you and stuns it. ${150 + (l - 1) * 30}% damage." }),
+    REND("Rend", "💢", 20f, 3f, Color(0xFFE53935), { l ->
+        "A wide cleave that makes enemies bleed for ${120 + (l - 1) * 30}% damage over 4 s. You heal a little for every bleeding foe."
+    }),
+    SEISMIC_SLAM("Seismic Slam", "🌋", 25f, 2.5f, Color(0xFFA1887F), { l -> "Send a shockwave rolling forward that knocks enemies back. ${170 + (l - 1) * 35}% damage." }),
+    AVALANCHE("Avalanche", "🏔️", 55f, 28f, Color(0xFFD7CCC8), { l -> "Boulders crash down in a wide cone in front of you. ${200 + (l - 1) * 40}% damage per boulder." }),
+
+    // Assassin.
+    BLADE_DANCE("Blade Dance", "🔪", 25f, 6f, Color(0xFFCE93D8), { l -> "Dash between up to 5 nearby enemies, striking each one. ${140 + (l - 1) * 30}% damage." }),
+    DEATH_TRAP("Death Trap", "💣", 20f, 4f, Color(0xFFFFB74D), { l ->
+        "Plant a trap (up to 3) that bursts into shrapnel when an enemy comes near. ${220 + (l - 1) * 45}% damage."
+    }),
+    MARK_FOR_DEATH("Mark for Death", "🎯", 15f, 10f, Color(0xFFFF5252), { l ->
+        "Mark the nearest foe: it takes +${40 + 4 * l}% damage for 8 s. Killing it gives your mana back."
+    }),
+    DEATH_BLOSSOM("Death Blossom", "🌸", 50f, 25f, Color(0xFFF48FB1), { l -> "For 3 s a whirling ring of blades shreds everything near you. ${80 + (l - 1) * 20}% damage per hit." }),
+
+    // Sorceress.
+    FROZEN_ORB("Frozen Orb", "💠", 25f, 3f, Color(0xFF81D4FA), { l ->
+        "A slow orb sprays ice shards in every direction, then bursts. ${60 + (l - 1) * 15}% damage per shard, and it chills."
+    }),
+    BLIZZARD("Blizzard", "🌨️", 35f, 8f, Color(0xFFB3E5FC), { l -> "Ice rains down on the target area for 5 s, slowing enemies. ${70 + (l - 1) * 18}% damage a second." }),
+    TELEPORT("Teleport", "💫", 15f, 4f, Color(0xFFB388FF), { l -> "Blink up to 6 tiles ahead, with an arcane burst where you leave and land. ${80 + (l - 1) * 20}% damage." }),
+    BLACK_HOLE("Black Hole", "🕳️", 60f, 30f, Color(0xFF7C4DFF), { l -> "Open a vortex that pulls enemies in for 3 s, then implodes. ${300 + (l - 1) * 60}% damage." }),
 }
 
 /** The playable classes. Each has its own look, weapons, strengths and four skills. */
@@ -265,6 +302,62 @@ enum class HeroClass(
         listOf(Skill.FIREBALL, Skill.CHAIN, Skill.NOVA, Skill.METEOR),
         60f, 10f, 70f, 8f, 1f, 0, 1f, 25, 1.7f, 0, listOf(2, 1, 3, 5), "🔮",
     ),
+    ;
+
+    /**
+     * All eight actives of the class: the four original [skills] (the first two are known from the start),
+     * then the four learned deeper in the skill tree.
+     */
+    val allSkills: List<Skill> by lazy {
+        skills + when (this) {
+            KNIGHT -> listOf(Skill.JUDGMENT, Skill.LIGHT_LANCE, Skill.BULWARK, Skill.HEAVENS_FURY)
+            BARBARIAN -> listOf(Skill.HARPOON, Skill.REND, Skill.SEISMIC_SLAM, Skill.AVALANCHE)
+            ASSASSIN -> listOf(Skill.BLADE_DANCE, Skill.DEATH_TRAP, Skill.MARK_FOR_DEATH, Skill.DEATH_BLOSSOM)
+            SORCERESS -> listOf(Skill.FROZEN_ORB, Skill.BLIZZARD, Skill.TELEPORT, Skill.BLACK_HOLE)
+        }
+    }
+}
+
+/**
+ * Passive talents bought with skill points in the skill tree (SkillTree.kt). Each rank adds [per]
+ * (a percentage) to one bonus; keystones have a single rank and a special effect instead.
+ * The effects are applied by Player's stat getters and by the combat code in Game.
+ */
+enum class Talent(val label: String, val icon: String, val maxRank: Int, val per: Float, val color: Color, private val text: String) {
+    MIGHT("Weapon Mastery", "💪", 5, 5f, Color(0xFFFF8A65), "+#% damage with attacks and skills"),
+    PRECISION("Precision", "👁️", 5, 2f, Color(0xFFFFE082), "+#% critical hit chance"),
+    CRIT_DAMAGE("Deadly Strikes", "💀", 5, 15f, Color(0xFFFFD54F), "Critical hits deal +#% damage"),
+    VITALITY("Vitality", "❤️", 5, 6f, Color(0xFFFF5370), "+#% maximum life"),
+    WISDOM("Wisdom", "🔷", 5, 8f, Color(0xFF64B5F6), "+#% maximum mana and mana regeneration"),
+    SWIFTNESS("Fleet Foot", "👟", 5, 4f, Color(0xFF81C784), "+#% movement speed"),
+    ALACRITY("Alacrity", "⏳", 5, 4f, Color(0xFF80DEEA), "Skill cooldowns run out #% faster"),
+    LEECH("Vampirism", "🦇", 5, 1f, Color(0xFFE53935), "#% of the damage you deal heals you"),
+    THORNS("Thorns", "🌵", 5, 20f, Color(0xFF9CCC65), "Monsters that strike you in melee take #% of the damage back"),
+    IRON_SKIN("Iron Skin", "⛓️", 5, 10f, Color(0xFFB0BEC5), "+#% armor"),
+    POTENCY("Blessed Draughts", "⚗️", 3, 20f, Color(0xFFFF80AB), "Potions heal #% more"),
+    GREED("Plunder", "💰", 3, 15f, Color(0xFFFFC94D), "+#% gold from monsters and chests"),
+    FEROCITY("Ferocity", "🐺", 5, 6f, Color(0xFFFFAB40), "+#% attack speed"),
+    SPELL_POWER("Spellcraft", "📖", 5, 8f, Color(0xFFCE93D8), "+#% spell damage"),
+    SOUL_HARVEST("Soul Harvest", "👻", 3, 2f, Color(0xFFB39DDB), "Every kill restores #% of your life and mana"),
+
+    // Keystones: one rank, at the end of a branch.
+    RELENTLESS("Relentless", "🔁", 1, 0f, Color(0xFFFFC94D), "Every 5th hit is a guaranteed critical hit"),
+    LAST_STAND("Last Stand", "⚓", 1, 0f, Color(0xFF90CAF9), "Below 35% life you take 40% less damage"),
+    BLOODLUST("Berserker's Blood", "👹", 1, 0f, Color(0xFFFF7043), "Up to +50% damage the more life you are missing"),
+    UNDYING("Undying Rage", "😡", 1, 0f, Color(0xFFFF5252), "A killing blow leaves you at 1 life and enraged for 4 s instead (once every 90 s)"),
+    EXECUTIONER("Executioner", "⚰️", 1, 0f, Color(0xFFB388FF), "+50% damage to enemies below 30% life"),
+    PYRO_PACT("Pyromancer's Pact", "💔", 1, 0f, Color(0xFFFF7A1A), "+35% spell damage, but 20% less maximum life"),
+    MANA_SHIELD("Mana Shield", "💎", 1, 0f, Color(0xFF80DEEA), "30% of the damage you take drains mana instead of life"),
+    ;
+
+    /** A one-rank talent with a special effect, at the end of a branch. */
+    val keystone: Boolean get() = per == 0f
+
+    /** What [rank] ranks give (rank 0 describes the first rank). */
+    fun describe(rank: Int): String = text.replace("#", Math.round(per * rank.coerceAtLeast(1)).toString())
+
+    /** The bonus of [rank] ranks as a fraction (three ranks of +5% give 0.15). */
+    fun bonus(rank: Int): Float = per * rank / 100f
 }
 
 /** Lasting ground effects: hallowed ground and the burning crater a meteor leaves. */
@@ -318,6 +411,12 @@ class Player : Body {
     val skills = mutableMapOf<Skill, Int>()
     val cooldowns = mutableMapOf<Skill, Float>()
     var skillPoints = 0
+    /** The skills on the HUD's four buttons (null leaves a button empty); set from the skill tree. */
+    val loadout = arrayOfNulls<Skill>(LOADOUT_SIZE)
+    /** Hits dealt since the last guaranteed critical of the Relentless keystone. */
+    var hitCount = 0
+    /** Seconds until the Undying Rage keystone can save the hero again. */
+    var undyingCd = 0f
     var swing = 0f
     var swingTime = 0.3f
     var whirl = 0f
@@ -367,24 +466,117 @@ class Player : Body {
     val leapZ: Float get() = if (leap > 0f) kotlin.math.sin((1f - leap / leapDur) * Math.PI.toFloat()) * 1.2f else 0f
     val busy: Boolean get() = spin > 0f || charge > 0f || leap > 0f
 
+    // ---- talents from the skill tree
+
+    /** Ranks of the passive talents by ordinal. Changed only through [setTalent] and [clearTalents], which refresh the bonuses below. */
+    private val talentRanks = IntArray(Talent.entries.size)
+    fun talentRank(t: Talent): Int = talentRanks[t.ordinal]
+    /** Points spent on talents. */
+    val talentPoints: Int get() = talentRanks.sum()
+
+    fun setTalent(t: Talent, rank: Int) {
+        talentRanks[t.ordinal] = rank.coerceIn(0, t.maxRank)
+        updateTalents()
+    }
+
+    fun clearTalents() {
+        talentRanks.fill(0)
+        updateTalents()
+    }
+
+    /** Puts the class's four original skills back on the HUD buttons. */
+    fun resetLoadout() {
+        for (i in 0 until LOADOUT_SIZE) loadout[i] = heroClass.skills.getOrNull(i)
+    }
+
+    // Talent bonuses, worked out once whenever a rank changes so the stat getters (read every frame) stay cheap.
+    var talentDamage = 1f
+        private set
+    var talentCrit = 0
+        private set
+    /** Damage multiplier of a critical hit. */
+    var critMult = 2f
+        private set
+    private var talentLife = 1f
+    private var talentMana = 1f
+    private var talentSpeed = 1f
+    private var talentArmor = 1f
+    private var talentLeech = 0
+    private var talentAtkSpeed = 0
+    private var talentGold = 0
+    private var talentSpell = 0
+    /** How much faster skill cooldowns run out (1 = normal). */
+    var cooldownRate = 1f
+        private set
+    /** Share of a melee blow sent back to the attacker. */
+    var thorns = 0f
+        private set
+    /** Potion healing multiplier. */
+    var potionMult = 1f
+        private set
+    /** Share of life and mana restored by each kill. */
+    var soulHarvest = 0f
+        private set
+    var relentless = false
+        private set
+    var lastStand = false
+        private set
+    var bloodlust = false
+        private set
+    var undying = false
+        private set
+    var executioner = false
+        private set
+    var manaShield = false
+        private set
+
+    private fun updateTalents() {
+        fun owns(t: Talent) = talentRanks[t.ordinal] > 0
+        fun frac(t: Talent) = t.bonus(talentRanks[t.ordinal])
+        fun pts(t: Talent) = Math.round(t.per * talentRanks[t.ordinal])
+        talentDamage = 1f + frac(Talent.MIGHT)
+        talentCrit = pts(Talent.PRECISION)
+        critMult = 2f + frac(Talent.CRIT_DAMAGE)
+        talentLife = 1f + frac(Talent.VITALITY) - (if (owns(Talent.PYRO_PACT)) 0.2f else 0f)
+        talentMana = 1f + frac(Talent.WISDOM)
+        talentSpeed = 1f + frac(Talent.SWIFTNESS)
+        talentArmor = 1f + frac(Talent.IRON_SKIN)
+        talentLeech = pts(Talent.LEECH)
+        talentAtkSpeed = pts(Talent.FEROCITY)
+        talentGold = pts(Talent.GREED)
+        talentSpell = pts(Talent.SPELL_POWER) + (if (owns(Talent.PYRO_PACT)) 35 else 0)
+        cooldownRate = 1f / (1f - frac(Talent.ALACRITY)).coerceAtLeast(0.5f)
+        thorns = frac(Talent.THORNS)
+        potionMult = 1f + frac(Talent.POTENCY)
+        soulHarvest = frac(Talent.SOUL_HARVEST)
+        relentless = owns(Talent.RELENTLESS)
+        lastStand = owns(Talent.LAST_STAND)
+        bloodlust = owns(Talent.BLOODLUST)
+        undying = owns(Talent.UNDYING)
+        executioner = owns(Talent.EXECUTIONER)
+        manaShield = owns(Talent.MANA_SHIELD)
+    }
+
     private fun sum(f: (Item) -> Int) = equipment.values.sumOf(f)
     fun has(p: Power) = equipment.values.any { it.power == p }
     val weaponKind: WeaponKind get() = WeaponKind.ofIcon(equipment[Slot.WEAPON]?.icon)
-    val maxHp: Float get() = heroClass.baseLife + level * heroClass.lifePerLevel + sum { it.life } + hearts * HEART_LIFE
-    val maxMana: Float get() = heroClass.baseMana + level * heroClass.manaPerLevel + sum { it.mana }
+    val maxHp: Float get() = (heroClass.baseLife + level * heroClass.lifePerLevel + sum { it.life } + hearts * HEART_LIFE) * talentLife
+    val maxMana: Float get() = (heroClass.baseMana + level * heroClass.manaPerLevel + sum { it.mana }) * talentMana
     val damage: Int get() {
-        val base = (6 + level * 2 + sum { it.damage }) * heroClass.damageMult
+        var base = (6 + level * 2 + sum { it.damage }) * heroClass.damageMult * talentDamage
+        // Berserker's Blood: up to +50% as life runs out.
+        if (bloodlust) base *= 1f + 0.5f * (1f - hp / maxHp).coerceIn(0f, 1f)
         return if (buff == Buff.MIGHT || fury > 0f) (base * 1.5f).toInt() else base.toInt()
     }
-    val armorValue: Int get() = level + heroClass.armorBonus * (1 + level / 4) + sum { it.armor }
-    val critChance: Int get() = 5 + heroClass.critBonus + sum { it.crit } + weaponKind.critBonus
-    val lifeSteal: Int get() = sum { it.lifeSteal }
-    val spellBonus: Int get() = heroClass.spellBonus + sum { it.spell } + weaponKind.spellBonus
-    val attackSpeed: Int get() = sum { it.atkSpeed } + (if (venom > 0f) 20 else 0)
-    val goldFind: Int get() = sum { it.goldFind } + (if (has(Power.GREED)) 100 else 0)
-    val manaRegen: Float get() = (5f + level * 0.3f) * heroClass.manaRegen
+    val armorValue: Int get() = ((level + heroClass.armorBonus * (1 + level / 4) + sum { it.armor }) * talentArmor).toInt()
+    val critChance: Int get() = 5 + heroClass.critBonus + sum { it.crit } + weaponKind.critBonus + talentCrit
+    val lifeSteal: Int get() = sum { it.lifeSteal } + talentLeech
+    val spellBonus: Int get() = heroClass.spellBonus + sum { it.spell } + weaponKind.spellBonus + talentSpell
+    val attackSpeed: Int get() = sum { it.atkSpeed } + (if (venom > 0f) 20 else 0) + talentAtkSpeed
+    val goldFind: Int get() = sum { it.goldFind } + (if (has(Power.GREED)) 100 else 0) + talentGold
+    val manaRegen: Float get() = (5f + level * 0.3f) * heroClass.manaRegen * talentMana
     val speed: Float get() = 3.4f * heroClass.speedMult * (1f + sum { it.speed } / 100f) * (if (buff == Buff.SWIFT) 1.35f else 1f) *
-        (if (chill > 0f) 0.6f else 1f) * (if (stealth > 0f) 1.3f else 1f)
+        (if (chill > 0f) 0.6f else 1f) * (if (stealth > 0f) 1.3f else 1f) * talentSpeed
     /** Fraction of incoming damage that gets through blessings and wards. */
     val damageTaken: Float get() = (if (buff == Buff.WARD) 0.6f else 1f) * (if (holy > 0f) 0.6f else 1f)
     val xpToNext: Int get() = 40 + level * level * 22
