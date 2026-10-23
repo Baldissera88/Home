@@ -2,9 +2,11 @@ package com.baldissera.rpg
 
 import androidx.compose.ui.graphics.Color
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 import kotlin.random.Random
 
 const val WALL = 0
@@ -26,6 +28,10 @@ object Ground {
 
 fun floorInt(f: Float): Int = kotlin.math.floor(f).toInt()
 
+/** Chance a desert tile starts out as open sand, and how strongly the large-scale noise pushes it either way. */
+private const val DESERT_OPEN = 0.6f
+private const val DESERT_BIAS = 0.6f
+
 enum class Biome(
     val title: String,
     val tex: String,
@@ -37,11 +43,14 @@ enum class Biome(
     CRYPT("The Crypt", "crypt", Color(0xFF020104), 0.88f, 0.12f),
     CAVE("The Caves", "cave", Color(0xFF010303), 0.88f, 0.08f),
     HELL("Hell", "hell", Color(0xFF1C0400), 0.8f, 0.08f),
+    /** Outdoors under the sun; the 2D fallback draws its cliffs with the cave textures. */
+    DESERT("The Scorched Sands", "cave", Color(0xFF2A1A08), 0.12f, 0f),
     ;
 
     companion object {
         fun forFloor(floor: Int) = when {
-            floor <= 0 -> OVERWORLD
+            floor < 0 -> DESERT
+            floor == 0 -> OVERWORLD
             floor <= 3 -> CRYPT
             floor <= 6 -> CAVE
             else -> HELL
@@ -49,11 +58,41 @@ enum class Biome(
     }
 }
 
+/**
+ * The Scorched Sands, an optional side region, number their floors below zero: the stairs of the main dungeon
+ * always lead to floor + 1, so its endless depths never run into the desert, and the desert never counts towards
+ * `deepest` (prices, merchant stock and the dungeon entrances stay as they were). Desert depth 1 is floor -1,
+ * depth 2 is -2, and the Sand Pharaoh holds court on depth 3 (-3).
+ */
+const val DESERT_FLOORS = 3
+const val DESERT_FIRST = -1
+const val DESERT_LAST = -DESERT_FLOORS
+/** Monster level on desert depth 1; each depth adds one, a match for dungeon floors 5 to 8. */
+const val DESERT_LEVEL = 5
+
+fun isDesertFloor(floor: Int) = floor in DESERT_LAST..DESERT_FIRST
+fun desertDepth(floor: Int) = -floor
+fun desertFloor(depth: Int) = -depth
+
 /** A dungeon entrance in the overworld. [quest] is the number of story bosses needed to enter. */
 enum class Region(val title: String, val firstFloor: Int, val quest: Int, val sprite: Int, val lockText: String) {
     CRYPT("The Crypt", 1, 0, 10, ""),
     CAVE("The Caves", 4, 1, 11, "Defeat the Skeleton King in the Crypt first"),
     HELL("The Gate of Hell", 7, 2, 12, "Defeat the Spider Queen in the Caves first"),
+    /** A side region off the main quest; opens with the caves, after the Skeleton King. */
+    DESERT("The Scorched Sands", DESERT_FIRST, 1, 11, "a sandstorm bars the way until the Skeleton King falls"),
+}
+
+/** Ground cells of a desert level (its Dungeon.ground); TerrainMap turns them into desert materials. */
+object DesertGround {
+    /** Oasis grass. Any cell below [HARDPAN] counts as grass, like the overworld's four grass cells. */
+    const val GRASS = 0
+    /** Rocky hardpan at the foot of the cliffs. */
+    const val HARDPAN = Ground.DIRT
+    /** Sandstone paving in the ruins. */
+    const val PAVING = Ground.DIRT + 1
+    /** Open sand; TerrainMap splits it into fine sand and rippled dunes. */
+    const val SAND = Ground.SAND
 }
 
 class Entrance(val x: Int, val y: Int, val region: Region)
@@ -254,7 +293,7 @@ class Dungeon(
                     }
                     if (isExit || rnd.nextFloat() < 0.3f) { put(PropType.ALTAR, r.cx, top); put(PropType.BANNER, r.cx - 2, top); put(PropType.BANNER, r.cx + 2, top) }
                 }
-                Biome.OVERWORLD -> {}
+                Biome.OVERWORLD, Biome.DESERT -> {}
             }
         }
 
@@ -275,6 +314,429 @@ class Dungeon(
                 val b = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * tx
                 a + (b - a) * ty
             }
+        }
+
+        private val DX4 = intArrayOf(1, -1, 0, 0)
+        private val DY4 = intArrayOf(0, 0, 1, -1)
+
+        private fun passable(t: Int) = t == FLOOR || t == STAIRS || t == ENTRANCE
+
+        /**
+         * Steps on foot from ([sx], [sy]) to every tile, moving in four directions (-1 where it cannot be reached).
+         * Entrances are reached but not walked through.
+         */
+        fun walkDistances(tiles: IntArray, w: Int, h: Int, sx: Int, sy: Int): IntArray {
+            val dist = IntArray(w * h) { -1 }
+            if (sx !in 0 until w || sy !in 0 until h || !passable(tiles[sy * w + sx])) return dist
+            val queue = IntArray(w * h)
+            var head = 0
+            var tail = 0
+            dist[sy * w + sx] = 0
+            queue[tail++] = sy * w + sx
+            while (head < tail) {
+                val i = queue[head++]
+                if (tiles[i] == ENTRANCE && dist[i] > 0) continue
+                val x = i % w
+                val y = i / w
+                for (k in 0..3) {
+                    val nx = x + DX4[k]
+                    val ny = y + DY4[k]
+                    if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue
+                    val j = ny * w + nx
+                    if (dist[j] >= 0 || !passable(tiles[j])) continue
+                    dist[j] = dist[i] + 1
+                    queue[tail++] = j
+                }
+            }
+            return dist
+        }
+
+        /** Which tiles can be reached on foot from ([sx], [sy]). */
+        fun flood(tiles: IntArray, w: Int, h: Int, sx: Int, sy: Int): BooleanArray {
+            val d = walkDistances(tiles, w, h, sx, sy)
+            return BooleanArray(w * h) { d[it] >= 0 }
+        }
+
+        /**
+         * Cuts a lane two tiles wide from ([x0], [y0]) to ([x1], [y1]), turning the tiles [cut] accepts into floor and
+         * staying [margin] tiles clear of the map's edges.
+         */
+        private inline fun carveLine(tiles: IntArray, w: Int, h: Int, x0: Int, y0: Int, x1: Int, y1: Int, margin: Int, cut: (Int) -> Boolean) {
+            val steps = max(abs(x1 - x0), abs(y1 - y0)).coerceAtLeast(1)
+            for (s in 0..steps) {
+                val x = x0 + (x1 - x0) * s / steps
+                val y = y0 + (y1 - y0) * s / steps
+                for (oy in 0..1) for (ox in 0..1) {
+                    val px = x + ox
+                    val py = y + oy
+                    if (px < margin || py < margin || px >= w - margin || py >= h - margin) continue
+                    val i = py * w + px
+                    if (cut(tiles[i])) tiles[i] = FLOOR
+                }
+            }
+        }
+
+        /**
+         * A level of the Scorched Sands, out under the sky: wide basins of sand walled in by sandstone cliffs and dune
+         * ridges (WALL), two or three ruined temples, an oasis, and, as far from the arrival as walking goes, the stairs
+         * on to the next depth or, on the last depth, the Sand Pharaoh's court. [Dungeon.ground] holds [DesertGround]
+         * cells, which TerrainMap turns into the desert's ground materials.
+         */
+        fun desert(rnd: Random, depth: Int, w: Int = 64, h: Int = 64): Dungeon {
+            val last = depth >= DESERT_FLOORS
+            val tiles = IntArray(w * h) { WALL }
+            val ground = IntArray(w * h) { DesertGround.SAND }
+            fun idx(x: Int, y: Int) = y * w + x
+            fun inner(x: Int, y: Int) = x >= 2 && y >= 2 && x < w - 2 && y < h - 2
+            fun free(x: Int, y: Int) = x in 0 until w && y in 0 until h && tiles[idx(x, y)] == FLOOR
+
+            // Open sand: a cellular automaton over large-scale noise grows wide basins between rocky ridges.
+            val basin = noise(w, h, 5, rnd)
+            for (y in 2 until h - 2) for (x in 2 until w - 2) {
+                if (rnd.nextFloat() < DESERT_OPEN + (basin[idx(x, y)] - 0.5f) * DESERT_BIAS) tiles[idx(x, y)] = FLOOR
+            }
+            val next = IntArray(w * h)
+            repeat(5) {
+                for (y in 0 until h) for (x in 0 until w) {
+                    var walls = 0
+                    for (dy in -1..1) for (dx in -1..1) if (!free(x + dx, y + dy)) walls++
+                    next[idx(x, y)] = if (inner(x, y) && walls < 5) FLOOR else WALL
+                }
+                next.copyInto(tiles)
+            }
+
+            // One connected desert: small pockets fill with rock, bigger basins get a pass cut to the biggest one.
+            fun connect() {
+                repeat(12) {
+                    val label = IntArray(w * h) { -1 }
+                    val sizes = mutableListOf<Int>()
+                    for (i in 0 until w * h) {
+                        val t = tiles[i]
+                        if (label[i] >= 0 || (t != FLOOR && t != STAIRS)) continue
+                        val d = walkDistances(tiles, w, h, i % w, i / w)
+                        var n = 0
+                        for (j in d.indices) if (d[j] >= 0) {
+                            label[j] = sizes.size
+                            n++
+                        }
+                        sizes += n
+                    }
+                    if (sizes.size <= 1) return
+                    val main = sizes.indices.maxBy { sizes[it] }
+                    // Distance through the rock from the main basin finds each other basin's shortest pass.
+                    val far = IntArray(w * h) { -1 }
+                    val from = IntArray(w * h)
+                    val queue = IntArray(w * h)
+                    var head = 0
+                    var tail = 0
+                    for (i in label.indices) if (label[i] == main) {
+                        far[i] = 0
+                        from[i] = i
+                        queue[tail++] = i
+                    }
+                    while (head < tail) {
+                        val i = queue[head++]
+                        val x = i % w
+                        val y = i / w
+                        for (k in 0..3) {
+                            val nx = x + DX4[k]
+                            val ny = y + DY4[k]
+                            if (!inner(nx, ny)) continue
+                            val j = idx(nx, ny)
+                            if (far[j] >= 0) continue
+                            far[j] = far[i] + 1
+                            from[j] = from[i]
+                            queue[tail++] = j
+                        }
+                    }
+                    for (c in sizes.indices) {
+                        if (c == main) continue
+                        if (sizes[c] < 14) {
+                            for (j in label.indices) if (label[j] == c) tiles[j] = WALL
+                            continue
+                        }
+                        var best = -1
+                        for (j in label.indices) if (label[j] == c && far[j] >= 0 && (best < 0 || far[j] < far[best])) best = j
+                        if (best < 0) continue
+                        val to = from[best]
+                        carveLine(tiles, w, h, best % w, best / w, to % w, to / w, 2) { it == WALL || it == WATER }
+                    }
+                }
+            }
+            connect()
+
+            // Arrive in one corner; the way on lies wherever the walk there is longest.
+            val corner = rnd.nextInt(4)
+            val aimX = if (corner % 2 == 0) 9 else w - 10
+            val aimY = if (corner < 2) 9 else h - 10
+            var startI = -1
+            var startD = Int.MAX_VALUE
+            for (y in 3 until h - 3) for (x in 3 until w - 3) {
+                var clear = true
+                for (dy in -1..1) for (dx in -1..1) if (!free(x + dx, y + dy)) clear = false
+                val dd = abs(x - aimX) + abs(y - aimY)
+                if (clear && dd < startD) {
+                    startD = dd
+                    startI = idx(x, y)
+                }
+            }
+            if (startI < 0) {
+                for (y in aimY - 2..aimY + 2) for (x in aimX - 2..aimX + 2) tiles[idx(x, y)] = FLOOR
+                startI = idx(aimX, aimY)
+                connect()
+            }
+            val sx = startI % w
+            val sy = startI / w
+            val reach = walkDistances(tiles, w, h, sx, sy)
+            val farthest = reach.indices.maxBy { reach[it] }
+            // The way on: stairs on a small paved landing, or a wide paved court for the pharaoh.
+            val pr = if (last) 6 else 2
+            val ex = (farthest % w).coerceIn(2 + pr, w - 3 - pr)
+            val ey = (farthest / w).coerceIn(2 + pr, h - 3 - pr)
+            val plaza = Room(ex - pr, ey - pr, 2 * pr + 1, 2 * pr + 1)
+            for (y in plaza.y until plaza.y + plaza.h) for (x in plaza.x until plaza.x + plaza.w) {
+                tiles[idx(x, y)] = FLOOR
+                ground[idx(x, y)] = DesertGround.PAVING
+            }
+            tiles[idx(ex, ey)] = STAIRS
+
+            // Ruined sandstone temples with broken walls, standing in the open sand.
+            val ruins = mutableListOf<Room>()
+            val wantRuins = 2 + rnd.nextInt(2)
+            var tries = 0
+            while (ruins.size < wantRuins && tries++ < 400) {
+                val rw = rnd.nextInt(7, 12)
+                val rh = rnd.nextInt(6, 10)
+                val ruin = Room(rnd.nextInt(3, w - rw - 3), rnd.nextInt(3, h - rh - 3), rw, rh)
+                if (ruin.intersects(plaza, 3) || ruins.any { it.intersects(ruin, 3) }) continue
+                if (hypot((ruin.cx - sx).toFloat(), (ruin.cy - sy).toFloat()) < 11f) continue
+                var n = 0
+                for (y in ruin.y until ruin.y + ruin.h) for (x in ruin.x until ruin.x + ruin.w) if (free(x, y)) n++
+                if (n < rw * rh * (if (tries < 250) 0.55f else 0.3f)) continue
+                ruins += ruin
+            }
+            for (ru in ruins) {
+                for (y in ru.y - 1..ru.y + ru.h) for (x in ru.x - 1..ru.x + ru.w) {
+                    val i = idx(x, y)
+                    // A ring of open sand around the walls, so every doorway leads somewhere.
+                    if (x == ru.x - 1 || y == ru.y - 1 || x == ru.x + ru.w || y == ru.y + ru.h) {
+                        if (tiles[i] == WALL) tiles[i] = FLOOR
+                        continue
+                    }
+                    ground[i] = DesertGround.PAVING
+                    val wallX = x == ru.x || x == ru.x + ru.w - 1
+                    val wallY = y == ru.y || y == ru.y + ru.h - 1
+                    val door = (wallY && abs(x - ru.cx) <= 1) || (wallX && abs(y - ru.cy) <= 1)
+                    tiles[i] = when {
+                        !wallX && !wallY -> FLOOR
+                        wallX && wallY -> WALL
+                        door -> FLOOR
+                        rnd.nextFloat() < 0.68f -> WALL
+                        else -> FLOOR
+                    }
+                }
+            }
+
+            // The oasis: a pool ringed with grass in the widest stretch of open sand.
+            var oasis: Room? = null
+            run {
+                var best = -1
+                var bestScore = -1f
+                for (y in 8 until h - 8 step 2) for (x in 8 until w - 8 step 2) {
+                    if (hypot((x - sx).toFloat(), (y - sy).toFloat()) < 10f) continue
+                    if (abs(x - ex) < pr + 8 && abs(y - ey) < pr + 8) continue
+                    val area = Room(x - 6, y - 6, 13, 13)
+                    if (ruins.any { it.intersects(area, 0) }) continue
+                    var n = 0
+                    for (dy in -6..6) for (dx in -6..6) if (dx * dx + dy * dy <= 36 && free(x + dx, y + dy)) n++
+                    val score = n + rnd.nextFloat() * 6f
+                    if (score > bestScore) {
+                        bestScore = score
+                        best = idx(x, y)
+                    }
+                }
+                if (best < 0) return@run
+                val ox = best % w
+                val oy = best / w
+                val pool = 2.1f + rnd.nextFloat() * 0.9f
+                val ph = rnd.nextFloat() * 6.28f
+                for (dy in -6..6) for (dx in -6..6) {
+                    val x = ox + dx
+                    val y = oy + dy
+                    if (!inner(x, y)) continue
+                    val i = idx(x, y)
+                    val dd = hypot(dx.toFloat(), dy.toFloat())
+                    val a = atan2(dy.toFloat(), dx.toFloat())
+                    val edge = pool + 0.5f * sin(a * 3f + ph) + 0.3f * sin(a * 5f + ph * 2f)
+                    when {
+                        dd <= edge -> {
+                            tiles[i] = WATER
+                            ground[i] = DesertGround.GRASS
+                        }
+                        dd <= edge + 2.3f -> {
+                            tiles[i] = FLOOR
+                            ground[i] = DesertGround.GRASS
+                        }
+                        dd <= 5.8f -> if (tiles[i] == WALL) tiles[i] = FLOOR
+                    }
+                }
+                oasis = Room(ox - 5, oy - 5, 11, 11)
+            }
+
+            // Everything joined up and reachable from the arrival; anything still cut off turns to rock.
+            connect()
+            if (walkDistances(tiles, w, h, sx, sy)[idx(ex, ey)] < 0) carveLine(tiles, w, h, sx, sy, ex, ey, 2) { it == WALL || it == WATER }
+            val walk = walkDistances(tiles, w, h, sx, sy)
+            for (i in tiles.indices) if ((tiles[i] == FLOOR || tiles[i] == STAIRS) && walk[i] < 0) tiles[i] = WALL
+
+            // Rocky hardpan at the foot of the cliffs and in scattered flats; the cliffs themselves are rock.
+            val flats = noise(w, h, 9, rnd)
+            for (y in 0 until h) for (x in 0 until w) {
+                val i = idx(x, y)
+                if (ground[i] != DesertGround.SAND) continue
+                if (tiles[i] == WALL) {
+                    ground[i] = DesertGround.HARDPAN
+                    continue
+                }
+                var cliff = 0
+                for (dy in -2..2) for (dx in -2..2) {
+                    val nx = x + dx
+                    val ny = y + dy
+                    if (nx < 0 || ny < 0 || nx >= w || ny >= h) {
+                        cliff = max(cliff, 3 - max(abs(dx), abs(dy)))
+                    } else if (tiles[idx(nx, ny)] == WALL && ground[idx(nx, ny)] != DesertGround.PAVING) {
+                        cliff = max(cliff, 3 - max(abs(dx), abs(dy)))
+                    }
+                }
+                val k = rnd.nextFloat()
+                if ((cliff == 2 && k < 0.7f) || (cliff == 1 && k < 0.25f) || flats[i] > 0.72f) ground[i] = DesertGround.HARDPAN
+            }
+
+            // Props: temple furnishings, lone pillars, bones bleaching in the sun, urns and the odd chest.
+            val props = mutableListOf<Prop>()
+            fun put(t: PropType, x: Int, y: Int, strict: Boolean): Boolean {
+                if (!free(x, y)) return false
+                if (abs(x - sx) <= 1 && abs(y - sy) <= 1) return false
+                if (abs(x - ex) <= 1 && abs(y - ey) <= 1) return false
+                if (t.solid && strict) for (dy in -1..1) for (dx in -1..1) if (!free(x + dx, y + dy)) return false
+                if (props.any { abs(it.x - x - 0.5f) < 1f && abs(it.y - y - 0.5f) < 1f }) return false
+                props += Prop(t, x + 0.5f, y + 0.5f)
+                return true
+            }
+            fun ruinProp(ru: Room, t: PropType, x: Int, y: Int) {
+                if (x <= ru.x || y <= ru.y || x >= ru.x + ru.w - 1 || y >= ru.y + ru.h - 1) return
+                // Solid pieces stay off the lines between the doorways.
+                if (t.solid && (abs(x - ru.cx) <= 1 || abs(y - ru.cy) <= 1)) return
+                put(t, x, y, strict = false)
+            }
+            for ((k, ru) in ruins.withIndex()) {
+                val left = ru.x + 1
+                val right = ru.x + ru.w - 2
+                val top = ru.y + 1
+                val bottom = ru.y + ru.h - 2
+                when (if (k == 0) 0 else rnd.nextInt(3)) {
+                    0 -> { // temple: an altar between braziers, columns down the nave
+                        put(PropType.ALTAR, ru.cx, top, strict = false)
+                        ruinProp(ru, PropType.BRAZIER, left, top)
+                        ruinProp(ru, PropType.BRAZIER, right, top)
+                        var y = top + 2
+                        while (y < bottom) {
+                            ruinProp(ru, PropType.COLUMN, left + 1, y)
+                            ruinProp(ru, PropType.COLUMN, right - 1, y)
+                            y += 2
+                        }
+                        ruinProp(ru, PropType.BONEPILE, left, bottom)
+                    }
+                    1 -> { // tomb: sarcophagi in rows, urns in the corners
+                        var x = left + 1
+                        while (x < right) {
+                            ruinProp(ru, PropType.SARCOPHAGUS, x, top)
+                            ruinProp(ru, PropType.SARCOPHAGUS, x, bottom)
+                            x += 2
+                        }
+                        ruinProp(ru, PropType.URN, left, top)
+                        ruinProp(ru, PropType.URN, right, bottom)
+                        ruinProp(ru, PropType.SKULLS, ru.cx + 1, ru.cy + 1)
+                        if (rnd.nextFloat() < 0.45f) ruinProp(ru, PropType.CHEST, right, top)
+                    }
+                    else -> { // storeroom: urns and crates along the walls
+                        for (y in top..bottom) {
+                            if (rnd.nextFloat() < 0.6f) ruinProp(ru, PropType.URN, left, y)
+                            if (rnd.nextFloat() < 0.6f) ruinProp(ru, if (rnd.nextFloat() < 0.3f) PropType.CRATE else PropType.URN, right, y)
+                        }
+                        ruinProp(ru, PropType.BONEPILE, ru.cx + 2, bottom)
+                        if (rnd.nextFloat() < 0.35f) ruinProp(ru, PropType.CHEST, left + 1, top)
+                    }
+                }
+            }
+            if (last) {
+                // The pharaoh's court: a ring of columns, braziers in the corners and his altar to the north.
+                for ((dx, dy) in listOf(-5 to -2, 5 to -2, -5 to 2, 5 to 2, -2 to -5, 2 to -5, -2 to 5, 2 to 5)) put(PropType.COLUMN, ex + dx, ey + dy, strict = false)
+                for ((dx, dy) in listOf(-5 to -5, 5 to -5, -5 to 5, 5 to 5)) put(PropType.BRAZIER, ex + dx, ey + dy, strict = false)
+                put(PropType.ALTAR, ex, ey - 4, strict = false)
+                put(PropType.URN, ex - 4, ey + 4, strict = false)
+                put(PropType.URN, ex + 4, ey + 4, strict = false)
+            } else {
+                put(PropType.COLUMN, ex - 2, ey - 2, strict = false)
+                put(PropType.COLUMN, ex + 2, ey - 2, strict = false)
+                put(PropType.URN, ex + 2, ey + 2, strict = false)
+            }
+            fun sandSpot(minFromStart: Float): Pair<Int, Int>? {
+                repeat(80) {
+                    val x = rnd.nextInt(3, w - 3)
+                    val y = rnd.nextInt(3, h - 3)
+                    val g = ground[idx(x, y)]
+                    if (free(x, y) && (g == DesertGround.SAND || g == DesertGround.HARDPAN) &&
+                        hypot((x - sx).toFloat(), (y - sy).toFloat()) >= minFromStart
+                    ) return x to y
+                }
+                return null
+            }
+            repeat(4) {
+                sandSpot(8f)?.let { (x, y) ->
+                    if (put(PropType.PILLAR, x, y, strict = true)) {
+                        if (rnd.nextBoolean()) put(PropType.URN, x + 1, y, strict = false)
+                        if (rnd.nextBoolean()) put(PropType.SKULLS, x - 1, y + 1, strict = false)
+                    }
+                }
+            }
+            repeat(12) { sandSpot(4f)?.let { (x, y) -> put(if (rnd.nextFloat() < 0.6f) PropType.SKULLS else PropType.BONEPILE, x, y, strict = false) } }
+            repeat(3) {
+                sandSpot(6f)?.let { (x, y) ->
+                    put(PropType.URN, x, y, strict = true)
+                    if (rnd.nextBoolean()) put(PropType.URN, x + 1, y, strict = true)
+                    if (rnd.nextBoolean()) put(PropType.URN, x, y + 1, strict = true)
+                }
+            }
+            repeat(1 + depth / 2) { sandSpot(14f)?.let { (x, y) -> put(PropType.CHEST, x, y, strict = true) } }
+            if (rnd.nextFloat() < 0.4f) sandSpot(10f)?.let { (x, y) -> put(PropType.SHRINE, x, y, strict = true) }
+
+            // Torches only on the temple walls, where a wall faces open ground.
+            val torches = mutableListOf<Int>()
+            for (ru in ruins) for (y in ru.y until ru.y + ru.h) for (x in ru.x until ru.x + ru.w) {
+                val onWall = x == ru.x || y == ru.y || x == ru.x + ru.w - 1 || y == ru.y + ru.h - 1
+                val i = idx(x, y)
+                if (onWall && tiles[i] == WALL && y + 1 < h && tiles[i + w] != WALL && rnd.nextFloat() < 0.3f) torches += i
+            }
+
+            // Hunting grounds: the court, the temples, the oasis and cells of open sand away from the arrival.
+            val startRoom = Room(sx - 1, sy - 1, 3, 3)
+            val rooms = mutableListOf(startRoom, plaza)
+            rooms += ruins
+            oasis?.let { rooms += it }
+            val cells = mutableListOf<Room>()
+            for (cy in 0 until (h - 4) / 10) for (cx in 0 until (w - 4) / 10) {
+                val cell = Room(2 + cx * 10, 2 + cy * 10, 10, 10)
+                if (rooms.any { it.intersects(cell, 0) }) continue
+                if (hypot((cell.cx - sx).toFloat(), (cell.cy - sy).toFloat()) < 12f) continue
+                var n = 0
+                for (y in cell.y until cell.y + cell.h) for (x in cell.x until cell.x + cell.w) if (free(x, y)) n++
+                if (n >= 40) cells += cell
+            }
+            rooms += cells.shuffled(rnd).take(10)
+
+            val variant = FloatArray(w * h) { rnd.nextFloat() }
+            return Dungeon(Biome.DESERT, w, h, tiles, rooms, startRoom, plaza, torches, variant, props, ground = ground)
         }
 
         /** The open world above the dungeons: forests, lakes, paths, a walled village and three entrances. */
@@ -308,11 +770,13 @@ class Dungeon(
                 Entrance(14, 15, Region.CRYPT),
                 Entrance(70, 29, Region.CAVE),
                 Entrance(44, 73, Region.HELL),
+                // Out in the open south-west, away from the other entrances and the troll's south-east.
+                Entrance(13, 63, Region.DESERT),
             )
             for (e in entrances) clear(e.x, e.y, 3)
 
             // Winding dirt paths from the village gates to each entrance.
-            fun path(fromX: Int, fromY: Int, toX: Int, toY: Int) {
+            fun path(fromX: Int, fromY: Int, toX: Int, toY: Int, r: Random = rnd) {
                 var x = fromX.toFloat()
                 var y = fromY.toFloat()
                 var guard = 0
@@ -327,7 +791,7 @@ class Dungeon(
                         val px = x.toInt() + ox
                         val py = y.toInt() + oy
                         if (inside(px, py)) {
-                            ground[idx(px, py)] = Ground.DIRT + rnd.nextInt(2)
+                            ground[idx(px, py)] = Ground.DIRT + r.nextInt(2)
                             keep[idx(px, py)] = true
                         }
                     }
@@ -337,6 +801,8 @@ class Dungeon(
             path(vx + vw, vy + vh / 2, entrances[1].x, entrances[1].y + 1)
             path(vx + vw / 2, vy + vh, entrances[2].x, entrances[2].y + 1)
             path(vx - 1, vy + vh / 2, 6, vy + vh / 2)
+            // Its own random stream, so the rest of a saved world comes out as it always did.
+            path(vx - 1, vy + vh / 2 + 1, entrances[3].x, entrances[3].y + 1, Random(seed xor 0x5A4D5L))
 
             // Lakes with sandy shores, then forest.
             for (y in 0 until h) for (x in 0 until w) {
@@ -358,6 +824,15 @@ class Dungeon(
                     else if (rnd.nextFloat() < 0.012f) tiles[i] = ROCK
                     else if (meadow[i] > 0.68f) ground[i] = Ground.FLOWERS
                 }
+            }
+
+            // Sand blows in around the way down to the Scorched Sands.
+            val dune = entrances[3]
+            for (y in dune.y - 7..dune.y + 7) for (x in dune.x - 7..dune.x + 7) {
+                if (!inside(x, y)) continue
+                val i = idx(x, y)
+                val dd = hypot((x - dune.x).toFloat(), (y - dune.y).toFloat()) + (detail[i] - 0.5f) * 3f
+                if (dd < 5.5f && tiles[i] == FLOOR) ground[i] = Ground.SAND
             }
 
             // Village palisade with four gates.
@@ -418,6 +893,18 @@ class Dungeon(
                 Building(8, vx + 6, vy + vh - 2, 1, 1),
             )
             for (b in buildings) for (yy in b.y until b.y + b.h) for (xx in b.x until b.x + b.w) tiles[idx(xx, yy)] = BLOCK
+
+            // The path keeps the way to the desert open; should the forest still close it, cut a lane through.
+            val reach = flood(tiles, w, h, vx + vw / 2, vy + vh / 2 + 3)
+            if (!reach[idx(dune.x, dune.y)]) {
+                var best = -1
+                var bestD = Float.MAX_VALUE
+                for (i in reach.indices) if (reach[i]) {
+                    val dd = hypot((i % w - dune.x).toFloat(), (i / w - dune.y).toFloat())
+                    if (dd < bestD) { bestD = dd; best = i }
+                }
+                if (best >= 0) carveLine(tiles, w, h, best % w, best / w, dune.x, dune.y + 1, 3) { it == TREE || it == ROCK || it == WATER }
+            }
 
             val npcs = mutableListOf(
                 Npc(NpcKind.SMITH, vx + vw - 2.5f, vy + 10.6f),
