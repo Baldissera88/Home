@@ -13,7 +13,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.CutCornerShape
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -481,12 +487,17 @@ private fun Controls(game: Game, modifier: Modifier) {
                 },
                 onRelease = { game.attackHeld = false },
             )
-            // Four skills on an arc around the attack button, the potion at its foot.
-            val skills = game.player.heroClass.skills
-            for ((i, s) in skills.withIndex()) {
+            // The four loadout skills (chosen in the skill tree) on an arc around the attack button.
+            treeVersion.intValue.let { }
+            val p = game.player
+            for (i in 0 until LOADOUT_SIZE) {
                 val a = Math.toRadians(SKILL_ANGLES[i].toDouble())
                 val c = Offset(attackC.x + cos(a).toFloat() * 104f, attackC.y + sin(a).toFloat() * 104f)
-                SkillButton(game, s, Modifier.at(c, 58f))
+                val s = p.loadout[i]
+                // Keyed by skill and rank, so a re-equipped or newly learned button is built afresh, press handler included.
+                key(i, s, if (s != null) p.skills[s] ?: 0 else -1) {
+                    if (s != null) SkillButton(game, s, Modifier.at(c, 58f)) else EmptySkillSlot(Modifier.at(c, 58f))
+                }
             }
         }
     }
@@ -494,6 +505,20 @@ private fun Controls(game: Game, modifier: Modifier) {
 
 /** Where the four skill buttons sit on the arc around the attack button, in degrees. */
 private val SKILL_ANGLES = floatArrayOf(280f, 245f, 210f, 175f)
+
+/** Bumped whenever the skill tree changes, so the HUD's skill buttons pick up new ranks and loadout changes. */
+private val treeVersion = mutableIntStateOf(0)
+
+/** A skill button with nothing equipped on it. */
+@Composable
+private fun EmptySkillSlot(modifier: Modifier) {
+    Box(
+        modifier.size(58.dp).background(Color(0x66120D0B), CircleShape).border(1.dp, bronze.copy(alpha = 0.5f), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text("+", color = parchment.copy(alpha = 0.4f), fontSize = 20.sp)
+    }
+}
 
 /** Graphics settings as the settings screen shows them. */
 private class GraphicsChoice(val use3d: Boolean, val high: Boolean, val error: String?)
@@ -799,38 +824,364 @@ private fun StatLine(label: String, value: String) {
     }
 }
 
+// ---------------------------------------------------------------- skill tree
+
+/** Fixed sizes of the tree, so the connecting lines are drawn from the same arithmetic as the layout. */
+private val NODE_H = 62.dp
+private val NODE_GAP = 8.dp
+private val TIER_GAP = 16.dp
+private val TIER_GUTTER = 40.dp
+
+private enum class NodeLook { LOCKED, OPEN, LEARNED, MAXED }
+
+private fun nodeLook(p: Player, node: TreeNode): NodeLook {
+    val rank = node.rank(p)
+    return when {
+        rank >= node.maxRank -> NodeLook.MAXED
+        rank > 0 -> NodeLook.LEARNED
+        node.unlocked(p) -> NodeLook.OPEN
+        else -> NodeLook.LOCKED
+    }
+}
+
+/** The skill tree: three branches of skills and talents across five tiers, with the chosen node's details beside or below. */
 @Composable
 private fun SkillsScreen(game: Game, tick: Int, onClose: () -> Unit) {
     tick.let { }
     val p = game.player
-    DarkPanel("Skills", onClose) {
-        Text(
-            if (p.skillPoints > 0) "You have ${p.skillPoints} points to spend" else "You gain a point every level",
-            color = if (p.skillPoints > 0) GOLD else parchment.copy(alpha = 0.7f), fontSize = 14.sp,
-        )
-        for (s in p.heroClass.skills) {
-            val lvl = p.skills[s] ?: 0
-            Row(
-                Modifier.width(310.dp).background(Color(0x55000000), RoundedCornerShape(8.dp))
-                    .border(1.dp, s.color.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).padding(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(s.icon, fontSize = 30.sp)
-                Spacer(Modifier.width(10.dp))
+    val tree = SkillTree.of(p.heroClass)
+    var refresh by remember { mutableIntStateOf(0) }
+    refresh.let { }
+    var selected by remember { mutableStateOf(tree.nodes.firstOrNull { game.canLearn(it) } ?: tree.node(p.heroClass.skills[0])) }
+    var confirmReset by remember { mutableStateOf(false) }
+    fun changed() {
+        refresh++
+        treeVersion.intValue++
+    }
+    val version = refresh + tick
+    BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xCC000000)).systemBarsPadding()) {
+        val wide = maxWidth > maxHeight && maxWidth >= 560.dp
+        Column(
+            Modifier.fillMaxSize().padding(6.dp)
+                .background(Brush.verticalGradient(listOf(Color(0xF51E1511), Color(0xF50E0A08))), RoundedCornerShape(12.dp))
+                .border(2.dp, bronze, RoundedCornerShape(12.dp))
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+        ) {
+            // Header: free points, the reset and the close button.
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.weight(1f)) {
-                    Text("${s.label}  ${"★".repeat(lvl)}${"☆".repeat(5 - lvl)}", color = s.color, fontSize = 16.sp, style = serifBold)
-                    Text(if (lvl > 0) s.describe(lvl) else "Not learned yet. ${s.describe(1)}", color = parchment, fontSize = 12.sp)
-                    if (lvl in 1..4) Text("Next: ${s.describe(lvl + 1)}", color = Color.Gray, fontSize = 11.sp)
-                    Text("Mana: ${s.mana.toInt()} · Cooldown: ${s.cooldown}s", color = Color(0xFF64B5F6), fontSize = 11.sp)
+                    Text("Skill Tree", color = GOLD, fontSize = 20.sp, style = serifBold)
+                    Text("${p.heroClass.label} · level ${p.level}", color = parchment.copy(alpha = 0.7f), fontSize = 11.sp)
                 }
-                if (p.skillPoints > 0 && lvl < 5) {
-                    Text(
-                        "+", color = Color.Black, fontSize = 22.sp, fontWeight = FontWeight.Black,
-                        modifier = Modifier.background(GOLD, CircleShape).clickable { game.learn(s) }.padding(horizontal = 12.dp, vertical = 2.dp),
-                    )
+                val hasPoints = p.skillPoints > 0
+                Column(
+                    Modifier.background(if (hasPoints) Color(0x44FFC94D) else Color(0x33000000), RoundedCornerShape(8.dp))
+                        .border(1.dp, if (hasPoints) GOLD else bronze, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 2.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text("✨ ${p.skillPoints}", color = if (hasPoints) GOLD else parchment, fontSize = 16.sp, style = serifBold)
+                    Text(if (p.skillPoints == 1) "point" else "points", color = parchment.copy(alpha = 0.7f), fontSize = 9.sp)
+                }
+                Spacer(Modifier.width(6.dp))
+                val spent = game.spentPoints()
+                TreeButton(
+                    if (confirmReset) "Sure? ${game.resetPrice} 💰" else "↺ Reset\n${game.resetPrice} 💰",
+                    enabled = spent > 0 && p.gold >= game.resetPrice,
+                ) {
+                    if (!confirmReset) {
+                        confirmReset = true
+                    } else {
+                        game.resetSkills()
+                        confirmReset = false
+                        changed()
+                    }
+                }
+                Text("✕", color = parchment, fontSize = 22.sp, modifier = Modifier.clickable(onClick = onClose).padding(start = 8.dp, end = 2.dp, top = 4.dp, bottom = 4.dp))
+            }
+            Text(
+                "1 point every level · +1 bonus every 5th level · +1 for each boss's first defeat",
+                color = Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(top = 2.dp, bottom = 6.dp),
+            )
+            val onSelect: (TreeNode) -> Unit = {
+                selected = it
+                confirmReset = false
+            }
+            if (wide) {
+                Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TreeView(game, tree, selected, version, onSelect, Modifier.weight(1.3f).fillMaxHeight())
+                    Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())) {
+                        NodeDetail(game, tree, selected) { changed() }
+                    }
+                }
+            } else {
+                TreeView(game, tree, selected, version, onSelect, Modifier.fillMaxWidth().weight(1f))
+                Spacer(Modifier.height(6.dp))
+                Column(Modifier.fillMaxWidth().heightIn(max = 250.dp).verticalScroll(rememberScrollState())) {
+                    NodeDetail(game, tree, selected) { changed() }
                 }
             }
         }
+    }
+}
+
+/** Branch titles above a scrolling grid of tiers. */
+@Composable
+private fun TreeView(game: Game, tree: ClassTree, selected: TreeNode?, version: Int, onSelect: (TreeNode) -> Unit, modifier: Modifier) {
+    val p = game.player
+    Column(modifier) {
+        Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), verticalAlignment = Alignment.Bottom) {
+            Spacer(Modifier.width(TIER_GUTTER))
+            tree.branches.forEachIndexed { b, branch ->
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        "${branch.icon} ${branch.title}", color = branch.color, fontSize = 12.sp, style = serifBold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                    val points = tree.spent(p, b)
+                    Text(if (points == 1) "1 rank" else "$points ranks", color = parchment.copy(alpha = 0.55f), fontSize = 9.sp)
+                }
+            }
+        }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(bronze.copy(alpha = 0.6f)))
+        Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
+            TreeGrid(game, tree, selected, version, onSelect)
+        }
+    }
+}
+
+/** The tiers as rows (level label on the left, one column per branch), with lines from each node to its children behind. */
+@Composable
+private fun TreeGrid(game: Game, tree: ClassTree, selected: TreeNode?, version: Int, onSelect: (TreeNode) -> Unit) {
+    val p = game.player
+    val tiers = SkillTree.TIERS
+    val rows = IntArray(tiers) { tree.rows(it) }
+    fun rowsHeight(t: Int): Dp = NODE_H * rows[t] + NODE_GAP * (rows[t] - 1)
+    var total = 0.dp
+    for (t in 0 until tiers) total += rowsHeight(t) + (if (t < tiers - 1) TIER_GAP else 0.dp)
+    Box(Modifier.fillMaxWidth().height(total)) {
+        Canvas(Modifier.matchParentSize()) {
+            version.let { }
+            val gutter = TIER_GUTTER.toPx()
+            val colW = (size.width - gutter) / tree.branches.size
+            val nodeH = NODE_H.toPx()
+            val gap = NODE_GAP.toPx()
+            val tierGap = TIER_GAP.toPx()
+            fun top(tier: Int, slot: Int): Float {
+                var y = 0f
+                for (k in 0 until tier) y += rows[k] * nodeH + (rows[k] - 1) * gap + tierGap
+                return y + slot * (nodeH + gap)
+            }
+            // Faint rules between the tiers.
+            for (t in 1 until tiers) {
+                val y = top(t, 0) - tierGap / 2f
+                drawLine(bronze.copy(alpha = 0.22f), Offset(0f, y), Offset(size.width, y), strokeWidth = 1.dp.toPx())
+            }
+            // A line from every node down to each child: lit in the branch colour once the parent has a point.
+            for (n in tree.nodes) {
+                val par = n.parent ?: continue
+                val from = Offset(gutter + (par.branch + 0.5f) * colW, top(par.tier, par.slot) + nodeH)
+                val to = Offset(gutter + (n.branch + 0.5f) * colW, top(n.tier, n.slot))
+                if (par.rank(p) > 0) {
+                    val c = tree.branches[n.branch].color
+                    drawLine(c.copy(alpha = 0.22f), from, to, strokeWidth = 8.dp.toPx(), cap = StrokeCap.Round)
+                    drawLine(c.copy(alpha = if (n.rank(p) > 0) 0.95f else 0.6f), from, to, strokeWidth = 2.5f.dp.toPx(), cap = StrokeCap.Round)
+                } else {
+                    drawLine(Color(0x40FFFFFF), from, to, strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
+                }
+            }
+        }
+        Column(Modifier.fillMaxWidth()) {
+            for (t in 0 until tiers) {
+                val open = p.level >= TIER_LEVELS[t]
+                Row(Modifier.fillMaxWidth().height(rowsHeight(t))) {
+                    Column(
+                        Modifier.width(TIER_GUTTER).fillMaxHeight(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text("Level", color = if (open) parchment.copy(alpha = 0.75f) else Color.Gray, fontSize = 9.sp)
+                        Text("${TIER_LEVELS[t]}", color = if (open) GOLD else Color.Gray, fontSize = 16.sp, style = serifBold)
+                        if (!open) Text("🔒", fontSize = 10.sp)
+                    }
+                    for (b in tree.branches.indices) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(NODE_GAP)) {
+                            for (n in tree.cell(b, t)) {
+                                val s = n.skill
+                                NodeCard(
+                                    n, n.rank(p), nodeLook(p, n), game.canLearn(n), n === selected,
+                                    if (s != null) p.loadout.indexOf(s) else -1,
+                                ) { onSelect(n) }
+                            }
+                        }
+                    }
+                }
+                if (t < tiers - 1) Spacer(Modifier.height(TIER_GAP))
+            }
+        }
+    }
+}
+
+/** A node of the tree: icon, name and rank. Actives have rounded corners, talents cut ones; the HUD slot shows top left. */
+@Composable
+private fun NodeCard(node: TreeNode, rank: Int, look: NodeLook, canLearn: Boolean, selected: Boolean, slot: Int, onClick: () -> Unit) {
+    val shape = if (node.skill != null) RoundedCornerShape(10.dp) else CutCornerShape(9.dp)
+    val c = node.color
+    val fill = when (look) {
+        NodeLook.LOCKED -> listOf(Color(0xFF16110E), Color(0xFF0C0907))
+        NodeLook.OPEN -> listOf(c.copy(alpha = 0.12f), Color(0xFF0C0907))
+        else -> listOf(c.copy(alpha = 0.4f), Color(0xFF140E0B))
+    }
+    val edge = when {
+        selected -> Color.White
+        look == NodeLook.MAXED -> GOLD
+        look == NodeLook.LEARNED -> c
+        look == NodeLook.OPEN -> bronze
+        else -> Color(0xFF3A3530)
+    }
+    Box(
+        Modifier.fillMaxWidth().padding(horizontal = 3.dp).height(NODE_H)
+            .background(Brush.verticalGradient(fill), shape)
+            .border(if (selected) 2.dp else 1.dp, edge, shape)
+            .clickable {
+                uiSfx?.click()
+                onClick()
+            },
+    ) {
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 4.dp, vertical = 3.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(node.icon, fontSize = 19.sp, modifier = Modifier.graphicsLayer { alpha = if (look == NodeLook.LOCKED) 0.35f else 1f })
+            Text(
+                node.label, color = if (look == NodeLook.LOCKED) Color.Gray else if (look == NodeLook.OPEN) parchment else Color.White,
+                fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
+            )
+            Text(
+                "$rank/${node.maxRank}", color = if (look == NodeLook.MAXED) GOLD else if (rank > 0) c else Color.Gray,
+                fontSize = 10.sp, fontWeight = FontWeight.Bold,
+            )
+        }
+        if (canLearn) {
+            Text(
+                "+", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Black,
+                modifier = Modifier.align(Alignment.TopEnd).padding(3.dp).background(GOLD, CircleShape).padding(horizontal = 4.dp),
+            )
+        } else if (look == NodeLook.LOCKED) {
+            Text("🔒", fontSize = 9.sp, modifier = Modifier.align(Alignment.TopEnd).padding(3.dp))
+        }
+        if (slot >= 0) {
+            Text(
+                "${slot + 1}", color = Color.Black, fontSize = 9.sp, fontWeight = FontWeight.Black,
+                modifier = Modifier.align(Alignment.TopStart).padding(3.dp).background(c, CircleShape).padding(horizontal = 4.dp),
+            )
+        } else if (node.keystone) {
+            Text("★", color = GOLD, fontSize = 10.sp, modifier = Modifier.align(Alignment.TopStart).padding(horizontal = 5.dp, vertical = 2.dp))
+        }
+    }
+}
+
+/** Everything about the chosen node: what each rank does, what it needs, Learn, and for actives the HUD button to put it on. */
+@Composable
+private fun NodeDetail(game: Game, tree: ClassTree, node: TreeNode?, onChange: () -> Unit) {
+    val p = game.player
+    if (node == null) {
+        Text("Tap a skill or talent to see what it does.", color = parchment.copy(alpha = 0.7f), fontSize = 12.sp)
+    } else {
+        val rank = node.rank(p)
+        val s = node.skill
+        Column(
+            Modifier.fillMaxWidth().background(Color(0x66000000), RoundedCornerShape(8.dp))
+                .border(1.dp, node.color.copy(alpha = 0.7f), RoundedCornerShape(8.dp)).padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(node.icon, fontSize = 28.sp)
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(node.label, color = node.color, fontSize = 16.sp, style = serifBold)
+                    val kind = when {
+                        s != null -> "Active skill"
+                        node.keystone -> "Keystone talent"
+                        else -> "Passive talent"
+                    }
+                    Text("$kind · ${tree.branches[node.branch].title} · rank $rank/${node.maxRank}", color = parchment.copy(alpha = 0.7f), fontSize = 11.sp)
+                }
+            }
+            Text(if (rank > 0) "Now: ${node.describe(rank)}" else node.describe(1), color = parchment, fontSize = 12.sp)
+            if (rank in 1 until node.maxRank) Text("Next rank: ${node.describe(rank + 1)}", color = Color(0xFFB0BEC5), fontSize = 11.sp)
+            if (s != null) {
+                val cd = if (s.cooldown == s.cooldown.toInt().toFloat()) "${s.cooldown.toInt()}" else "${s.cooldown}"
+                Text("Mana ${s.mana.toInt()} · Cooldown $cd s", color = Color(0xFF64B5F6), fontSize = 11.sp)
+            }
+            val need = node.requirement(p)
+            val par = node.parent
+            Text(
+                need ?: ("Level ${node.levelReq} tier" + (if (par != null) " · after ${par.label}" else "") + " ✓"),
+                color = if (need != null) Color(0xFFFF8A65) else Color(0xFF81C784), fontSize = 11.sp,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TreeButton(
+                    when {
+                        rank >= node.maxRank -> "Mastered"
+                        rank > 0 -> "Learn rank ${rank + 1} · 1 ✨"
+                        else -> "Learn · 1 ✨"
+                    },
+                    enabled = game.canLearn(node),
+                ) { if (game.learnNode(node)) onChange() }
+                if (p.skillPoints <= 0 && rank < node.maxRank) {
+                    Text("No points left. Level up or slay a new boss.", color = Color.Gray, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                }
+            }
+            if (s != null && rank > 0) {
+                Text("Put it on a skill button:", color = parchment.copy(alpha = 0.8f), fontSize = 11.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (i in 0 until LOADOUT_SIZE) {
+                        val there = p.loadout[i]
+                        val on = there == s
+                        Column(
+                            Modifier.width(56.dp)
+                                .background(if (on) s.color.copy(alpha = 0.3f) else Color(0x44000000), RoundedCornerShape(8.dp))
+                                .border(if (on) 2.dp else 1.dp, if (on) s.color else bronze, RoundedCornerShape(8.dp))
+                                .clickable {
+                                    uiSfx?.click()
+                                    game.equipSkill(s, i)
+                                    onChange()
+                                }
+                                .padding(vertical = 4.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text("Slot ${i + 1}", color = if (on) Color.White else parchment.copy(alpha = 0.7f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text(there?.icon ?: "·", fontSize = 18.sp, color = parchment)
+                        }
+                    }
+                }
+            } else if (s != null) {
+                Text("Learn it to put it on one of your four skill buttons.", color = Color.Gray, fontSize = 11.sp)
+            }
+        }
+    }
+}
+
+/** A small version of the gothic button, for the tree's header and details. */
+@Composable
+private fun TreeButton(label: String, enabled: Boolean = true, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .background(
+                Brush.verticalGradient(if (enabled) listOf(Color(0xFF6A1717), Color(0xFF2A0808)) else listOf(Color(0xFF3A3530), Color(0xFF1E1B18))),
+                RoundedCornerShape(6.dp),
+            )
+            .border(1.dp, bronze, RoundedCornerShape(6.dp))
+            .clickable(enabled = enabled) {
+                uiSfx?.click()
+                onClick()
+            }
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, color = if (enabled) parchment else Color.Gray, fontSize = 12.sp, style = serifBold, textAlign = TextAlign.Center)
     }
 }
 
