@@ -278,6 +278,14 @@ object Wire {
             if (i > 0) sb.append(',')
             sb.append('[').n(w.x).append(',').n(w.y).append(',').n(w.radius).append(',').append(argb(w.color)).append(',').n(w.age / w.life).append(']')
         }
+        sb.append("],\"sf\":[")
+        val cues = g.skillFx
+        for (i in cues.indices) {
+            val c = cues[i]
+            if (i > 0) sb.append(',')
+            sb.append('[').append(c.skill.ordinal).append(',').n(c.x).append(',').n(c.y).append(',').n(c.tx).append(',').n(c.ty)
+                .append(',').n(c.dx).append(',').n(c.dy).append(',').n(c.age / c.life).append(',').n(c.value).append(']')
+        }
         sb.append("],\"dc\":[")
         val decals = g.decals
         for (i in decals.indices) {

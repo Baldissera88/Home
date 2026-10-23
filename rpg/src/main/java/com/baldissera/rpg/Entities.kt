@@ -376,6 +376,25 @@ class Wave(val x: Float, val y: Float, val radius: Float, val color: Color, val 
     var age = 0f
 }
 
+/**
+ * A visual cue the 3D view draws for [skill] (a falling hammer, a lance of light, a harpoon chain...), sent as "sf".
+ * It starts at (x, y), aims at (tx, ty) and faces (dx, dy); [value] is a free per-skill number such as a radius.
+ * Skills that move their cue (an orb in flight, a spear pulling a monster) update the fields every frame.
+ */
+class SkillFx(
+    val skill: Skill,
+    var x: Float,
+    var y: Float,
+    var tx: Float,
+    var ty: Float,
+    var dx: Float,
+    var dy: Float,
+    val life: Float,
+    var value: Float = 0f,
+) {
+    var age = 0f
+}
+
 /** A jagged lightning segment that fades out quickly. */
 class Bolt(val x1: Float, val y1: Float, val x2: Float, val y2: Float, val seed: Int) {
     var age = 0f

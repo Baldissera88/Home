@@ -102,6 +102,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     val zones = mutableListOf<Zone>()
     val meteors = mutableListOf<Meteor>()
     val waves = mutableListOf<Wave>()
+    val skillFx = mutableListOf<SkillFx>()
     /** Smoothed camera centre in world tiles. */
     var camX = 0f
         private set
@@ -326,6 +327,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         decals.clear()
         corpses.clear()
         ghosts.clear()
+        skillFx.clear()
         player.phoenixUsed = false
         player.x = dungeon.start.cx + 0.5f
         player.y = dungeon.start.cy + 0.5f
@@ -702,6 +704,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         if (corpses.isNotEmpty()) corpses.removeAll { it.age += dt; it.age > 1.2f }
         if (bolts.isNotEmpty()) bolts.removeAll { it.age += dt; it.age > 0.28f }
         if (waves.isNotEmpty()) waves.removeAll { it.age += dt; it.age > it.life }
+        if (skillFx.isNotEmpty()) skillFx.removeAll { it.age += dt; it.age > it.life }
         if (ghosts.isNotEmpty()) ghosts.removeAll { it.age += dt; it.age > 0.3f }
         if (dead || victory) return
         updatePlayer(dt)
