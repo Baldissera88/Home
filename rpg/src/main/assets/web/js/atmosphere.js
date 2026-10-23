@@ -574,7 +574,7 @@ export class Atmosphere {
     this.hemi.groundColor.setHex(0x5a4a36).lerp(new THREE.Color(0x1a2232), night);
     // Sky fill well below the sun (with the sky's reflection map adding its share), so sunlit and shaded
     // sides read apart as on a clear day; overcast evens them out.
-    this.hemi.intensity = 0.7 + 0.05 * day + 0.3 * rain * day - 0.15 * rain + flash * 2.5;
+    this.hemi.intensity = 0.7 + 0.05 * day + 0.45 * rain * day - 0.1 * rain + flash * 2.5;
 
     this.fog.color.copy(fogCol);
     this.fog.density = 0.012 + f.fg * 0.09 + rain * 0.012 + night * 0.012;

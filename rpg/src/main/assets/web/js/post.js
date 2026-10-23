@@ -32,7 +32,7 @@ export const GRADE = {
     // Golden hour: warm light, warmer highlights, a little more contrast and glow.
     dusk: { exposure: 1.12, balance: [1.1, 0.98, 0.84], contrast: 0.24, saturation: 1.14, shadowSat: 0.88, lift: [0.016, 0.008, 0.004], gain: [1.06, 0.99, 0.9], bloom: 0.42, threshold: 1.35, scatter: 1.2 },
     // Moonlight: the eye adapts up, the colour goes cool and grey.
-    night: { exposure: 1.32, balance: [0.86, 0.95, 1.12], contrast: 0.16, saturation: 0.86, shadowSat: 0.7, lift: [0.0, 0.006, 0.02], gain: [0.97, 0.99, 1.04], bloom: 0.5, threshold: 1.25, scatter: 0.35, env: 0.45 },
+    night: { exposure: 1.42, balance: [0.86, 0.95, 1.12], contrast: 0.16, saturation: 0.86, shadowSat: 0.7, lift: [0.0, 0.006, 0.02], gain: [0.97, 0.99, 1.04], bloom: 0.5, threshold: 1.25, scatter: 0.35, env: 0.45 },
   },
   // Cool, desaturated stone; torches stay warm in the highlights.
   CRYPT: {

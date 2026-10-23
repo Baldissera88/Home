@@ -272,8 +272,12 @@ export class Engine {
     rays.active = k > 0.02;
     if (!rays.active) return;
     _sunView.copy(cam.position).addScaledVector(sun, 200).project(cam);
-    rays.sun.set(_sunView.x * 0.5 + 0.5, _sunView.y * 0.5 + 0.5);
-    rays.color.copy(atm.sun.color).multiplyScalar(0.22 * k);
+    const x = _sunView.x * 0.5 + 0.5, y = _sunView.y * 0.5 + 0.5;
+    // Shafts stream from the sky around the sun: none to see while it is far off screen.
+    const near = 1 - THREE.MathUtils.smoothstep(Math.max(Math.abs(x - 0.5) - 0.5, y - 1, -y), 0.3, 0.9);
+    rays.active = near > 0.02;
+    rays.sun.set(x, y);
+    rays.color.copy(atm.sun.color).multiplyScalar(0.45 * k * near);
   }
 
   draw(dt) {
