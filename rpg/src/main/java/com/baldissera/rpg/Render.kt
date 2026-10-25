@@ -727,6 +727,16 @@ private fun DrawScope.drawZones(g: Game, cam: Camera) {
                 drawOval(Brush.radialGradient(listOf(Color(0xFFFF6D00).copy(alpha = 0.5f * k), Color(0xFF3E0E00).copy(alpha = 0.2f * k)), c, rx), Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f))
                 for (i in 0 until 5) drawFlame(c.x + sin(i * 2.4f) * rx * 0.55f, c.y + kotlin.math.cos(i * 1.7f) * rx * 0.3f, t * 0.3f * k, g.time, i * 3f)
             }
+            ZoneKind.HOLY_LIGHT -> {
+                // Searing light where a pillar of Heaven's Fury struck.
+                drawOval(Brush.radialGradient(listOf(Color.White.copy(alpha = 0.6f * k), holyGold.copy(alpha = 0.15f * k)), c, rx), Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f))
+                drawOval(Color(0xFFFFF176).copy(alpha = 0.7f * k), Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f), style = Stroke(t * 0.03f))
+            }
+            ZoneKind.BLEED -> {
+                // A pool of blood left by Rend.
+                drawOval(Brush.radialGradient(listOf(Color(0xFF8E1B1B).copy(alpha = 0.6f * k), Color(0xFF4A0A0A).copy(alpha = 0.15f * k)), c, rx), Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f))
+                for (i in 0 until 4) drawCircle(Color(0xFFC62828).copy(alpha = 0.5f * k), t * 0.08f, Offset(c.x + sin(i * 2.1f) * rx * 0.6f, c.y + kotlin.math.cos(i * 1.3f) * rx * 0.3f))
+            }
             ZoneKind.SANDSTORM -> {
                 // A swirling wall of sand: dusty haze, a dashed rim while it gathers, then spinning streaks.
                 val gathering = z.age < SANDSTORM_WARN
@@ -762,6 +772,78 @@ private fun DrawScope.drawZones(g: Game, cam: Camera) {
         val hy = c.y - t * 9f * (1f - k)
         drawLine(Color(0xFFFF7043).copy(alpha = 0.6f), Offset(hx + t * 1.2f, hy - t * 3.6f), Offset(hx, hy), strokeWidth = t * 0.22f, cap = StrokeCap.Round)
         drawCircle(Brush.radialGradient(listOf(Color.White, Color(0xFFFFAB40), Color.Transparent), Offset(hx, hy), t * 0.5f), t * 0.5f, Offset(hx, hy))
+    }
+    for (f in g.skillFx) drawMightFx(f, cam, g.time)
+}
+
+/** Simple 2D cues for the Knight's and Barbarian's tree skills (the 3D view draws the real effects). */
+private fun DrawScope.drawMightFx(f: SkillFx, cam: Camera, time: Float) {
+    val t = cam.t
+    val k = (f.age / f.life).coerceIn(0f, 1f)
+    val a = Offset(cam.sx(f.x), cam.sy(f.y))
+    val b = Offset(cam.sx(f.tx), cam.sy(f.ty))
+    when (f.skill) {
+        Skill.JUDGMENT, Skill.AVALANCHE -> {
+            // Falls during the first half, lands at the middle.
+            val r = f.value * t
+            val gold = f.skill == Skill.JUDGMENT
+            val tint = if (gold) Color(0xFFFFD54F) else Color(0xFF8D6E63)
+            if (k < 0.5f) {
+                val fall = k * 2f
+                drawOval(Color.Black.copy(alpha = 0.25f * fall), Offset(b.x - r * fall, b.y - r * fall * 0.6f), Size(r * fall * 2f, r * fall * 1.2f))
+                drawOval(tint.copy(alpha = 0.7f), Offset(b.x - r, b.y - r * 0.6f), Size(r * 2f, r * 1.2f), style = Stroke(t * 0.03f))
+                val hy = b.y - t * 7f * (1f - fall)
+                if (gold) {
+                    drawLine(Color(0xFFFFF59D), Offset(b.x, hy - t * 1.4f), Offset(b.x, hy), strokeWidth = t * 0.12f, cap = StrokeCap.Round)
+                    drawRect(Color(0xFFFFE082), Offset(b.x - t * 0.5f, hy - t * 0.1f), Size(t * 1f, t * 0.45f))
+                } else {
+                    drawCircle(Color(0xFF795548), t * 0.45f, Offset(b.x, hy))
+                    drawCircle(Color(0xFFA1887F), t * 0.25f, Offset(b.x - t * 0.1f, hy - t * 0.12f))
+                }
+            } else if (gold) {
+                drawOval(Color(0xFFFFF59D).copy(alpha = (1f - k) * 1.2f), Offset(b.x - r, b.y - r * 0.6f), Size(r * 2f, r * 1.2f))
+            }
+        }
+        Skill.LIGHT_LANCE -> {
+            val fade = 1f - k
+            drawLine(Color(0xFFFFF176).copy(alpha = 0.5f * fade), a, b, strokeWidth = f.value * 2f * t * fade + 1f, cap = StrokeCap.Round)
+            drawLine(Color.White.copy(alpha = 0.9f * fade), a, b, strokeWidth = f.value * 0.6f * t * fade + 1f, cap = StrokeCap.Round)
+        }
+        Skill.BULWARK -> {
+            val r = t * (0.8f + 0.05f * sin(time * 6f))
+            drawOval(Color(0xFF90A4AE).copy(alpha = 0.25f), Offset(a.x - r, a.y - r * 0.6f), Size(r * 2f, r * 1.2f))
+            drawOval(Color(0xFFCFD8DC).copy(alpha = 0.8f), Offset(a.x - r, a.y - r * 0.6f), Size(r * 2f, r * 1.2f), style = Stroke(t * 0.06f))
+        }
+        Skill.HEAVENS_FURY -> {
+            if (f.value < 0f) {
+                val r = -f.value * t
+                drawOval(Color(0xFFFFF176).copy(alpha = 0.35f), Offset(a.x - r, a.y - r * 0.6f), Size(r * 2f, r * 1.2f), style = Stroke(t * 0.03f))
+            } else {
+                val r = f.value * t
+                val strength = if (k < 0.5f) k * 2f else (1f - k) * 2f
+                drawRect(Color(0xFFFFF59D).copy(alpha = 0.7f * strength), Offset(b.x - r * 0.3f, b.y - t * 8f), Size(r * 0.6f, t * 8f))
+                drawOval(Color.White.copy(alpha = 0.6f * strength), Offset(b.x - r, b.y - r * 0.6f), Size(r * 2f, r * 1.2f))
+            }
+        }
+        Skill.HARPOON -> {
+            drawLine(Color(0xFF9E9E9E), Offset(a.x, a.y - t * 0.4f), Offset(b.x, b.y - t * 0.4f), strokeWidth = t * 0.05f + 1f)
+            drawCircle(Color(0xFFBCAAA4), t * 0.12f, Offset(b.x, b.y - t * 0.4f))
+        }
+        Skill.REND -> {
+            val r = f.value * t
+            val ang = Math.toDegrees(atan2(f.dy.toDouble(), f.dx.toDouble())).toFloat()
+            drawArc(
+                Color(0xFFE53935).copy(alpha = 0.8f * (1f - k)), ang - 95f, 190f * (0.4f + 0.6f * k), useCenter = false,
+                topLeft = Offset(a.x - r, a.y - r * 0.6f), size = Size(r * 2f, r * 1.2f), style = Stroke(t * 0.12f, cap = StrokeCap.Round),
+            )
+        }
+        Skill.SEISMIC_SLAM -> {
+            val fade = if (k > 0.6f) (1f - k) / 0.4f else 1f
+            drawLine(Color(0xFF5D4037).copy(alpha = 0.8f * fade), a, b, strokeWidth = t * 0.08f + 1f)
+            val r = f.value * t
+            drawOval(Color(0xFFA1887F).copy(alpha = 0.5f * fade), Offset(b.x - r, b.y - r * 0.6f), Size(r * 2f, r * 1.2f), style = Stroke(t * 0.05f))
+        }
+        else -> {}
     }
 }
 
