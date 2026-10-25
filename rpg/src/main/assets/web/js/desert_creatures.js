@@ -93,7 +93,7 @@ function bodyMaterial(opts = {}) {
 
 function fxMaterial(additive) {
   return new THREE.MeshBasicMaterial({
-    color: 0xffffff, vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    color: 0xffffff, vertexColors: true, transparent: true, depthWrite: false,
     blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
   });
 }
@@ -865,8 +865,8 @@ const MUMMY_STRIPS = [
   ['chest', [-0.12, 0.12, 0.06], 0.26, 0.05, -0.2],
 ];
 
-/** Hangs a strip of linen from bone `parent`: two bones of its own so it can swing and trail. */
-function addStrips(rig, list, tint) {
+/** Hangs strips of cloth (painted by paint(v)) from their bones: two bones each so they can swing and trail. */
+function addStrips(rig, list, paint) {
   rig.top.updateMatrixWorld(true);
   return list.map(([parent, off, len, width, angle], i) => {
     const at = rig.by[parent].localToWorld(new V3(off[0], off[1], off[2]));
@@ -884,7 +884,7 @@ function addStrips(rig, list, tint) {
         return [[a, 1 - t], [b, t]];
       },
       paint: (v) => {
-        linenPaint(tint)(v);
+        paint(v);
         // Frayed, darker ends.
         v.c.multiplyScalar(1 - 0.35 * smooth(0.6, 1, (at.y - v.wp.y) / len));
       },
@@ -976,7 +976,7 @@ function buildMummy() {
       if (p.y < -0.015) p.y = -0.015 + (p.y + 0.015) * 0.3;
     }), `foot${S}`, { at: [0, -0.02, 0.045], paint: linenPaint(0xa89878) });
   }
-  const strips = addStrips(rig, MUMMY_STRIPS, tint);
+  const strips = addStrips(rig, MUMMY_STRIPS, linenPaint(tint));
   const maps = linenMaps();
   return {
     rig: rig.finish(),
@@ -1097,10 +1097,252 @@ class Mummy extends Creature {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// The djinn.
+
+const GOLD = 0xffbf3c;
+
+/** Polished gold. */
+function gold(v) {
+  v.c.set(GOLD);
+  v.s[0] = 0.26;
+  v.s[1] = 1;
+}
+
+/** A ring (a bangle, a torc, an armband) of radius R around the y axis, its band r thick and flattened by flat. */
+function ring(R, r, flat = [1, 1], radial = 6, seg = 16) {
+  const pts = [];
+  for (let i = 0; i <= seg; i++) pts.push(new V3(Math.cos((i / seg) * TAU) * R, 0, Math.sin((i / seg) * TAU) * R));
+  return loft(pts, r, { radial, flat, caps: false, up: new V3(0, 1, 0) });
+}
+
+/** Weights along a chain of bones at the given heights (top first) for a vertex at height y. */
+function chainSkin(names, ys) {
+  return (wp) => {
+    const y = wp.y;
+    if (y >= ys[0]) return [[names[0], 1]];
+    for (let i = 0; i < ys.length - 1; i++) {
+      if (y >= ys[i + 1]) {
+        const t = ease((ys[i] - y) / (ys[i] - ys[i + 1]));
+        return [[names[i], 1 - t], [names[i + 1], t]];
+      }
+    }
+    return [[names[names.length - 1], 1]];
+  };
+}
+
+/** Skin from deep blue to a lighter, glowing hue at the edges. */
+function djinnSkin(v) {
+  const facing = clamp(v.n.y * 0.5 + 0.5, 0, 1);
+  v.c.set(0x2a62d8).lerp(new THREE.Color(0x163a9c), 0.5 - facing * 0.5);
+  v.s[0] = 0.62;
+  v.s[2] = 0.09;
+}
+
+function buildDjinn() {
+  const rig = new Rig();
+  rig.bone('float', null, 0, 0.36, 0);
+  rig.bone('waist', 'float', 0, 0.5, 0);
+  rig.bone('chest', 'waist', 0, 0.2, 0);
+  rig.bone('neck', 'chest', 0, 0.23, 0.0);
+  rig.bone('head', 'neck', 0, 0.06, 0.01);
+  rig.bone('orb', 'chest', 0, 0.0, 0.3);
+  const tails = ['tail0', 'tail1', 'tail2', 'tail3'];
+  rig.bone('tail0', 'waist', 0, -0.04, 0);
+  rig.bone('tail1', 'tail0', 0, -0.17, -0.01);
+  rig.bone('tail2', 'tail1', 0, -0.17, -0.02);
+  rig.bone('tail3', 'tail2', 0, -0.16, -0.02);
+  for (const s of [-1, 1]) {
+    const S = s > 0 ? 'R' : 'L';
+    rig.bone(`arm${S}`, 'chest', 0.2 * s, 0.15, -0.01, 0, 0, 0.28 * s);
+    rig.bone(`fore${S}`, `arm${S}`, 0, -0.25, 0, -0.9, 0, 0);
+    rig.bone(`hand${S}`, `fore${S}`, 0, -0.23, 0, 0, 0, 0);
+  }
+  // Torso: a broad, muscled chest narrowing to the waist, skinned across both bones.
+  rig.add(warp(loft(line([0, -0.24, 0], [0, 0.21, 0], 10), (t) => {
+    const chest = Math.sin(Math.PI * clamp((t - 0.25) / 0.85, 0, 1));
+    return 0.115 + 0.075 * chest - 0.03 * smooth(0.9, 1, t);
+  }, { radial: 14, flat: [0.66, 1] }), (p) => {
+    // Pectorals and a hint of abdominals at the front.
+    if (p.z > 0) {
+      const pec = Math.exp(-(((p.y - 0.06) / 0.06) ** 2)) * smooth(0.0, 0.05, Math.abs(p.x)) * smooth(0.17, 0.08, Math.abs(p.x));
+      p.z += 0.03 * pec;
+      p.z += 0.006 * Math.cos(p.y * 70) * smooth(0.02, -0.1, p.y) * smooth(0.07, 0.02, Math.abs(p.x));
+    }
+  }), 'chest', {
+    paint: djinnSkin,
+    skin: (wp) => {
+      const t = smooth(0.78, 0.95, wp.y);
+      return [['waist', 1 - t], ['chest', t]];
+    },
+  });
+  for (const s of [-1, 1]) rig.add(ell(0.068, 0.064, 0.066, 10, 8), 'chest', { at: [0.175 * s, 0.135, -0.012], paint: djinnSkin });
+  rig.add(loft(line([0, -0.03, 0], [0, 0.08, 0], 2), 0.05, { radial: 10 }), 'neck', { paint: djinnSkin });
+  // Gold torc, sash with a jewel, and the belt where the body turns to smoke.
+  rig.add(ring(0.075, 0.016, [1, 1.6], 6, 18), 'neck', { at: [0, 0.0, 0.0], rot: [0.25, 0, 0], paint: gold });
+  rig.add(ring(0.122, 0.03, [1.6, 0.6], 6, 20), 'waist', { at: [0, 0.0, 0], scale: [1, 1, 0.7], paint: (v) => { v.c.set(0x6a1468); v.s[0] = 0.6; } });
+  rig.add(ring(0.125, 0.008, [1, 1], 4, 20), 'waist', { at: [0, 0.03, 0], scale: [1, 1, 0.71], paint: gold });
+  rig.add(ring(0.125, 0.008, [1, 1], 4, 20), 'waist', { at: [0, -0.03, 0], scale: [1, 1, 0.71], paint: gold });
+  rig.add(ell(0.03, 0.035, 0.015, 8, 6), 'waist', { at: [0, 0, 0.092], paint: gold });
+  rig.add(ell(0.017, 0.02, 0.012, 8, 6), 'waist', { at: [0, 0, 0.104], color: 0xff2040, glow: 1.6, rough: 0.15 });
+  // The head: a stern face, pointed ears, a forked beard, a topknot and burning eyes.
+  rig.add(warp(ell(0.085, 0.1, 0.095, 16, 12), (p) => {
+    if (p.y < -0.02) p.x *= 1 - 0.25 * smooth(-0.02, -0.1, p.y);
+    if (p.z > 0.05) p.z += 0.012 * Math.exp(-(((p.y - 0.03) / 0.015) ** 2)) * smooth(0.06, 0.0, Math.abs(p.x));
+  }), 'head', { at: [0, 0.1, 0.0], paint: djinnSkin });
+  rig.add(new THREE.ConeGeometry(0.018, 0.05, 6).rotateX(Math.PI / 2), 'head', { at: [0, 0.085, 0.1], rot: [0.45, 0, 0], paint: djinnSkin });
+  for (const s of [-1, 1]) {
+    rig.add(new THREE.ConeGeometry(0.022, 0.09, 6).translate(0, 0.045, 0).rotateZ(-s * (Math.PI / 2 - 0.45)), 'head', { at: [0.1 * s, 0.11, -0.01], scale: [1, 0.6, 0.5], paint: djinnSkin });
+    rig.add(ring(0.016, 0.004, [1, 1], 4, 10), 'head', { at: [0.093 * s, 0.065, 0.0], rot: [0, 0, Math.PI / 2], paint: gold });
+    // Eyes glowing like coals under a heavy, angry brow.
+    rig.add(ell(0.019, 0.008, 0.008, 8, 6), 'head', { at: [0.034 * s, 0.11, 0.086], rot: [0, 0, 0.3 * s], color: 0xffb030, glow: 5, rough: 0.2 });
+    rig.add(ell(0.034, 0.009, 0.016, 8, 4), 'head', { at: [0.036 * s, 0.124, 0.086], rot: [0, 0, 0.5 * s], color: 0x0c1430 });
+  }
+  rig.add(loft(bend([0, 0.0, 0.07], [0, -0.05, 0.1], [0, -0.13, 0.07], 5), (t) => 0.026 * (1 - t) + 0.003, { radial: 6 }), 'head', { at: [0, 0.03, 0], color: 0x0c0c18, rough: 0.6 });
+  rig.add(loft(bend([0, 0.18, -0.02], [0, 0.3, -0.06], [0, 0.26, -0.2], 6), (t) => 0.03 * (1 - t * 0.7), { radial: 7 }), 'head', { color: 0x0c0c18, rough: 0.5 });
+  rig.add(ring(0.024, 0.008, [1, 1], 4, 10), 'head', { at: [0, 0.205, -0.03], rot: [-0.3, 0, 0], paint: gold });
+  // Arms: muscled, with gold armbands and heavy bracers; strong open hands.
+  for (const s of [-1, 1]) {
+    const S = s > 0 ? 'R' : 'L';
+    rig.add(loft(line([0, 0.02, 0], [0, -0.26, 0], 6), (t) => 0.055 + 0.012 * Math.sin(Math.PI * t), { radial: 10 }), `arm${S}`, { paint: djinnSkin });
+    rig.add(ring(0.062, 0.012, [1.8, 0.8], 4, 14), `arm${S}`, { at: [0, -0.07, 0], paint: gold });
+    rig.add(loft(line([0, 0.02, 0], [0, -0.24, 0], 6), (t) => 0.05 - 0.012 * t, { radial: 10 }), `fore${S}`, { paint: djinnSkin });
+    rig.add(loft(line([0, -0.08, 0], [0, -0.22, 0], 3), (t) => 0.052 - 0.006 * t, { radial: 12 }), `fore${S}`, { paint: (v) => {
+      gold(v);
+      // Engraved bands.
+      const band = Math.abs(((v.lp.y + 0.08) / 0.035) % 1);
+      if (band < 0.18) v.c.multiplyScalar(0.45);
+    } });
+    rig.add(ell(0.04, 0.05, 0.022, 8, 6), `hand${S}`, { at: [0, -0.045, 0], paint: djinnSkin });
+    for (let f = 0; f < 4; f++) {
+      const x = (-0.024 + f * 0.016) * s;
+      rig.add(loft(bend([x, -0.08, 0], [x, -0.12, 0.012], [x, -0.14, 0.03], 3), 0.009, { radial: 5 }), `hand${S}`, { paint: djinnSkin });
+    }
+    rig.add(loft(bend([0.035 * s, -0.04, 0.012], [0.05 * s, -0.07, 0.03], [0.04 * s, -0.09, 0.05], 3), 0.01, { radial: 5 }), `hand${S}`, { paint: djinnSkin });
+  }
+  // The smoke tail: a swirl from the waist tapering to a wisp, skin fading into vapour.
+  const ys = [0.82, 0.65, 0.48, 0.32];
+  const path = [];
+  for (let i = 0; i <= 16; i++) {
+    const t = i / 16;
+    path.push(new V3(Math.sin(t * 4.2) * 0.07 * t, 0.84 - t * 0.6, -0.12 * t * t + Math.cos(t * 4.2) * 0.05 * t - 0.05 * t));
+  }
+  const tailG = loft(path, (t) => (0.13 * Math.pow(1 - t, 1.25) + 0.012) * (1 + 0.07 * Math.sin(t * 26)), { radial: 12 });
+  rig.add(tailG, 'tail0', { world: true, skin: chainSkin(tails, ys), paint: (v) => {
+    const t = clamp((0.84 - v.wp.y) / 0.6, 0, 1);
+    djinnSkin(v);
+    v.c.lerp(new THREE.Color(0x6a8ad0), smooth(0.05, 0.7, t)).lerp(new THREE.Color(0xa8c0e8), smooth(0.6, 1, t));
+    v.s[2] = 0.07 + 0.35 * smooth(0.2, 1, t);
+    v.s[0] = 0.6;
+  } });
+  // Wisps of smoke spiralling around the tail.
+  for (let k = 0; k < 3; k++) {
+    const pts = [];
+    for (let i = 0; i <= 18; i++) {
+      const t = i / 18, a = k * 2.1 + t * 6.5, r = 0.07 + 0.1 * Math.sin(Math.PI * t) + 0.04 * (1 - t);
+      pts.push(new V3(path[Math.round(t * 16)].x + Math.cos(a) * r, 0.88 - t * 0.66, path[Math.round(t * 16)].z + Math.sin(a) * r));
+    }
+    rig.add(loft(pts, (t) => 0.05 * Math.sin(Math.PI * t) + 0.005, { radial: 4, flat: [0.15, 1], caps: false }), 'tail0', {
+      layer: 'smoke', world: true, skin: chainSkin(tails, ys), paint: (v) => {
+        const t = clamp((0.88 - v.wp.y) / 0.66, 0, 1);
+        v.c.set(0xb8cdf0).lerp(new THREE.Color(0xe0e8ff), t);
+        v.a = 0.42 * Math.sin(Math.PI * t) * (0.6 + 0.4 * Math.sin(t * 9 + k));
+      },
+    });
+  }
+  // The fire orb: a white-hot core in the body, flames around it.
+  rig.add(ell(0.06, 0.06, 0.06, 12, 8), 'orb', { color: 0xff8a1c, glow: 3.4, rough: 0.3 });
+  rig.add(ell(0.095, 0.095, 0.095, 12, 8), 'orb', { layer: 'fire', paint: (v) => { v.c.set(0xff5a08); v.a = 0.55; } });
+  rig.add(ell(0.13, 0.15, 0.13, 12, 8), 'orb', { layer: 'fire', at: [0, 0.02, 0], paint: (v) => { v.c.set(0xe03004); v.a = 0.3 + 0.2 * clamp(v.n.y, 0, 1); } });
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * TAU;
+    rig.add(new THREE.ConeGeometry(0.035, 0.14, 6, 1, true).translate(0, 0.07, 0), 'orb', {
+      layer: 'fire', at: [Math.cos(a) * 0.05, 0.03, Math.sin(a) * 0.05], rot: [Math.sin(a) * 0.5, 0, -Math.cos(a) * 0.5],
+      paint: (v) => { v.c.set(0xffa030).lerp(new THREE.Color(0xff3000), clamp(v.lp.y / 0.14 + 0.3, 0, 1)); v.a = 0.6 * (1 - clamp(v.lp.y / 0.17, 0, 1)); },
+    });
+  }
+  // The sash's loose ends.
+  const strips = addStrips(rig, [['waist', [0.08, -0.01, 0.07], 0.22, 0.045, 0.4], ['waist', [0.1, 0.0, 0.0], 0.17, 0.04, 1.3]], (v) => { v.c.set(0x6a1468); v.s[0] = 0.6; });
+  return {
+    rig: rig.finish(),
+    materials: { body: bodyMaterial(), smoke: fxMaterial(false), fire: fxMaterial(true) },
+    strips,
+    height: 1.72,
+    blob: [0.4, 0.36],
+  };
+}
+
+class Djinn extends Creature {
+  constructor(tpl, uid) {
+    super(tpl, uid);
+    this.castLength = 0;
+    this.hang = new Hanging(this, tpl.strips);
+    this.tails = [0, 1, 2, 3].map((i) => this.b[`tail${i}`]);
+    this.smoke = this.mats[1];
+    this.fire = this.mats[2];
+  }
+
+  animate(dt, s) {
+    const b = this.b, t = this.time, w = this.walk;
+    const wind = s.wind > 0 ? ease(s.wind) : 0;
+    const hit = this.strikeT >= 0 ? strikeCurve(this.strikeT / 0.5, 0.25) : 0;
+    const thrown = this.strikeT >= 0 ? clamp(this.strikeT / 0.18, 0, 1) : 1;
+    const charge = Math.max(wind, this.strikeT >= 0 ? 1 - thrown : 0);
+    // A gentle bob; it leans into its flight and rises as it gathers the fire.
+    shift(b.float, 0, Math.sin(t * 1.8) * 0.06 + wind * 0.08 - hit * 0.04, 0);
+    turn(b.float, 0, 0, Math.sin(t * 0.9) * 0.03);
+    turn(b.waist, w * 0.28 - wind * 0.12 + hit * 0.2 + Math.sin(t * 1.8 + 0.6) * 0.03, Math.sin(t * 0.6) * 0.08 * (1 - wind), 0);
+    turn(b.chest, Math.sin(t * 1.4) * 0.02 - wind * 0.08, Math.sin(t * 0.6 + 0.5) * 0.06 * (1 - wind), 0);
+    turn(b.head, -w * 0.18 + wind * 0.12 - hit * 0.1, Math.sin(t * 0.45) * 0.15 * (1 - wind), 0);
+    // The tail swirls; it trails behind when it flies.
+    this.tails.forEach((seg, i) => {
+      const p = t * 2.2 - i * 0.9;
+      turn(seg, Math.sin(p) * 0.12 + w * (0.18 + i * 0.06), t * 0.8 * (i === 0 ? 1 : 0) + Math.sin(p * 0.7) * 0.2, Math.cos(p) * 0.12);
+    });
+    // Arms: menacing and loose when idle; cupped together round the growing orb, then thrust out to hurl it.
+    for (const S of ['L', 'R']) {
+      const k = S === 'R' ? 1 : -1, off = k > 0 ? 0 : 1.7;
+      const idleX = -0.25 + Math.sin(t * 1.2 + off) * 0.08 - w * 0.25 * (1 - wind);
+      turn(b[`arm${S}`], idleX * (1 - wind) - 0.5 * wind - 1.2 * hit, 0, k * (0.05 + 0.04 * Math.sin(t + off)) * (1 - wind) - k * 0.24 * wind - k * 0.15 * hit);
+      turn(b[`fore${S}`], 0.2 * (1 - wind) - 0.4 * wind + 0.7 * hit, 0.55 * k * wind * (1 - hit), 0);
+      turn(b[`hand${S}`], -0.3 * wind - 0.4 * hit, 0, k * 0.5 * wind);
+    }
+    // The orb swells with the wind-up, flickering, and flies off with the throw.
+    const grow = charge > 0.01 ? charge : 0;
+    const flick = 1 + 0.08 * Math.sin(t * 31) + 0.05 * Math.sin(t * 17.3);
+    b.orb.scale.setScalar(Math.max(1e-3, grow * flick * (0.4 + 0.6 * grow)));
+    shift(b.orb, 0, 0.04 * wind, 0.06 * wind + (this.strikeT >= 0 ? thrown * 0.9 : 0));
+    turn(b.orb, t * 3, t * 4.3, 0);
+    this.smoke.opacity = this.fade;
+    this.fire.opacity = this.fade;
+    this.body.userData.glow.value = 1 + 0.6 * charge;
+    if (s.stunned) turn(b.head, 0.3, 0.4 * Math.sin(t * 7), 0.2 * Math.sin(t * 5));
+    this.hang.update(dt, 0.8);
+  }
+
+  dying(dt, d) {
+    const b = this.b;
+    // It howls, spins up into its own smoke and is gone.
+    const k = ease(d / 1.3);
+    shift(b.float, 0, 0.6 * k, 0);
+    turn(b.float, 0, d * d * 6, 0);
+    turn(b.waist, -0.3 * k, 0, 0);
+    turn(b.head, 0.4 * k, 0, 0);
+    for (const S of ['L', 'R']) turn(b[`arm${S}`], -0.3, 0, (S === 'R' ? 1 : -1) * 1.2 * k);
+    this.root.scale.setScalar(Math.max(0.01, 1 - 0.7 * k));
+    b.orb.scale.setScalar(1e-3);
+    this.setFade(clamp(1 - (d - 0.3) / 1.0, 0, 1));
+    this.smoke.opacity = Math.min(1, this.fade * 1.5);
+    this.fire.opacity = 0;
+    this.hang.update(dt, 1);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 
 const KINDS = {
   SCORPION: { build: buildScorpion, Ctor: Scorpion, deathLength: 2.4 },
   MUMMY: { build: buildMummy, Ctor: Mummy, deathLength: 2.6 },
+  DJINN: { build: buildDjinn, Ctor: Djinn, deathLength: 1.5 },
 };
 
 const templates = {};
