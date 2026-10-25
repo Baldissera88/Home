@@ -8,14 +8,17 @@ import { batchStatic } from './batch.js';
 import { buildBackdrop, updateBackdrop } from './backdrop.js';
 import { DesertField, SAND, SAND_LAYERS, bakeSandLayers, desertNoise } from './desert.js';
 import { buildDesert, desertGate, desertProp, desertStairs, updateDesert } from './cliffs.js';
+import { SURF, SURF_GLSL, kitSurface, setKitDetail, surfUniforms } from './surface.js';
 
 const WALL_HEIGHT = 1.9;
 
 const BIOME = {
-  OVERWORLD: { layers: ['tex_terrain.jpg', 'tex_terrain_h.png', 7], water: 4 },
-  CRYPT: { layers: ['tex_floorset_crypt.jpg', 'tex_floorset_crypt_h.png', 4], wall: 'crypt' },
-  CAVE: { layers: ['tex_floorset_cave.jpg', 'tex_floorset_cave_h.png', 4], wall: 'cave' },
-  HELL: { layers: ['tex_floorset_hell.jpg', 'tex_floorset_hell_h.png', 4], wall: 'hell' },
+  // surface: how the ground's stone behaves (terrain.js Ground.material): damp and puddles, the dust and
+  // grime along the walls, glowing lava.
+  OVERWORLD: { layers: ['tex_terrain.jpg', 'tex_terrain_h.png', 7], water: 4, surface: { open: true } },
+  CRYPT: { layers: ['tex_floorset_crypt.jpg', 'tex_floorset_crypt_h.png', 4], wall: 'crypt', surface: { wet: 0.6, dust: 0x4d463d, dustAmt: 0.45 } },
+  CAVE: { layers: ['tex_floorset_cave.jpg', 'tex_floorset_cave_h.png', 4], wall: 'cave', surface: { wet: 0.95, dust: 0x2c241c, dustAmt: 0.4 } },
+  HELL: { layers: ['tex_floorset_hell.jpg', 'tex_floorset_hell_h.png', 4], wall: 'hell', surface: { wet: 0, dust: 0x161211, dustAmt: 0.55, lava: true } },
   // Baked at load (desert.js): fine sand, dune sand, hardpan, paving, oasis grass; the pool bed is sand.
   DESERT: { layers: [null, null, SAND_LAYERS], water: 0 },
 };
@@ -34,23 +37,94 @@ function fit(obj, width, height) {
   return holder;
 }
 
+/** How the walls of each biome weather: damp (water streaks running down, rising damp) or glowing joints. */
+const WALL_SURF = { CRYPT: { wet: 0.6 }, CAVE: { wet: 0.9 }, HELL: { wet: 0, lava: true } };
+
+const WALL_GLSL = /* glsl */`
+  {
+    surfPlane(vOccWp, vWallN, wallP, wallAx, wallAy);
+#ifdef SURF_DETAIL
+    wallFine = surfFine(wallP * 0.6);
+#else
+    wallFine = vec4(0.0, 0.0, texture(uDetail, wallP * 0.6).a, 0.5);
+#endif
+    // Joints: darker than the blurred texture around them (hell's glowing seams are handled below).
+    vec3 wallTex = diffuseColor.rgb;
+    float lum = dot(wallTex, vec3(0.3, 0.59, 0.11));
+    float lumBlur = dot(texture2D(map, vMapUv, 3.0).rgb, vec3(0.3, 0.59, 0.11));
+    float joint = clamp((lumBlur - lum) / max(lumBlur, 0.02) * 1.6, 0.0, 1.0);
+    float broadW = texture(uDetail, wallP * 0.13 + 0.71).b;
+#ifdef WALL_TOP
+    diffuseColor.rgb *= 1.3 * (1.0 - 0.25 * joint) * (0.88 + 0.24 * wallFine.z);
+    wallRough = 0.8 + 0.12 * joint + (wallFine.z - 0.5) * 0.2;
+    wallWet = uWallWet * smoothstep(0.62, 0.8, broadW) * 0.6;
+#else
+    diffuseColor.rgb *= mix(1.0, 1.9, smoothstep(0.0, 1.1, vWallY)) * (1.0 - 0.3 * joint) * (0.86 + 0.28 * wallFine.z);
+    // Water: streaks running down from the top, damp rising from the floor with a ragged edge.
+    float streak = texture(uDetail, vec2(wallP.x * 1.3, vWallY * 0.05 + wallP.x * 0.03)).b;
+    float runs = smoothstep(0.58, 0.72, streak) * (0.35 + 0.65 * smoothstep(1.9, 0.6, vWallY));
+    float rising = smoothstep(0.25 + 0.5 * broadW, 0.05, vWallY);
+    wallWet = uWallWet * clamp(max(runs, rising) + joint * 0.3, 0.0, 1.0);
+    wallRough = 0.82 + 0.12 * joint + (wallFine.z - 0.5) * 0.24;
+#endif
+    diffuseColor.rgb *= 1.0 - 0.42 * wallWet;
+    wallRough = mix(wallRough, 0.3, wallWet);
+#ifdef WALL_LAVA
+    // Hell: the joints glow and pulse; heat reddens the foot of the walls, soot darkens their tops.
+    float lava = smoothstep(0.07, 0.2, wallTex.r) * (1.0 - smoothstep(0.2, 0.4, wallTex.b));
+    float pulse = 0.7 + 0.3 * sin(uSurfTime * 1.9 + broadW * 9.0 + vWallY * 2.0);
+    wallGlow = wallTex * lava * (0.9 * pulse + 0.5);
+#ifndef WALL_TOP
+    wallGlow += vec3(0.7, 0.12, 0.02) * smoothstep(0.55, 0.0, vWallY) * (0.1 + 0.08 * pulse) * (0.6 + 0.8 * wallFine.w);
+    diffuseColor.rgb *= 1.0 - 0.35 * smoothstep(1.2, 1.9, vWallY) * broadW;
+#endif
+    wallRough = mix(0.7 + (wallFine.z - 0.5) * 0.3, 0.95, lava);
+#endif
+  }
+`;
+
 /**
  * Dungeon walls: the game's own wall and top textures in world space, bump from their shading, grime
- * creeping up from the floor and the see-through cutaway around the hero.
+ * creeping up from the floor and the see-through cutaway around the hero. Over that, fine relief in world
+ * space (so the small textures never visibly repeat; not at the low preset), joints rougher and deeper
+ * than the block faces, water streaks and rising damp in the crypts and caves, glowing joints in hell.
  */
-function wallMaterial(map, top) {
-  const mat = new THREE.MeshStandardMaterial({ map, bumpMap: map, bumpScale: top ? 2.5 : 4, roughness: 0.92, metalness: 0 });
+function wallMaterial(map, top, biome, quality) {
+  const surf = WALL_SURF[biome] || WALL_SURF.CRYPT;
+  const detail = ((quality && quality.name) || quality || 'high') !== 'low';
+  // Hell's joints are painted bright (they glow): bump them in, not out.
+  const mat = new THREE.MeshStandardMaterial({ map, bumpMap: map, bumpScale: (top ? 2.5 : 4) * (surf.lava && !top ? -1 : 1), roughness: 0.92, metalness: 0 });
+  mat.defines = {};
+  if (top) mat.defines.WALL_TOP = '';
+  if (surf.lava) mat.defines.WALL_LAVA = '';
+  if (detail) mat.defines.SURF_DETAIL = '';
   // Sides and tops bake different shading into the shader, so they must not share one compiled program.
-  mat.customProgramCacheKey = () => (top ? 'wall-top' : 'wall-side');
+  const key = (top ? 'wall-top' : 'wall-side') + (surf.lava ? '-lava' : '') + (detail ? '-detail' : '');
+  mat.customProgramCacheKey = () => key;
   mat.onBeforeCompile = (shader) => {
     applyOcclusion(shader, 1.6, 0.32);
+    surfUniforms(shader);
+    shader.uniforms.uWallWet = { value: surf.wet };
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying float vWallY;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWallY = transformed.y;');
+      .replace('#include <common>', '#include <common>\nvarying float vWallY;\nvarying vec3 vWallN;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWallY = transformed.y;\nvWallN = normal;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying float vWallY;')
-      .replace('#include <map_fragment>', `#include <map_fragment>
-  diffuseColor.rgb *= ${top ? '1.3' : 'mix(1.0, 1.9, smoothstep(0.0, 1.1, vWallY))'};`);
+      .replace('#include <common>', `#include <common>
+varying float vWallY;
+varying vec3 vWallN;
+uniform float uWallWet;
+${SURF_GLSL}
+float wallRough = 0.9, wallWet = 0.0;
+vec2 wallP;
+vec3 wallAx, wallAy, wallGlow = vec3(0.0);
+vec4 wallFine;`)
+      .replace('#include <map_fragment>', '#include <map_fragment>\n' + WALL_GLSL)
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = wallRough;')
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+#ifdef SURF_DETAIL
+  normal = surfTilt(normal, wallFine.xy * 0.5 * (1.0 - 0.5 * wallWet), wallAx, wallAy);
+#endif`)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += wallGlow;');
   };
   return mat;
 }
@@ -87,6 +161,19 @@ export class World {
     this.lights = []; // { x, y, z, color, radius, flicker }
     this.flames = [];
     this.props = [];
+    this.surfMats = new Map();
+    // Fine relief on the kit props except at the low preset (their roughness and metal stay).
+    setKitDetail(((quality && quality.name) || quality || 'high') !== 'low');
+  }
+
+  /**
+   * A procedural prop's material: stone, wood or iron with fine relief and real roughness (surface.js),
+   * one instance per look so the static batch still merges look-alikes.
+   */
+  surfMat(kind, color) {
+    const key = kind + color;
+    if (!this.surfMats.has(key)) this.surfMats.set(key, kitSurface(new THREE.MeshStandardMaterial({ color }), kind));
+    return this.surfMats.get(key);
   }
 
   tile(x, y) {
@@ -113,7 +200,7 @@ export class World {
     this.ground = new Ground(ground, layers, { apron: this.outdoors, relief });
     const mat = this.ground.material({
       count: cfg.layers[2], waterLayer: cfg.water ?? 1, texScale: 4, bump: this.desert ? 2.6 : this.outdoors ? 1.6 : 2.2,
-      macro: this.desert ? 0.3 : this.outdoors ? 0.22 : 0.3, quality: this.quality, desert,
+      macro: this.desert ? 0.3 : this.outdoors ? 0.22 : 0.3, quality: this.quality, desert, surface: cfg.surface,
     });
     this.group.add(this.ground.build(mat));
     this.flameMat = flameSprite();
@@ -194,7 +281,7 @@ export class World {
   }
 
   lampPost(x, z) {
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 1.9, 8), new THREE.MeshStandardMaterial({ color: 0x2a2826, roughness: 0.5, metalness: 0.6 }));
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 1.9, 8), this.surfMat('iron', 0x2a2826));
     pole.position.set(x, 0.95, z);
     pole.castShadow = true;
     this.group.add(pole);
@@ -298,8 +385,8 @@ export class World {
       m.receiveShadow = true;
       this.group.add(m);
     };
-    mesh(side, wallMaterial(this.assets.texture(`tex_${cfg.wall}_wall.png`), false));
-    mesh(top, wallMaterial(this.assets.texture(`tex_${cfg.wall}_top.png`), true));
+    mesh(side, wallMaterial(this.assets.texture(`tex_${cfg.wall}_wall.png`), false, this.biome, this.quality));
+    mesh(top, wallMaterial(this.assets.texture(`tex_${cfg.wall}_top.png`), true, this.biome, this.quality));
     this.buildTorches();
     buildDressing(this);
   }
@@ -395,7 +482,18 @@ export class World {
       case 'BANNER': o = k('banner_patternA_red', 0.7); break;
       case 'COLUMN': o = k('pillar_decorated', 0.6); break;
       case 'PILLAR': o = k('pillar', 0.55); break;
-      case 'SARCOPHAGUS': o = k('bed_frame', 1.0); if (o) o.children[0].traverse((m) => { if (m.isMesh) { m.material = m.material.clone(); m.material.color.setHex(0x8a8580); } }); break;
+      case 'SARCOPHAGUS':
+        o = k('bed_frame', 1.0);
+        if (o) o.children[0].traverse((m) => {
+          if (!m.isMesh) return;
+          // Carved grey stone, one material shared by every sarcophagus (so they still batch).
+          if (!this.sarcoMat) {
+            this.sarcoMat = kitSurface(m.material.clone(), 'stone');
+            this.sarcoMat.color.setHex(0x8a8580);
+          }
+          m.material = this.sarcoMat;
+        });
+        break;
       case 'ALTAR': o = this.altar(); break;
       case 'BRAZIER': o = this.brazier(); break;
       case 'CAMPFIRE': o = this.campfire(); break;
@@ -425,7 +523,7 @@ export class World {
 
   altar() {
     const g = new THREE.Group();
-    const stone = new THREE.MeshStandardMaterial({ color: this.desert ? 0xc8a478 : 0x5a524c, roughness: 0.8 });
+    const stone = this.surfMat('stone', this.desert ? 0xc8a478 : 0x5a524c);
     const base = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.5, 0.55), stone);
     base.position.y = 0.25;
     base.castShadow = base.receiveShadow = true;
@@ -443,7 +541,7 @@ export class World {
 
   brazier() {
     const g = new THREE.Group();
-    const iron = new THREE.MeshStandardMaterial({ color: 0x2a2624, roughness: 0.45, metalness: 0.7 });
+    const iron = this.surfMat('iron', 0x2a2624);
     const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.12, 0.16, 12, 1, true), iron);
     bowl.position.y = 0.66;
     g.add(bowl);
@@ -461,7 +559,7 @@ export class World {
 
   campfire() {
     const g = new THREE.Group();
-    const wood = new THREE.MeshStandardMaterial({ color: 0x4a3020, roughness: 0.9 });
+    const wood = this.surfMat('wood', 0x4a3020);
     for (let k = 0; k < 5; k++) {
       const log = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.6, 7), wood);
       log.rotation.z = Math.PI / 2 - 0.35;
@@ -472,7 +570,7 @@ export class World {
     }
     for (let k = 0; k < 9; k++) {
       const a = k / 9 * Math.PI * 2;
-      const st = new THREE.Mesh(new THREE.IcosahedronGeometry(0.09, 0), new THREE.MeshStandardMaterial({ color: 0x6a645c, roughness: 0.9 }));
+      const st = new THREE.Mesh(new THREE.IcosahedronGeometry(0.09, 0), this.surfMat('stone', 0x6a645c));
       st.position.set(Math.cos(a) * 0.42, 0.05, Math.sin(a) * 0.42);
       g.add(st);
     }
@@ -486,7 +584,7 @@ export class World {
 
   shrine() {
     const g = new THREE.Group();
-    const stone = new THREE.MeshStandardMaterial({ color: this.desert ? 0xd2b088 : 0x8a8a92, roughness: 0.7 });
+    const stone = this.surfMat('stone', this.desert ? 0xd2b088 : 0x8a8a92);
     const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.4, 0.3, 8), stone);
     plinth.position.y = 0.15;
     g.add(plinth);
@@ -504,7 +602,7 @@ export class World {
 
   gravestone(r) {
     const g = new THREE.Group();
-    const stone = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.55, 0.1), new THREE.MeshStandardMaterial({ color: 0x6a6a68, roughness: 0.95 }));
+    const stone = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.55, 0.1), this.surfMat('stone', 0x6a6a68));
     stone.position.y = 0.27;
     stone.rotation.z = (r - 0.5) * 0.2;
     stone.castShadow = true;
@@ -519,7 +617,7 @@ export class World {
 
   stalagmites(r) {
     const g = new THREE.Group();
-    const m = new THREE.MeshStandardMaterial({ color: 0x6a5a48, roughness: 0.85 });
+    const m = this.surfMat('stone', 0x6a5a48);
     for (let k = 0; k < 4; k++) {
       const h = 0.4 + hash(k, r * 100) * 0.8;
       const c = new THREE.Mesh(new THREE.ConeGeometry(0.12 + h * 0.08, h, 7), m);
@@ -563,7 +661,7 @@ export class World {
 
   signpost() {
     const g = new THREE.Group();
-    const wood = new THREE.MeshStandardMaterial({ color: 0x6a4a2a, roughness: 0.9 });
+    const wood = this.surfMat('wood', 0x6a4a2a);
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 1.2, 7), wood);
     post.position.y = 0.6;
     g.add(post);
@@ -579,6 +677,11 @@ export class World {
 
   /** Flicker flames, spin gems, open chests and break barrels as the game says. */
   update(f, t, dt) {
+    SURF.uSurfTime.value = t;
+    // The ground soaks up the rain and dries slowly after it.
+    const rain = this.outdoors && !this.desert ? f.rn || 0 : 0;
+    SURF.uRain.value += (rain - SURF.uRain.value) * Math.min(1, (dt || 0.016) * (rain > SURF.uRain.value ? 0.5 : 0.08));
+    if (this.rainSet !== this.level) { this.rainSet = this.level; SURF.uRain.value = rain; }
     for (const s of this.flames) {
       const k = 0.85 + 0.15 * Math.sin(t * 11 + s.userData.seed * 7) + 0.08 * Math.sin(t * 23 + s.userData.seed);
       s.scale.set(s.userData.base * k, s.userData.base * 1.5 * (2 - k), 1);

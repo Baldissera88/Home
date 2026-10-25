@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { kitSurface } from './surface.js';
 
 /** Where the game's own textures live: the app's res/ folder, two levels up from assets/web/. */
 export const RES = '../../res/drawable-nodpi/';
@@ -131,7 +132,7 @@ export class Assets {
       jobs.push(this.loader.loadAsync(`models/${name}.glb`).then((g) => { this.chars[name] = this.prepareCharacter(g.scene); tick(); }));
     }
     for (const name of KITS) {
-      jobs.push(this.loader.loadAsync(`models/${name}.glb`).then((g) => { this.kits[name] = this.indexKit(g.scene); tick(); }));
+      jobs.push(this.loader.loadAsync(`models/${name}.glb`).then((g) => { this.kits[name] = this.indexKit(g.scene, name); tick(); }));
     }
     jobs.push(this.loader.loadAsync('models/anims.glb').then((g) => {
       for (const clip of g.animations) this.clips[clip.name] = clip;
@@ -155,15 +156,22 @@ export class Assets {
     return scene;
   }
 
-  /** A kit is one scene with a named holder node per model. */
-  indexKit(scene) {
+  /**
+   * A kit is one scene with a named holder node per model. The dungeon and village kits' one shared
+   * material gets real roughness, metal and fine relief per atlas cell (surface.js kitSurface).
+   */
+  indexKit(scene, kit) {
     const map = {};
+    const done = new Set();
     for (const child of scene.children) {
       child.traverse((o) => {
         if (o.isMesh) {
           o.castShadow = true;
           o.receiveShadow = true;
           o.geometry.userData.shared = true;
+          for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+            if (m && m.map && !done.has(m)) { done.add(m); kitSurface(m, kit); }
+          }
         }
       });
       const box = new THREE.Box3().setFromObject(child);
