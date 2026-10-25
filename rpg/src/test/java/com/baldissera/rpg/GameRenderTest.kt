@@ -533,4 +533,136 @@ class GameRenderTest {
         check(g.floor == 0) { "stairs on the last depth led to ${g.floor}" }
         check(g.deepest == 0)
     }
+
+    @Test
+    fun knightBarbarianTreeSkills() {
+        val knight = listOf(Skill.JUDGMENT, Skill.LIGHT_LANCE, Skill.BULWARK, Skill.HEAVENS_FURY)
+        val barbarian = listOf(Skill.HARPOON, Skill.REND, Skill.SEISMIC_SLAM, Skill.AVALANCHE)
+
+        /** Puts the hero on open ground facing east, alone with a tough mummy [d] tiles ahead. */
+        fun dummy(g: Game, d: Float): Enemy {
+            g.enemies.clear()
+            val p = g.player
+            val cx = floorInt(p.x)
+            val cy = floorInt(p.y)
+            val spot = (0 until 41 * 41).asSequence().map { i -> (cx + i % 41 - 20) to (cy + i / 41 - 20) }
+                .firstOrNull { (x, y) -> (0..6).all { k -> g.dungeon.walkable(x + k, y) && g.dungeon.walkable(x + k, y + 1) && g.dungeon.walkable(x + k, y - 1) } }
+                ?: error("no open ground on floor ${g.floor}")
+            p.x = spot.first + 0.5f
+            p.y = spot.second + 0.5f
+            p.faceX = 1f
+            p.faceY = 0f
+            return Enemy(EnemyType.MUMMY, p.x + d, p.y, 10, elite = true).also { g.enemies += it }
+        }
+
+        // Each skill does what it says against a lone dummy, at ranks 1, 3 and 5, in a dungeon and in the desert.
+        for (floor in listOf(1, desertFloor(1))) for (s in knight + barbarian) for (rank in listOf(1, 3, 5)) {
+            val g = newGame(if (s in knight) HeroClass.KNIGHT else HeroClass.BARBARIAN)
+            g.player.level = 15
+            g.player.skills[s] = rank
+            g.enterFloor(floor)
+            g.player.hp = g.player.maxHp
+            val e = dummy(g, if (s == Skill.REND) 1.5f else 3f)
+            g.player.mana = g.player.maxMana
+            g.cast(s)
+            check((g.player.cooldowns[s] ?: 0f) > 0f) { "$s rank $rank was not cast" }
+            var cue = false
+            val frames = when (s) {
+                Skill.BULWARK, Skill.HEAVENS_FURY -> 260
+                Skill.AVALANCHE -> 120
+                else -> 40
+            }
+            repeat(frames) {
+                g.update(1f / 60f)
+                cue = cue || g.skillFx.any { it.skill == s }
+                if (s == Skill.BULWARK) g.player.hp = g.player.maxHp
+            }
+            check(cue) { "$s sent no visual cue" }
+            // Bulwark hurts only through the blows it sends back.
+            check(e.hp < e.maxHp) { "$s rank $rank did no damage on floor $floor" }
+            when (s) {
+                Skill.HARPOON -> check(hypot(e.x - g.player.x, e.y - g.player.y) < 1.8f) { "the spear did not drag its target" }
+                Skill.REND -> check(e.bleed > 0f) { "Rend left no bleeding" }
+                else -> {}
+            }
+            Wire.frame(g, 0f)
+        }
+
+        // Bulwark cuts the damage of a blow.
+        run {
+            val g = newGame()
+            g.player.level = 10
+            g.player.skills[Skill.BULWARK] = 5
+            g.enterFloor(1)
+            val e = dummy(g, 0.9f)
+            fun blow(): Float {
+                g.player.hp = g.player.maxHp
+                e.cooldown = 0f
+                e.windup = 0f
+                var lost = 0f
+                repeat(90) {
+                    val before = g.player.hp
+                    g.update(1f / 60f)
+                    lost += (before - g.player.hp).coerceAtLeast(0f)
+                }
+                return lost
+            }
+            val plain = blow()
+            g.player.mana = g.player.maxMana
+            g.cast(Skill.BULWARK)
+            val braced = blow()
+            check(plain > 0f && braced < plain * 0.6f) { "Bulwark took $plain down to $braced" }
+        }
+
+        // All eight at ranks 1, 3 and 5, over and over, on dungeon, desert and wilderness floors.
+        val r = Random(5)
+        for ((cls, skills) in listOf(HeroClass.KNIGHT to knight, HeroClass.BARBARIAN to barbarian)) for (rank in listOf(1, 3, 5)) {
+            val g = newGame(cls)
+            g.player.level = 20
+            for (s in skills) g.player.skills[s] = rank
+            skills.forEachIndexed { i, s -> g.player.loadout[i] = s }
+            for (floor in listOf(2, 7, desertFloor(1), desertFloor(3), 0)) {
+                g.enterFloor(floor)
+                repeat(600) { i ->
+                    if (i % 30 == 0) {
+                        g.joyX = r.nextFloat() * 2f - 1f
+                        g.joyY = r.nextFloat() * 2f - 1f
+                    }
+                    g.attackHeld = i % 90 < 30
+                    if (i % 15 == 0) {
+                        val s = skills[(i / 15) % 4]
+                        g.player.cooldowns[s] = 0f
+                        g.player.mana = g.player.maxMana
+                        g.cast(s)
+                    }
+                    if (g.dead) g.respawn()
+                    if (g.victory) g.victory = false
+                    g.update(1f / 30f)
+                    if (i % 50 == 0) Wire.frame(g, 0f)
+                }
+            }
+        }
+
+        // Mid-skill scenes for the 2D fallback and the 3D renderer.
+        val a = Assets(ctx.resources)
+        for ((cls, skills) in listOf(HeroClass.KNIGHT to knight, HeroClass.BARBARIAN to barbarian)) {
+            val g = newGame(cls)
+            g.player.level = 12
+            for (s in skills) g.player.skills[s] = 3
+            g.enterFloor(2)
+            g.player.hp = g.player.maxHp
+            dummy(g, 3f)
+            for (i in 0 until 4) {
+                val ex = g.player.x + 2f + i * 0.9f
+                val ey = g.player.y + (if (i % 2 == 0) 0.8f else -0.8f)
+                if (g.dungeon.walkableAt(ex, ey)) g.enemies += Enemy(EnemyType.SKELETON, ex, ey, 2)
+            }
+            for (s in skills) {
+                g.player.mana = g.player.maxMana
+                g.cast(s)
+                step(g, 6)
+            }
+            render(g, a, if (cls == HeroClass.KNIGHT) "40_knight_tree_skills" else "41_barbarian_tree_skills")
+        }
+    }
 }
