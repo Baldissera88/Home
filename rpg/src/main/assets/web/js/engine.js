@@ -19,8 +19,8 @@ import { charEnv, contact } from './charmat.js';
  * Render presets, picked by ?q= (see detectTier in perf.js: 'high' means the best the device can do).
  * maxDpr/minDpr bound the dynamic resolution, shadowMap/shadowSpan size the sun's shadow, pointLights is the
  * pool for fires and magic, bloom and msaa (samples) switch post effects, grass scales tuft density, and
- * name is the preset's key. ao is the half-size screen-space ambient occlusion (without it, contact
- * occlusion is baked into the ground), rays the light shafts outdoors, grain the film grain, softShadows
+ * name is the preset's key. ao is the half-size screen-space ambient occlusion (without it, the contact
+ * occlusion baked into the ground shows), rays the light shafts outdoors, grain the film grain, softShadows
  * the contact-hardening sun shadow filter (fixed for the session: it is compiled into every lit shader).
  * Engine.degrade() swaps in lowered copies (perf.js lowerPreset) and tells `engine.onQuality`.
  */
@@ -168,8 +168,8 @@ export class Engine {
       return;
     }
     if (id !== this.building) return;
-    // Without screen-space occlusion, the ground gets occlusion baked from the level's walls and scenery.
-    if (!this.quality.ao) this.atmosphere.bakeContact(world);
+    // The ground gets occlusion baked from the level's walls and scenery, shown while the AO pass is off.
+    this.atmosphere.bakeContact(world);
     // Compile the new level's shaders up front so the first frames do not stutter.
     try { await this.renderer.compileAsync(group, this.camera, this.scene); } catch (e) { /* compiles on first draw instead */ }
     if (id !== this.building) return;
@@ -256,8 +256,11 @@ export class Engine {
     atm.setLook(g);
     // Metal on the characters reflects more where the reflections are dim (underground), so it still reads.
     charEnv.value = Math.min(1.5, Math.max(0.6, 0.5 / Math.max(0.05, g.env)));
-    // With screen-space occlusion on, the contact blobs under the actors can be lighter.
-    contact.dark = this.ao && this.ao.enabled ? 0.8 : 1;
+    // With screen-space occlusion on, the contact blobs under the actors can be lighter and the ground's
+    // baked occlusion steps aside.
+    const ssao = !!this.ao && this.ao.enabled;
+    contact.dark = ssao ? 0.8 : 1;
+    atm.contactAmount.value = ssao ? 0 : 1;
     if (this.rays && this.rays.enabled) this.aimRays(f, g);
   }
 

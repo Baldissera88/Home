@@ -174,7 +174,7 @@ void main() {
   gl_FragColor = vec4(c + uTorch * spots, 1.0);
 }`;
 
-// Contact occlusion baked into the ground for presets without screen-space occlusion (bakeContact): texels
+// Contact occlusion baked into the ground, shown while screen-space occlusion is off (bakeContact): texels
 // per tile, the radii (texels) of the tight and the broad blur and how dark full occlusion gets.
 const CONTACT_RES = 4, CONTACT_TIGHT = 2, CONTACT_BROAD = 5, CONTACT_DARK = 0.62;
 
@@ -219,6 +219,8 @@ export class Atmosphere {
     this.scatter = 0;
     this.haze = 0;
     this.vw = this.vh = 1;
+    /** How much of the baked contact occlusion the ground shows (bakeContact). */
+    this.contactAmount = { value: 1 };
 
     this.sun = new THREE.DirectionalLight(0xffffff, 2.5);
     this.sun.castShadow = true;
@@ -353,7 +355,8 @@ export class Atmosphere {
   }
 
   /**
-   * Contact occlusion for presets without screen-space occlusion: where walls, rocks, trees, buildings and
+   * Contact occlusion for when screen-space occlusion is off (`contactAmount` 1; the engine sets it to 0
+   * while the AO pass runs, so the two never stack): where walls, rocks, trees, buildings and
    * props stand, blurred at a tight and a broad radius into a small texture over the level, which the
    * ground's shader multiplies into its ambient light (and a little of the direct), so floors darken into
    * the corners and around what stands on them. Call before the level's shaders compile.
@@ -417,11 +420,12 @@ export class Atmosphere {
       base.call(mat, shader, renderer);
       shader.uniforms.uContact = { value: tex };
       shader.uniforms.uContactSize = { value: size };
+      shader.uniforms.uContactAmount = this.contactAmount;
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform sampler2D uContact;\nuniform vec2 uContactSize;')
+        .replace('#include <common>', '#include <common>\nuniform sampler2D uContact;\nuniform vec2 uContactSize;\nuniform float uContactAmount;')
         .replace('#include <aomap_fragment>', `#include <aomap_fragment>
   {
-    float contact = texture2D(uContact, vGroundPos.xz / uContactSize).r;
+    float contact = mix(1.0, texture2D(uContact, vGroundPos.xz / uContactSize).r, uContactAmount);
     reflectedLight.indirectDiffuse *= contact;
     reflectedLight.indirectSpecular *= contact;
     reflectedLight.directDiffuse *= mix(1.0, contact, 0.45);
