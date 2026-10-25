@@ -3,7 +3,7 @@ import { applyOcclusion, OCCLUDE } from './occlude.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { SimplexNoise } from 'three/addons/math/SimplexNoise.js';
 import { TILE, hash } from './defs.js';
-import { surfUniforms } from './surface.js';
+import { kitSurface, surfUniforms } from './surface.js';
 
 const simplex = new SimplexNoise({ random: mulberry(7) });
 
@@ -938,7 +938,8 @@ export class Flora {
       }
     }
     if (!list.length) return;
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
+    // Weathered logs: wood grain and roughness from surface.js.
+    const mat = kitSurface(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), 'wood');
     const mesh = new THREE.InstancedMesh(geo, mat, list.length);
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
     list.forEach(([x, z, r], j) => {

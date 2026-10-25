@@ -200,6 +200,10 @@ vec3 kitAx, kitAy;`)
     diffuseColor.rgb *= 1.0 + (fd.z - 0.5) * grain * cell.a;
     kitRough = clamp(cell.r + (fd.z - 0.5) * 0.25 + (fd.w - 0.5) * 0.15, 0.08, 1.0);
     kitMetal = cell.g;
+    // Rain (open world only): porous surfaces darken, everything turns glossier, tops most.
+    float rainK = uRain * (0.45 + 0.55 * max(wn.y, 0.0));
+    diffuseColor.rgb *= 1.0 - 0.3 * rainK * (1.0 - cell.g);
+    kitRough = mix(kitRough, kitRough * 0.4, rainK);
   }`)
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = kitRough;')
       .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n  metalnessFactor = kitMetal;')

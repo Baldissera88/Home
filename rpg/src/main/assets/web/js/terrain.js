@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { TILE } from './defs.js';
-import { SURF_GLSL, surfUniforms } from './surface.js';
+import { SURF, SURF_GLSL, surfUniforms } from './surface.js';
 
 /** GLSL value noise shared by the ground and water shaders. */
 export const NOISE_GLSL = /* glsl */`
@@ -691,6 +691,7 @@ export function makeWater(w, h, assets, ground = lastGround, clear = false) {
     },
   ]);
   uniforms.uWaves.value = waves();
+  uniforms.uRain = SURF.uRain;
   const mat = new THREE.ShaderMaterial({
     uniforms,
     transparent: true,
@@ -710,7 +711,7 @@ export function makeWater(w, h, assets, ground = lastGround, clear = false) {
         #include <fog_vertex>
       }`,
     fragmentShader: /* glsl */`
-      uniform float uTime, uLight, uClear;
+      uniform float uTime, uLight, uClear, uRain;
       uniform vec3 uSun, uSunColor, uSky, uHorizon, uDeep, uShallow;
       uniform sampler2D uWaves;
       varying vec3 vPos;
@@ -723,6 +724,8 @@ export function makeWater(w, h, assets, ground = lastGround, clear = false) {
         vec4 a = texture2D(uWaves, p * 0.17 + uTime * vec2(0.013, 0.008));
         vec4 b = texture2D(uWaves, p * 0.43 - uTime * vec2(0.019, -0.023));
         vec2 slope = (a.rg - 0.5) * 0.5 + (b.rg - 0.5) * 0.3;
+        // Rain roughens the surface with fine, fast ripples.
+        if (uRain > 0.01) slope += (texture2D(uWaves, p * 1.37 + uTime * vec2(0.13, -0.09)).rg - 0.5) * 0.45 * uRain;
         vec3 n = normalize(vec3(slope.x, 1.0, slope.y));
         vec3 v = normalize(cameraPosition - vPos);
         vec3 l = normalize(uSun);
@@ -738,7 +741,7 @@ export function makeWater(w, h, assets, ground = lastGround, clear = false) {
         float s1 = pow(nh, 160.0), s8 = s1 * s1;
         s8 *= s8;
         s8 *= s8;
-        float glint = (s1 * 0.6 + s8 * 9.0) * uLight;
+        float glint = (s1 * 0.6 + s8 * 9.0) * uLight * (1.0 - 0.75 * uRain);
         // Shore: the depth is roughened with noise so the waterline wanders off the mesh's straight edges.
         // There the water fades out, with a soft ragged foam line just off it and a fainter one lapping in.
         float nz = a.b * 0.55 + b.b * 0.45;
