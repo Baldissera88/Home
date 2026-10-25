@@ -1467,6 +1467,74 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 sfx.levelUp()
                 texts += FloatText(p.x, p.y - 1.6f, "Heaven's Fury!", Color(0xFFFFF176), big = true)
             }
+            // HARPOON: a spear flies 20 tiles/s up to 7 tiles along the facing (turned to the nearest foe within 8 tiles).
+            //   The first enemy it touches takes 150..270% damage; it is dragged to the hero at 16 tiles/s, then stunned
+            //   0.7..1.5 s. Bosses are too heavy: they are only stunned briefly and the spear comes back. A miss or a wall
+            //   reels the chain back in at 26 tiles/s.
+            //   sf: one cue, life 1.6 s at most, ended early (its age jumps to its life) once the spear is back, so progress
+            //       means nothing here. x,y = the hero (updated every frame); tx,ty = the spear tip (updated every frame: in
+            //       flight, then the hooked enemy, then the tip coming back); dx,dy = unit throw direction; value = phase:
+            //       0 flying out, 1 hooked and dragging an enemy, 2 reeling back empty.
+            //   Also: blood burst and hit-stop 0.05 on the hook, dust particles under the dragged enemy, grey sparks where it
+            //   hits a wall. Hero action 2 (attack swing) for 0.25 s.
+            Skill.HARPOON -> {
+                nearestEnemy(8f)?.let { faceToward(it.x, it.y) }
+                p.swingTime = 0.25f
+                p.swing = p.swingTime
+                val fx = SkillFx(Skill.HARPOON, p.x, p.y, p.x + p.faceX * 0.4f, p.y + p.faceY * 0.4f, p.faceX, p.faceY, 1.6f, 0f)
+                skillFx += fx
+                spear?.let { it.fx.age = it.fx.life }
+                spear = Spear(fx, p.faceX, p.faceY, p.damage * (1.5f + 0.3f * (lvl - 1)), 0.5f + 0.2f * lvl)
+                sfx.swing()
+            }
+            // REND: a wide cleave (a bit more than a half circle, reach 2.3 tiles) for 80..140% damage; everything hit bleeds
+            //   for 120..240% more over 4 s (Enemy.bleed, red drops while it lasts). The hero then heals 1.5..3.5% life for
+            //   every bleeding enemy within 8 tiles (up to 5). When it hits, a BLEED pool (radius 1.6, 4 s) stays in front
+            //   and hurts what stands in it.
+            //   sf: one cue, life 0.35 s. x,y = the hero; tx,ty = the middle of the swing (1.3 tiles ahead); dx,dy = unit facing;
+            //       value = reach (2.3). The crescent slash sweeps across during the cue.
+            //   Also: zones BLEED; red glowing particles along the arc; hit-stop 0.035 and shake 0.3 when it hits.
+            //   Hero action 10 (sweep) for 0.3 s.
+            Skill.REND -> {
+                nearestEnemy(3f)?.let { faceToward(it.x, it.y) }
+                p.whirl = 0.3f
+                p.attackCd = 0.3f
+                sfx.swing()
+                val hitDmg = p.damage * (0.8f + 0.15f * (lvl - 1))
+                val bleedDps = p.damage * (1.2f + 0.3f * (lvl - 1)) / 4f
+                var hits = 0
+                for (e in enemies.toList()) if (inArc(e.x, e.y, 2.3f + e.type.radius * e.size, -0.1f)) {
+                    damageEnemy(e, hitDmg, 3f)
+                    onHitPowers(e)
+                    e.bleed = 4f
+                    e.bleedDps = max(e.bleedDps, bleedDps)
+                    hits++
+                }
+                for (pr in dungeon.props) if (pr.type.breakable && !pr.used && inArc(pr.x, pr.y, 2.4f, -0.1f)) breakProp(pr)
+                val cx = p.x + p.faceX * 1.3f
+                val cy = p.y + p.faceY * 1.3f
+                skillFx += SkillFx(Skill.REND, p.x, p.y, cx, cy, p.faceX, p.faceY, 0.35f, 2.3f)
+                val base = atan2(p.faceY, p.faceX)
+                for (k in 0 until 16) {
+                    val a = base + (k / 15f - 0.5f) * 3.3f
+                    if (particles.size < 600) particles += Particle(p.x + cos(a) * 1.7f, p.y + sin(a) * 1.7f, cos(a) * 2f, sin(a) * 2f,
+                        Color(0xFFE53935), 0.04f, 0.3f, glow = true, z = 0.5f)
+                }
+                val bleeding = enemies.count { it.bleed > 0f && dist(it) < 8f }.coerceAtMost(5)
+                if (bleeding > 0) {
+                    val heal = min(p.maxHp - p.hp, p.maxHp * (0.01f + 0.005f * lvl) * bleeding)
+                    if (heal > 0f) {
+                        p.hp += heal
+                        texts += FloatText(p.x, p.y - 1.4f, "+${heal.roundToInt()}", Color(0xFF69F0AE))
+                    }
+                }
+                if (hits > 0) {
+                    zones += Zone(cx, cy, 1.6f, 4f, ZoneKind.BLEED, p.damage * 0.25f)
+                    sfx.hit()
+                    hitStop = max(hitStop, 0.035f)
+                    shake = max(shake, 0.3f)
+                }
+            }
             else -> {} // implemented by the class skill agents
         }
     }
@@ -1611,6 +1679,14 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     private val strikes = mutableListOf<Strike>()
 
+    /** The Barbarian's Ancient Spear: in flight along (dx, dy), dragging [victim] in, or coming [back] empty. */
+    private class Spear(
+        val fx: SkillFx, val dx: Float, val dy: Float, val dmg: Float, val stun: Float,
+        var travel: Float = 0f, var victim: Enemy? = null, var back: Boolean = false,
+    )
+
+    private var spear: Spear? = null
+
     /** The cues of the auras that follow the hero: Iron Bulwark and Heaven's Fury. */
     private var bulwarkFx: SkillFx? = null
     private var heavenFx: SkillFx? = null
@@ -1626,6 +1702,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     /** Leaving a floor ends the skills still in flight. */
     private fun clearMightSkills() {
         strikes.clear()
+        spear = null
         player.bulwark = 0f
         player.heaven = 0f
         bulwarkFx = null
@@ -1666,6 +1743,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             }
             if (p.heaven <= 0f) heavenFx = null
         }
+        spear?.let { updateSpear(it, dt) }
         if (strikes.isNotEmpty()) {
             val si = strikes.iterator()
             while (si.hasNext()) {
@@ -1739,6 +1817,105 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         val cue = SkillFx(Skill.HEAVENS_FURY, x, y, x, y, 0f, 0f, 0.5f, 1.3f)
         skillFx += cue
         strikes += Strike(Skill.HEAVENS_FURY, x, y, 1.3f, p.damage * (1.5f + 0.35f * (lvl - 1)) * spellMult(), 0.25f, 0.25f, cue)
+    }
+
+    private fun updateSpear(s: Spear, dt: Float) {
+        val p = player
+        val fx = s.fx
+        fx.x = p.x
+        fx.y = p.y
+        if (fx.age >= fx.life) {
+            // A safety net: the cue ran out, so the spear is done whatever it was doing.
+            spear = null
+            return
+        }
+        val v = s.victim
+        if (v != null) {
+            if (v.hp <= 0f || v !in enemies) {
+                s.victim = null
+                s.back = true
+                fx.value = 2f
+                return
+            }
+            val dx = p.x - v.x
+            val dy = p.y - v.y
+            val d = hypot(dx, dy).coerceAtLeast(0.01f)
+            val reach = 0.75f + v.type.radius * v.size
+            var done = d <= reach
+            if (!done) {
+                val step = min(16f * dt, d - reach)
+                val bx = v.x
+                val by = v.y
+                move(v, dx / d * step, dy / d * step, v.type.radius)
+                v.kx = 0f
+                v.ky = 0f
+                v.stun = max(v.stun, 0.15f)
+                v.windup = 0f
+                // Stuck on a wall corner: it stops where it is.
+                if (hypot(v.x - bx, v.y - by) < step * 0.3f) done = true
+                if (rnd.nextFloat() < 0.6f && particles.size < 600) {
+                    particles += Particle(v.x + jitter(), v.y + 0.1f, (rnd.nextFloat() - 0.5f) * 0.6f, -0.2f, Color(0x998D7B5E), 0.06f, 0.45f, z = 0.05f)
+                }
+            }
+            fx.tx = v.x
+            fx.ty = v.y
+            if (done) {
+                v.stun = max(v.stun, s.stun)
+                burst(v.x, v.y, Color(0xFFBCAAA4), 8)
+                shake = max(shake, 0.3f)
+                fx.age = fx.life
+                spear = null
+            }
+            return
+        }
+        if (s.back) {
+            val dx = p.x - fx.tx
+            val dy = p.y - fx.ty
+            val d = hypot(dx, dy)
+            if (d < 0.5f) {
+                fx.age = fx.life
+                spear = null
+                return
+            }
+            val step = min(26f * dt, d)
+            fx.tx += dx / d * step
+            fx.ty += dy / d * step
+            return
+        }
+        val step = 20f * dt
+        val nx = fx.tx + s.dx * step
+        val ny = fx.ty + s.dy * step
+        s.travel += step
+        if (!lanceOpen(nx, ny)) {
+            burst(fx.tx, fx.ty, Color(0xFFB0BEC5), 8, glow = true)
+            sfx.hit()
+            s.back = true
+            fx.value = 2f
+            return
+        }
+        fx.tx = nx
+        fx.ty = ny
+        val e = enemies.firstOrNull { it.hp > 0f && hypot(it.x - nx, it.y - ny) < it.type.radius * it.size + 0.3f }
+        if (e != null) {
+            damageEnemy(e, s.dmg, 0f)
+            onHitPowers(e)
+            sfx.hit()
+            sfx.rumble(30, 140)
+            hitStop = max(hitStop, 0.05f)
+            shake = max(shake, 0.35f)
+            if (e.type.boss) {
+                e.stun = max(e.stun, s.stun * 0.3f)
+                s.back = true
+                fx.value = 2f
+            } else {
+                s.victim = e
+                e.windup = 0f
+                fx.value = 1f
+            }
+        } else if (s.travel >= 7f) {
+            s.back = true
+            fx.value = 2f
+        }
     }
 
     /** Iron Bulwark sends part of a melee blow back at the monster that struck it. */
@@ -2558,6 +2735,13 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 e.hp -= e.poisonDps * dt
                 if (e.poison <= 0f) e.poisonDps = 0f
                 if (rnd.nextFloat() < dt * 8f) particles += Particle(e.x + jitter(), e.y, 0f, -0.5f, Color(0xFF9CCC65), 0.05f, 0.6f, glow = true, z = 0.6f)
+            }
+            if (e.bleed > 0f) {
+                // Rend: the wound drips blood and keeps hurting.
+                e.bleed -= dt
+                e.hp -= e.bleedDps * dt
+                if (e.bleed <= 0f) e.bleedDps = 0f
+                if (rnd.nextFloat() < dt * 9f) particles += Particle(e.x + jitter(), e.y - 0.1f, 0f, 0.4f, Color(0xFFC62828), 0.045f, 0.5f, gravity = 3f, z = 0.6f)
             }
             if (e.frozen > 0f) {
                 e.frozen -= dt
