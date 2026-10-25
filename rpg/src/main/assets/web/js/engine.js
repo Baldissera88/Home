@@ -9,23 +9,28 @@ import { Impact } from './impact.js';
 import { Atmosphere } from './atmosphere.js';
 import { ChaseCamera } from './camera.js';
 import { Overlay, loadFonts } from './overlay.js';
-import { detectTier, FramePacer, GpuTimer, StatsView } from './perf.js';
+import { detectTier, FramePacer, GpuTimer, StatsView, lowerPreset } from './perf.js';
 import { OCCLUDE } from './occlude.js';
 import { FrameInterpolator } from './interp.js';
-import { BloomPass, FinalPass } from './post.js';
-import { applyLook } from './desert.js';
+import { BloomPass, FinalPass, AOPass, RaysPass, makeGrade, blendGrade } from './post.js';
+import { charEnv, contact } from './charmat.js';
 
 /**
  * Render presets, picked by ?q= (see detectTier in perf.js: 'high' means the best the device can do).
  * maxDpr/minDpr bound the dynamic resolution, shadowMap/shadowSpan size the sun's shadow, pointLights is the
  * pool for fires and magic, bloom and msaa (samples) switch post effects, grass scales tuft density, and
- * name is the preset's key. Engine.degrade() swaps in lowered copies and tells `engine.onQuality`.
+ * name is the preset's key. ao is the half-size screen-space ambient occlusion (without it, the contact
+ * occlusion baked into the ground shows), rays the light shafts outdoors, grain the film grain, softShadows
+ * the contact-hardening sun shadow filter (fixed for the session: it is compiled into every lit shader).
+ * Engine.degrade() swaps in lowered copies (perf.js lowerPreset) and tells `engine.onQuality`.
  */
 const QUALITY = {
-  high: { name: 'high', maxDpr: 2, minDpr: 1.1, shadowMap: 2048, shadowSpan: 15, pointLights: 5, bloom: true, msaa: 4, grass: 1 },
-  medium: { name: 'medium', maxDpr: 1.6, minDpr: 0.95, shadowMap: 1536, shadowSpan: 14, pointLights: 4, bloom: true, msaa: 2, grass: 0.75 },
-  low: { name: 'low', maxDpr: 1.25, minDpr: 0.8, shadowMap: 1024, shadowSpan: 13, pointLights: 3, bloom: false, msaa: 0, grass: 0.5 },
+  high: { name: 'high', maxDpr: 2, minDpr: 1.1, shadowMap: 2048, shadowSpan: 15, pointLights: 5, bloom: true, msaa: 4, grass: 1, ao: true, rays: true, grain: true, softShadows: true },
+  medium: { name: 'medium', maxDpr: 1.6, minDpr: 0.95, shadowMap: 1536, shadowSpan: 14, pointLights: 4, bloom: true, msaa: 2, grass: 0.75, ao: false, rays: false, grain: false, softShadows: false },
+  low: { name: 'low', maxDpr: 1.25, minDpr: 0.8, shadowMap: 1024, shadowSpan: 13, pointLights: 3, bloom: false, msaa: 0, grass: 0.5, ao: false, rays: false, grain: false, softShadows: false },
 };
+
+const _sunView = new THREE.Vector3();
 
 export class Engine {
   constructor(opts = {}) {
@@ -58,16 +63,37 @@ export class Engine {
 
     // HDR needs float colour buffers; a few older GPUs only render to 8-bit ones.
     const hdr = r.extensions.has('EXT_color_buffer_half_float') || r.extensions.has('EXT_color_buffer_float');
-    const target = new THREE.WebGLRenderTarget(1, 1, { type: hdr ? THREE.HalfFloatType : THREE.UnsignedByteType, samples: this.quality.msaa });
+    const q = this.quality;
+    const target = new THREE.WebGLRenderTarget(1, 1, { type: hdr ? THREE.HalfFloatType : THREE.UnsignedByteType, samples: q.msaa });
+    // Occlusion and light shafts read the scene's depth: resolved into a texture along with the colour (the
+    // msaa resolve blits depth anyway). Without them nothing reads depth after the scene: not resolved.
+    const depth = hdr && (q.ao || q.rays);
+    if (depth) target.depthTexture = new THREE.DepthTexture(1, 1);
+    else target.resolveDepthBuffer = false;
     this.composer = new EffectComposer(r, target);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    // Bloom at half size and below, then one pass that grades, tone maps and writes sRGB (FXAA without msaa).
-    if (this.quality.bloom) {
+    // Occlusion at half size, light shafts at quarter size, bloom at half size and below, then one pass that
+    // lays them on, tone maps, grades and writes sRGB (FXAA without msaa).
+    if (depth && q.ao) {
+      this.ao = new AOPass(this.camera);
+      this.composer.addPass(this.ao);
+    }
+    if (depth && q.rays) {
+      this.rays = new RaysPass();
+      this.composer.addPass(this.rays);
+    }
+    if (q.bloom) {
       this.bloom = new BloomPass(target.texture.type);
       this.composer.addPass(this.bloom);
     }
-    this.grade = new FinalPass(this.bloom || null, !this.quality.msaa);
+    this.grade = new FinalPass(this.bloom || null, !q.msaa);
+    this.grade.ao = this.ao || null;
+    this.grade.rays = this.rays || null;
+    this.grade.grain = !!q.grain;
+    this.grade.camera = this.camera;
     this.composer.addPass(this.grade);
+    /** The biome's grade for this frame (post.js GRADE, blended for the hour). */
+    this.look = makeGrade();
 
     this.assets = new Assets(r);
     this.actors = new Actors(this.assets, this.scene);
@@ -111,6 +137,8 @@ export class Engine {
     this.chase.resize(w / h);
     this.overlay.resize(w, h, Math.min(devicePixelRatio || 1, 2));
     this.grade.uniforms.uAspect.value = w / h;
+    const rt = this.composer.readBuffer;
+    this.atmosphere.setViewport(rt.width, rt.height);
     const scale = h * dpr * this.camera.projectionMatrix.elements[5] * 0.5;
     if (this.fx) this.fx.scale.value = scale;
     this.atmosphere.setPointScale(scale);
@@ -140,6 +168,8 @@ export class Engine {
       return;
     }
     if (id !== this.building) return;
+    // The ground gets occlusion baked from the level's walls and scenery, shown while the AO pass is off.
+    this.atmosphere.bakeContact(world);
     // Compile the new level's shaders up front so the first frames do not stutter.
     try { await this.renderer.compileAsync(group, this.camera, this.scene); } catch (e) { /* compiles on first draw instead */ }
     if (id !== this.building) return;
@@ -155,6 +185,7 @@ export class Engine {
     this.impact.reset();
     this.actors.placeMerchant(level, this.ground);
     this.atmosphere.setLevel(world);
+    if (this.rays) this.rays.enabled = this.quality.rays && world.outdoors;
     this.chase.ready = false;
     this.chase.setLevel(level);
     if (this.onLevel) this.onLevel(level);
@@ -192,14 +223,64 @@ export class Engine {
       this.impact.punch = 0;
     }
     this.atmosphere.update(f, dt, f.t, hero, this.camera, this.fx);
-    const g = this.grade.uniforms;
-    g.uHurt.value = Math.max(0, 1 - f.p[9] / 0.35);
-    g.uFlash.value = Math.min(1, f.lf || 0) * 0.8;
-    g.uWarm.value = this.world.outdoors ? 1 - f.dl : 0.6;
-    this.renderer.toneMappingExposure = this.world.outdoors ? 1.0 : 1.45;
-    if (this.bloom) this.bloom.strength = this.world.outdoors ? 0.38 + 0.35 * (1 - f.dl) : 0.65;
-    applyLook(this.world, f, this.renderer, this.bloom, g);
+    this.updateLook(f);
     return true;
+  }
+
+  /**
+   * The biome's exposure and grade (post.js GRADE) for the hour and the weather, handed to the final pass,
+   * the bloom, the occlusion, the light shafts and the atmosphere (reflections, fog scattering).
+   */
+  updateLook(f) {
+    const atm = this.atmosphere, out = this.world.outdoors;
+    const rain = out ? f.rn : 0;
+    const g = blendGrade(this.look, this.world.biome, out ? atm.dusk : 0, out ? atm.night : 0);
+    if (rain > 0) {
+      // Overcast: flatter and greyer, no sun to scatter.
+      g.contrast *= 1 - 0.35 * rain;
+      g.saturation *= 1 - 0.12 * rain;
+      g.scatter *= 1 - rain;
+    }
+    const u = this.grade.uniforms;
+    u.uHurt.value = Math.max(0, 1 - f.p[9] / 0.35);
+    u.uFlash.value = Math.min(1, f.lf || 0) * 0.8;
+    this.grade.setGrade(g);
+    this.renderer.toneMappingExposure = g.exposure;
+    if (this.bloom) {
+      this.bloom.strength = g.bloom;
+      this.bloom.threshold = g.threshold;
+      this.bloom.knee = g.knee;
+      this.bloom.exposure = g.exposure;
+    }
+    if (this.ao) this.ao.fadeFar = Math.min(40, 2.2 / Math.max(0.01, atm.fog.density));
+    atm.setLook(g);
+    // Metal on the characters reflects more where the reflections are dim (underground), so it still reads.
+    charEnv.value = Math.min(1.5, Math.max(0.6, 0.5 / Math.max(0.05, g.env)));
+    // With screen-space occlusion on, the contact blobs under the actors can be lighter and the ground's
+    // baked occlusion steps aside.
+    const ssao = !!this.ao && this.ao.enabled;
+    contact.dark = ssao ? 0.8 : 1;
+    atm.contactAmount.value = ssao ? 0 : 1;
+    if (this.rays && this.rays.enabled) this.aimRays(f, g);
+  }
+
+  /** Light shafts toward the sun while it is up and ahead of the camera; off (and free) otherwise. */
+  aimRays(f, g) {
+    const atm = this.atmosphere, rays = this.rays, cam = this.camera, sun = atm.sunDir;
+    _sunView.copy(sun).transformDirection(cam.matrixWorldInverse);
+    // How far ahead the sun is (view -z), how high, how clear the day.
+    const ahead = THREE.MathUtils.smoothstep(-_sunView.z, 0.05, 0.45);
+    const up = THREE.MathUtils.smoothstep(sun.y, 0.02, 0.15) * (1 - atm.night);
+    const k = ahead * up * (1 - f.rn) * (0.6 + 0.4 * g.scatter);
+    rays.active = k > 0.02;
+    if (!rays.active) return;
+    _sunView.copy(cam.position).addScaledVector(sun, 200).project(cam);
+    const x = _sunView.x * 0.5 + 0.5, y = _sunView.y * 0.5 + 0.5;
+    // Shafts stream from the sky around the sun: none to see while it is far off screen.
+    const near = 1 - THREE.MathUtils.smoothstep(Math.max(Math.abs(x - 0.5) - 0.5, y - 1, -y), 0.3, 0.9);
+    rays.active = near > 0.02;
+    rays.sun.set(x, y);
+    rays.color.copy(atm.sun.color).multiplyScalar(0.45 * k * near);
   }
 
   draw(dt) {
@@ -283,12 +364,7 @@ export class Engine {
    */
   lowered(steps) {
     let q = this.preset;
-    for (let i = 0; i < steps; i++) {
-      if (q.bloom) q = { ...q, bloom: false };
-      else if (q.shadowMap > 1024) q = { ...q, shadowMap: 1024, pointLights: Math.max(3, q.pointLights - 1), grass: Math.min(q.grass, 0.6) };
-      else if (q.minDpr > 0.81) q = { ...q, minDpr: Math.max(0.8, q.minDpr - 0.2), pointLights: Math.max(2, q.pointLights - 1), grass: Math.min(q.grass, 0.4) };
-      else return null;
-    }
+    for (let i = 0; i < steps && q; i++) q = lowerPreset(q);
     return q;
   }
 
@@ -300,6 +376,9 @@ export class Engine {
     this.degraded = steps;
     this.quality = q;
     if (this.bloom) this.bloom.enabled = q.bloom;
+    if (this.ao) this.ao.enabled = q.ao;
+    if (this.rays) this.rays.enabled = q.rays && !!this.world && this.world.outdoors;
+    this.grade.grain = q.grain;
     const s = this.atmosphere.sun.shadow;
     if (s.mapSize.x !== q.shadowMap) {
       s.mapSize.set(q.shadowMap, q.shadowMap);
@@ -312,6 +391,7 @@ export class Engine {
   /**
    * Still too slow at the lowest resolution: give up bloom, then shadow detail (announcing fewer point
    * lights and sparser grass), then more resolution. False when there is nothing left to give.
+   * (Occlusion, light shafts and grain go earlier, before any resolution: see adapt.)
    */
   degrade() {
     if (!this.setDegraded(this.degraded + 1)) return false;
@@ -363,6 +443,8 @@ export class Engine {
         this.setDpr(p.trialDpr);
       } else if (p.fps === 60 && s.js > s.budget * 0.85) {
         p.toThirty(); // the CPU is the limit: fewer pixels would not help
+      } else if ((q.ao || q.rays || q.grain) && this.setDegraded(this.degraded + 1)) {
+        p.settle(); // occlusion, shafts and grain are missed less than resolution
       } else if (this.dpr > q.minDpr + 0.01) {
         if (now - p.upAt < 15000) {
           // The last step up was too far: stay below it for a while, longer each time.

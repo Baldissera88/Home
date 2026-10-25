@@ -571,29 +571,3 @@ export class SandWind {
     this.mesh.geometry.instanceCount = Math.ceil(this.count * Math.min(1, amount));
   }
 }
-
-const GRADE_SHADOW = new THREE.Color(0.93, 0.98, 1.06), GRADE_LIGHT = new THREE.Color(1.07, 1.0, 0.9);
-const GRADE_DUSK = new THREE.Color(1.1, 0.95, 0.84), WHITE = new THREE.Color(1, 1, 1);
-
-/**
- * The desert's camera: exposed a little lower for the bright sand, a gentler bloom by day, and a warm
- * cinematic grade (teal-tinged shade, golden highlights, a touch more saturation), warmest at dusk.
- * Elsewhere the grade is left neutral. Called by the engine after its own per-frame settings.
- */
-export function applyLook(world, f, renderer, bloom, grade) {
-  if (!world.desert) {
-    if (grade.uGradeSat.value !== 1) {
-      grade.uGradeSat.value = 1;
-      grade.uGradeShadow.value.copy(WHITE);
-      grade.uGradeLight.value.copy(WHITE);
-    }
-    return;
-  }
-  const day = f.dl, dusk = Math.max(0, 1 - Math.abs(day - 0.42) / 0.3);
-  renderer.toneMappingExposure = 0.9 + 0.35 * (1 - day);
-  if (bloom) bloom.strength = 0.3 + 0.4 * (1 - day);
-  grade.uWarm.value = (1 - day) * 0.5;
-  grade.uGradeSat.value = 1.08 + 0.05 * dusk;
-  grade.uGradeShadow.value.copy(GRADE_SHADOW);
-  grade.uGradeLight.value.copy(GRADE_LIGHT).lerp(GRADE_DUSK, dusk);
-}

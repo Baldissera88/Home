@@ -69,6 +69,20 @@ export function detectTier(gl, asked) {
   return { tier: TIERS[t], gpu, rank, cores, memory };
 }
 
+/**
+ * One step down from preset q, or null past the last, in the order the frame pacer gives things up: first
+ * the extras of the high preset (screen-space occlusion, light shafts, film grain: a few ms of GPU, missed
+ * least), then bloom, then a 1024 shadow map with one point light fewer and sparser grass, then lower
+ * minimum resolutions (down to 0.8) with fewer lights. Medium and low never have the extras.
+ */
+export function lowerPreset(q) {
+  if (q.ao || q.rays || q.grain) return { ...q, ao: false, rays: false, grain: false };
+  if (q.bloom) return { ...q, bloom: false };
+  if (q.shadowMap > 1024) return { ...q, shadowMap: 1024, pointLights: Math.max(3, q.pointLights - 1), grass: Math.min(q.grass, 0.6) };
+  if (q.minDpr > 0.81) return { ...q, minDpr: Math.max(0.8, q.minDpr - 0.2), pointLights: Math.max(2, q.pointLights - 1), grass: Math.min(q.grass, 0.4) };
+  return null;
+}
+
 /** Sorts the first n values in place: insertion sort, as n is small and nothing may be allocated. */
 function sortN(a, n) {
   for (let i = 1; i < n; i++) {
@@ -382,7 +396,7 @@ export class StatsView {
     const tris = this.tris >= 1e6 ? (this.tris / 1e6).toFixed(2) + 'M' : (this.tris / 1e3).toFixed(0) + 'k';
     this.el.textContent = `${s.fps.toFixed(0)} fps  ${s.med.toFixed(1)} ms  p90 ${s.p90.toFixed(1)}  late ${(s.late * 100).toFixed(0)}%\n`
       + `js ${s.js.toFixed(1)}  ${gpu}  load ${s.load.toFixed(2)}\n`
-      + `dpr ${(engine.fixedDpr || engine.dpr).toFixed(2)}  ${q.name || '?'} @${p.fps}${q.bloom ? '' : ' -bloom'}  vsync ${p.vsync.toFixed(1)}\n`
+      + `dpr ${(engine.fixedDpr || engine.dpr).toFixed(2)}  ${q.name || '?'} @${p.fps}${q.bloom ? '' : ' -bloom'}${q.ao ? ' +ao' : ''}${q.rays ? ' +rays' : ''}  vsync ${p.vsync.toFixed(1)}\n`
       + `${this.calls} calls  ${tris} tris`;
   }
 }

@@ -2,40 +2,98 @@ import * as THREE from 'three';
 import { E, EF, P } from './defs.js';
 
 /**
- * The characters' look: a rim light and a little more colour on their materials, a soft contact shadow under
- * every visible actor and a pulsing ring under elites and bosses (all of them one instanced draw).
+ * The characters' look: skin, cloth and metal told apart by their colour on the KayKit swatch atlas and lit
+ * each their own way (light wrapping into skin with a red subsurface edge, a soft sheen on cloth, glossy
+ * metal reflecting the environment), a rim light, a soft contact shadow under every visible actor and a
+ * pulsing ring under elites and bosses (all of them one instanced draw).
  */
 
 /** Colour of the rim light on every character (shared by all their programs; set each frame by updateBlobs). */
 export const rimColor = { value: new THREE.Color(0, 0, 0) };
+/** Extra environment reflection on metal parts (1 + this times the scene's); set with the biome by the engine. */
+export const charEnv = { value: 1.2 };
+/** Darkness of the contact shadows (1 normal; lower where screen-space occlusion adds its own). */
+export const contact = { dark: 1 };
+
+// Material classes from the texel's colour (sRGB-ish via sqrt): skin is a light, warm, moderately
+// saturated orange-to-tan; metal a cool or neutral mid grey; gold a bright saturated yellow; cloth (also
+// leather, hair, bone) the rest. Smooth weights, so a gradient swatch never flips class.
+const CLASSIFY = `
+{
+  vec3 cs = sqrt(max(diffuseColor.rgb, 0.0));
+  float cMax = max(cs.r, max(cs.g, cs.b)), cMin = min(cs.r, min(cs.g, cs.b));
+  float cSat = (cMax - cMin) / max(cMax, 0.001);
+  float cHue = cs.r >= cMax ? (cs.g - cs.b) / max(cMax - cMin, 0.001) : 2.0;
+  charSkin = smoothstep(0.62, 0.78, cMax) * smoothstep(0.12, 0.2, cSat) * (1.0 - smoothstep(0.5, 0.64, cSat))
+    * smoothstep(0.12, 0.28, cHue) * (1.0 - smoothstep(0.7, 0.92, cHue));
+  float gold = smoothstep(0.5, 0.62, cSat) * smoothstep(0.68, 0.82, cMax) * smoothstep(0.6, 0.75, cHue) * (1.0 - smoothstep(1.2, 1.6, cHue));
+  float grey = (1.0 - smoothstep(0.1, 0.24, cSat)) * step(cs.r, cs.b + 0.03) * smoothstep(0.2, 0.32, cMax) * (1.0 - smoothstep(0.84, 0.94, cMax));
+  charMetal = max(grey, gold);
+  charCloth = saturate(1.0 - charSkin - charMetal);
+  metalnessFactor = max(metalnessFactor, grey * 0.55 + gold * 0.75);
+  roughnessFactor = mix(roughnessFactor, 0.34, charMetal);
+  roughnessFactor = mix(roughnessFactor, 0.52, charSkin);
+  roughnessFactor = mix(roughnessFactor, max(roughnessFactor, 0.85), charCloth);
+}`;
+
+// The direct light of a character: skin lets light wrap past the terminator, red farthest (a fake
+// subsurface scatter), cloth wraps a little and gets a velvet sheen at grazing view.
+const WRAP_DIFFUSE = `
+	vec3 charWrap = charSkin * vec3( 0.5, 0.22, 0.14 ) + charCloth * 0.15;
+	reflectedLight.directDiffuse += saturate( ( dot( geometryNormal, directLight.direction ) + charWrap ) / ( 1.0 + charWrap ) ) * directLight.color * BRDF_Lambert( material.diffuseColor );
+	float charFv = 1.0 - saturate( dot( geometryNormal, geometryViewDir ) );
+	reflectedLight.directSpecular += charCloth * 0.3 * charFv * charFv * charFv * saturate( dot( geometryNormal, directLight.direction ) * 0.6 + 0.4 ) * directLight.color * ( material.diffuseColor + 0.04 );
+}`;
+
+let charLights = null;
+/** three's physical lighting with the characters' direct-light term; three's own if its text has changed. */
+function characterLights() {
+  if (charLights !== null) return charLights;
+  const src = THREE.ShaderChunk.lights_physical_pars_fragment;
+  const diffuse = '\treflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );\n}';
+  charLights = src.split(diffuse).length === 2 ? src.replace(diffuse, WRAP_DIFFUSE) : src;
+  return charLights;
+}
 
 // After the lights and emissive (so hit flashes and status tints stay as they were): lift the saturation a
-// little, then add a soft bright edge where the surface turns away from the camera, strongest on top.
-// Fog and transparency (ghosts, stealth) apply to it like to the rest of the surface.
+// little, then add a soft bright edge where the surface turns away from the camera, strongest on top and
+// on the side the key light comes from. Fog and transparency (ghosts, stealth) apply to it like to the
+// rest of the surface.
 const RIM_FS = `{
   float rimLum = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
-  outgoingLight = max(mix(vec3(rimLum), outgoingLight, 1.14), 0.0);
+  outgoingLight = max(mix(vec3(rimLum), outgoingLight, 1.08), 0.0);
   vec3 rimView = isOrthographic ? vec3(0.0, 0.0, 1.0) : normalize(vViewPosition);
-  float rim = smoothstep(0.4, 1.0, 1.0 - saturate(dot(normal, rimView)));
+  float rimF = 1.0 - saturate(dot(normal, rimView));
+  float rim = smoothstep(0.42, 1.0, rimF);
   rim *= 0.45 + 0.55 * saturate(dot(normal, viewMatrix[1].xyz) + 0.45);
-  outgoingLight += uRim * rim * (0.65 + 0.35 * diffuseColor.rgb);
+#if NUM_DIR_LIGHTS > 0
+  rim *= 0.7 + 0.6 * saturate(dot(normal, directionalLights[0].direction) + 0.3);
+#endif
+  outgoingLight += uRim * rim * (0.6 + 0.4 * diffuseColor.rgb) * (1.0 - 0.5 * charMetal);
 }
 #include <opaque_fragment>`;
 
-function rimCompile(shader) {
+function charCompile(shader) {
   shader.uniforms.uRim = rimColor;
+  shader.uniforms.uCharEnv = charEnv;
   shader.fragmentShader = shader.fragmentShader
-    .replace('#include <common>', '#include <common>\nuniform vec3 uRim;')
+    .replace('#include <common>', '#include <common>\nuniform vec3 uRim;\nuniform float uCharEnv;\nfloat charSkin = 0.0, charMetal = 0.0, charCloth = 1.0;')
+    .replace('#include <lights_physical_pars_fragment>', characterLights())
+    .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n' + CLASSIFY)
+    .replace('#include <lights_fragment_maps>', '#include <lights_fragment_maps>\n  radiance *= 1.0 + charMetal * uCharEnv;')
     .replace('#include <opaque_fragment>', RIM_FS);
 }
 
-const rimKey = () => 'charRim';
+const charKey = () => 'charPBR';
 
-/** Gives a character's own (cloned) material the rim light; every character shares the one program. */
+/**
+ * Gives a character's own (cloned) material its skin, cloth and metal shading and the rim light; every
+ * character shares the one program (the parts merged per material by Assets.mergeParts draw with it too).
+ */
 export function enhanceCharacter(material) {
   if (!material.isMeshStandardMaterial) return material;
-  material.onBeforeCompile = rimCompile;
-  material.customProgramCacheKey = rimKey;
+  material.onBeforeCompile = charCompile;
+  material.customProgramCacheKey = charKey;
   return material;
 }
 
@@ -71,10 +129,12 @@ const SLOPE_STEP = 0.3;
 const BLOB_VS_HEAD = '#include <common>\nattribute vec4 aBlob;\nvarying vec4 vBlob;\nvarying vec2 vBlobUv;';
 const BLOB_VS_BODY = '#include <begin_vertex>\nvBlob = aBlob;\nvBlobUv = position.xz;';
 const BLOB_FS_HEAD = '#include <common>\nvarying vec4 vBlob;\nvarying vec2 vBlobUv;';
+// A blob is ambient occlusion: a wide soft falloff plus a tighter, darker core where the feet meet the ground.
 const BLOB_FS_BODY = `float blobR2 = dot(vBlobUv, vBlobUv);
   float blobG = max(1.0 - blobR2, 0.0);
   if (vBlob.w < 1.5) {
-    gl_FragColor = vec4(0.0, 0.0, 0.0, vBlob.w * blobG * (0.4 + 0.6 * blobG));
+    float blobCore = exp(-blobR2 * 7.0) * blobG;
+    gl_FragColor = vec4(0.0, 0.0, 0.0, min(0.92, vBlob.w * (blobG * (0.35 + 0.5 * blobG) + 0.55 * blobCore)));
   } else {
     float blobR = sqrt(blobR2);
     float band = smoothstep(0.7, 0.86, blobR) * (1.0 - smoothstep(0.86, 1.0, blobR)) + 0.06 * blobG;
@@ -171,7 +231,7 @@ class Blobs {
     const ground = this.ground, p = root.position, x = p.x, z = p.z;
     const g = ground(x, z);
     const lift = p.y - g + fly;
-    const a = BLOB_DARK * dim * (lift > 0 ? Math.max(0, 1 - lift * 0.4) : Math.max(0, 1 + lift * 2.5));
+    const a = BLOB_DARK * contact.dark * dim * (lift > 0 ? Math.max(0, 1 - lift * 0.4) : Math.max(0, 1 + lift * 2.5));
     if (a < 0.01) return;
     const s = SLOPE_STEP;
     const gx = clamp((ground(x + s, z) - ground(x - s, z)) / (2 * s), -0.8, 0.8);
