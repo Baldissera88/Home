@@ -192,56 +192,76 @@ function sheet(tris, color) {
   return paint(g, color);
 }
 
+/** Sets a colour from sRGB components (the plants' vertex colours are linear). */
+function srgb(c, r, g, b) {
+  return c.setRGB(r, g, b, THREE.SRGBColorSpace);
+}
+
 /**
- * A date palm: a ringed trunk curving up with `lean`, a crown of arching feather fronds (young ones up,
- * old ones hanging dry and brown) and clusters of dates under it.
+ * A date palm: a slim trunk patterned with old leaf bases, curving up with `lean`, a crown of long
+ * arching feather fronds (stiff leaflets in a V along each rib; the oldest hang down dry and brown) and
+ * clusters of dates tucked under it.
  */
 function palm(seed, lean, lod = 0) {
   const rng = mulberry(seed);
-  const H = 3.5 + rng() * 0.9;
+  const H = 3.6 + rng() * 0.8;
   const bend = (y) => lean * H * Math.pow(Math.max(0, y) / H, 1.7);
-  let tr = new THREE.CylinderGeometry(0.12, 0.2, H, [8, 6, 5, 5][lod], [12, 6, 3, 4][lod], true);
+  let tr = new THREE.CylinderGeometry(0.13, 0.17, H, [8, 6, 5, 5][lod], [14, 7, 3, 4][lod], true);
   tr.translate(0, H / 2, 0);
   const P = tr.attributes.position;
   for (let i = 0; i < P.count; i++) {
-    const y = P.getY(i), k = 1 + 0.07 * Math.sin(y * 19);
+    const y = P.getY(i), k = 1 + 0.06 * Math.sin(y * 16 + Math.atan2(P.getZ(i), P.getX(i)) * 2);
     P.setXYZ(i, P.getX(i) * k + bend(y), y, P.getZ(i) * k);
   }
   tr = clean(tr);
   tr.computeVertexNormals();
-  const parts = [paint(tr, (c, x, y) => c.setRGB(0.36, 0.28, 0.2).multiplyScalar(0.7 + 0.3 * (0.5 + 0.5 * Math.sin(y * 19 + 1.2))))];
+  const parts = [paint(tr, (c, x, y, z) => srgb(c, 0.45, 0.36, 0.27).multiplyScalar(0.62 + 0.38 * (0.5 + 0.5 * Math.sin(y * 16 + Math.atan2(z, x - bend(y)) * 2))))];
   const top = new THREE.Vector3(bend(H), H, 0);
-  const n = [15, 11, 8, 9][lod], steps = [9, 6, 4, 5][lod];
+  // A tuft of fibre where the fronds spring from.
+  const boss = clean(new THREE.IcosahedronGeometry(0.24, 0));
+  boss.scale(1, 0.8, 1);
+  boss.translate(top.x, H - 0.05, 0);
+  parts.push(paint(boss, (c) => srgb(c, 0.4, 0.33, 0.2)));
+  const n = [18, 13, 9, 10][lod], steps = [12, 7, 4, 5][lod];
+  const dir = new THREE.Vector3(), side = new THREE.Vector3(), up = new THREE.Vector3();
   for (let k = 0; k < n; k++) {
-    const a = (k / n) * Math.PI * 2 + rng() * 0.5;
-    const old = k % 4 === 3;
-    const e0 = old ? -0.5 - rng() * 0.4 : 0.35 + rng() * 0.6, L = old ? 1.3 + rng() * 0.4 : 1.8 + rng() * 0.6, droop = 1.0 + rng() * 0.6;
-    const green = old ? [0.42, 0.33, 0.17] : [0.17 + rng() * 0.05, 0.3 + rng() * 0.06, 0.09];
+    const a = (k / n) * Math.PI * 2 + rng() * 0.45;
+    const old = k % 5 === 4;
+    const e0 = old ? -0.35 - rng() * 0.5 : 0.25 + rng() * 0.75, L = old ? 1.5 + rng() * 0.4 : 2.0 + rng() * 0.7;
+    const droop = old ? 0.7 : 0.9 + rng() * 0.8;
+    const col = old ? [0.55, 0.45, 0.27] : [0.3 + rng() * 0.08, 0.42 + rng() * 0.08, 0.17];
     const tris = [];
-    let p = top.clone(), prev = null;
-    const dir = new THREE.Vector3(), side = new THREE.Vector3(Math.sin(a), 0, -Math.cos(a)), sag = new THREE.Vector3();
-    for (let i = 0; i <= steps; i++) {
+    side.set(Math.sin(a), 0, -Math.cos(a));
+    const p = top.clone();
+    for (let i = 0; i < steps; i++) {
       const t = i / steps, e = e0 - droop * t * t;
       dir.set(Math.cos(a) * Math.cos(e), Math.sin(e), Math.sin(a) * Math.cos(e));
-      const w = 0.34 * Math.sin(Math.PI * Math.min(1, 0.15 + t * 0.95)) * (old ? 0.6 : 1);
-      if (prev) {
-        // Leaflets: a folded V of narrow blades along the rib, one pair per step.
-        sag.set(0, -0.08 * w, 0);
-        const l = p.clone().addScaledVector(side, w).addScaledVector(dir, -0.05).add(sag);
-        const r = p.clone().addScaledVector(side, -w).addScaledVector(dir, -0.05).add(sag);
-        tris.push([prev.x, prev.y, prev.z, p.x, p.y, p.z, l.x, l.y, l.z], [prev.x, prev.y, prev.z, r.x, r.y, r.z, p.x, p.y, p.z]);
+      up.crossVectors(side, dir).normalize();
+      const q = p.clone().addScaledVector(dir, L / steps);
+      if (t > 0.08) {
+        // Leaflets: narrow blades from the rib, swept forward and folded up into a V; a plain blade far off.
+        const w = 0.55 * Math.sin(Math.PI * Math.min(1, t * 1.05)) * (old ? 0.7 : 1);
+        const blades = lod < 2 ? 2 : 1;
+        for (let b = 0; b < blades; b++) {
+          const at = p.clone().lerp(q, b / blades), base = at.clone().addScaledVector(dir, lod < 2 ? 0.06 : L / steps);
+          for (const s of [1, -1]) {
+            const tip = at.clone().addScaledVector(side, s * w).addScaledVector(dir, 0.22 * w).addScaledVector(up, (old ? -0.1 : 0.16) * w);
+            tris.push([at.x, at.y, at.z, base.x, base.y, base.z, tip.x, tip.y, tip.z]);
+          }
+        }
       }
-      prev = p.clone();
-      p = p.addScaledVector(dir, L / steps);
+      // The rib itself, a thin sliver.
+      tris.push([p.x, p.y - 0.015, p.z, q.x, q.y - 0.015, q.z, p.x, p.y + 0.02, p.z]);
+      p.copy(q);
     }
-    parts.push(sheet(tris, (c, x, y, z) => c.setRGB(green[0], green[1], green[2]).multiplyScalar(0.75 + 0.35 * Math.min(1, Math.hypot(x - top.x, z - top.z) / L))));
+    parts.push(sheet(tris, (c, x, y, z) => srgb(c, col[0], col[1], col[2]).multiplyScalar(0.7 + 0.4 * Math.min(1, Math.hypot(x - top.x, z - top.z) / L))));
   }
-  for (let k = 0; k < 3 && lod < 2; k++) {
-    const a = rng() * Math.PI * 2;
-    const g = clean(new THREE.IcosahedronGeometry(0.16, 0));
-    g.scale(1, 1.6, 1);
-    g.translate(top.x + Math.cos(a) * 0.2, H - 0.3, Math.sin(a) * 0.2);
-    parts.push(paint(g, (c) => c.setRGB(0.55, 0.25, 0.08)));
+  for (let k = 0; k < 4 && lod < 2; k++) {
+    const a = k * 1.7 + rng();
+    const g = clean(new THREE.IcosahedronGeometry(0.085, 0));
+    g.scale(1, 1.5, 1);
+    g.translate(top.x + Math.cos(a) * 0.2, H - 0.32 - rng() * 0.1, Math.sin(a) * 0.2);
+    parts.push(paint(g, (c) => srgb(c, 0.62, 0.36, 0.12)));
   }
   return mergeGeometries(parts);
 }
@@ -264,7 +284,7 @@ function saguaro(seed, lod = 0) {
   };
   const green = (c, x, y, z) => {
     const th = Math.atan2(z, x);
-    c.setRGB(0.25, 0.36, 0.16).multiplyScalar((0.75 + 0.3 * (ribs ? 0.5 + 0.5 * Math.cos(th * ribs) : 0.7)) * (0.75 + 0.25 * Math.min(1, y / 1.2)));
+    srgb(c, 0.4, 0.52, 0.3).multiplyScalar((0.75 + 0.3 * (ribs ? 0.5 + 0.5 * Math.cos(th * ribs) : 0.7)) * (0.75 + 0.25 * Math.min(1, y / 1.2)));
   };
   const body = rib(new THREE.CylinderGeometry(R, R * 1.06, H, radial, [5, 3, 1, 2][lod], true));
   body.translate(0, H / 2, 0);
@@ -304,12 +324,12 @@ function barrel(seed, lod = 0) {
     g.translate(ox, r * 0.36, oz);
     g = clean(g);
     g.computeVertexNormals();
-    parts.push(paint(g, (c, x, y, z) => c.setRGB(0.3, 0.4, 0.17).multiplyScalar(0.7 + 0.35 * (lod < 2 ? 0.5 + 0.5 * Math.cos(Math.atan2(z - oz, x - ox) * 14) : 0.7))));
+    parts.push(paint(g, (c, x, y, z) => srgb(c, 0.45, 0.55, 0.3).multiplyScalar(0.7 + 0.35 * (lod < 2 ? 0.5 + 0.5 * Math.cos(Math.atan2(z - oz, x - ox) * 14) : 0.7))));
     for (let k = 0; k < 6 && lod < 2; k++) {
       const a = k / 6 * Math.PI * 2;
       const fl = clean(new THREE.ConeGeometry(0.035, 0.07, 5));
       fl.translate(ox + Math.cos(a) * r * 0.35, r * 1.6 + 0.02, oz + Math.sin(a) * r * 0.35);
-      parts.push(paint(fl, (c) => c.setRGB(0.95, 0.65, 0.1)));
+      parts.push(paint(fl, (c) => srgb(c, 0.98, 0.8, 0.25)));
     }
   }
   return mergeGeometries(parts);
@@ -324,13 +344,13 @@ function scrub(seed, lod = 0) {
     g.translate(0, 0.3, 0);
     g.rotateZ(0.3 + rng() * 0.7);
     g.rotateY(rng() * 6.28);
-    parts.push(paint(clean(g), (c) => c.setRGB(0.32, 0.25, 0.18)));
+    parts.push(paint(clean(g), (c) => srgb(c, 0.45, 0.38, 0.3)));
   }
   for (let k = 0; k < 4; k++) {
     let g = new THREE.IcosahedronGeometry(0.13 + rng() * 0.08, [1, 1, 0, 0][lod]);
     g.translate((rng() - 0.5) * 0.4, 0.18 + rng() * 0.18, (rng() - 0.5) * 0.4);
     g = lumpy(g, 0.04, 7, k + seed);
-    parts.push(paint(g, (c, x, y) => c.setRGB(0.42, 0.42, 0.27).multiplyScalar(0.6 + y)));
+    parts.push(paint(g, (c, x, y) => srgb(c, 0.6, 0.6, 0.45).multiplyScalar(0.6 + y)));
   }
   return mergeGeometries(parts);
 }
@@ -338,7 +358,7 @@ function scrub(seed, lod = 0) {
 /** A dead acacia, bleached by the sun: a short twisted trunk and bare limbs spreading flat. */
 function acacia(seed, lod = 0) {
   const rng = mulberry(seed);
-  const bark = [0.5, 0.45, 0.38];
+  const bark = [0.33, 0.27, 0.2];
   const parts = [trunk(rng, 1.3, 0.12, 0.07, bark, lod)];
   for (let k = 0; k < 4; k++) {
     let g = new THREE.CylinderGeometry(0.02, 0.06, 1.3 + rng() * 0.5, [6, 4, 3, 4][lod], lod ? 1 : 3, true);
@@ -373,10 +393,10 @@ function reeds(seed, lod = 0) {
     if (k % 5 === 0 && lod < 2) {
       const g = clean(new THREE.CylinderGeometry(0.03, 0.03, 0.16, 5));
       g.translate(tx * 0.93, h * 0.9, tz * 0.93);
-      heads.push(paint(g, (c) => c.setRGB(0.3, 0.17, 0.08)));
+      heads.push(paint(g, (c) => srgb(c, 0.42, 0.26, 0.14)));
     }
   }
-  return mergeGeometries([sheet(tris, (c, x, y) => c.setRGB(0.22 + 0.25 * y, 0.32 + 0.18 * y, 0.1 + 0.05 * y)), ...heads]);
+  return mergeGeometries([sheet(tris, (c, x, y) => srgb(c, 0.4 + 0.25 * y, 0.5 + 0.15 * y, 0.22 + 0.08 * y)), ...heads]);
 }
 
 // Tree kinds: 0-2 broadleaf, 3-4 conifer, 5 birch-ish, 6 dead, 7 shrub; each built at every level of detail.
@@ -387,7 +407,7 @@ const KINDS = [
   (l) => conifer(4, {}, l), (l) => conifer(5, { height: 3.0, color: 0x1a4024 }, l),
   (l) => broadleaf(6, { radius: 0.7, height: 1.6, leaf: 0x7a8a2c, bark: [0.78, 0.76, 0.7], clusters: 10 }, l),
   (l) => deadTree(7, l), (l) => shrub(8, l),
-  (l) => palm(21, 0.12, l), (l) => palm(22, 0.32, l), (l) => saguaro(23, l), (l) => saguaro(24, l),
+  (l) => palm(21, 0.08, l), (l) => palm(22, 0.2, l), (l) => saguaro(23, l), (l) => saguaro(24, l),
   (l) => barrel(25, l), (l) => scrub(26, l), (l) => acacia(27, l), (l) => reeds(28, l),
 ];
 /** Desert kinds that stand stiff in the wind, and the thin ones seen from both sides. */
@@ -658,24 +678,24 @@ export class Flora {
               put(x + 0.5 + dx * 0.3 + dy * along, y + 0.5 + dy * 0.3 + dx * along, 15, 0.8 + r(x, y, 10 + k) * 0.5);
             }
           } else if (r(x, y, 12) < 0.35) {
-            const px = x + 0.5 + dx * 0.38, pz = y + 0.5 + dy * 0.38, s = 0.9 + r(x, y, 13) * 0.3;
-            // Leaning out over the water: the lean is along the model's +x, so turn it away from the land.
-            list.push([px, this.ground.heightAt(px, pz), pz, Math.atan2(dy, -dx), s, s, 9]);
+            const px = x + 0.5 + dx * 0.4, pz = y + 0.5 + dy * 0.4, s = 0.9 + r(x, y, 13) * 0.3;
+            // Rooted at the water's edge, leaning out over the bank: the lean is along the model's +x.
+            list.push([px, this.ground.heightAt(px, pz), pz, Math.atan2(-dy, dx), s, s, r(x, y, 14) < 0.5 ? 8 : 9]);
           }
         } else if (tile === TILE.WALL && !f.isBuilt(x, y)) {
           const s = f.S(x + 0.5, y + 0.5);
           const v = r(x, y, 20);
           if (s < 0.8) {
-            // At the cliff foot, inside the rock tile.
-            if (v > 0.2 * dense) continue;
-            const spot = f.foot(x + r(x, y, 21), y + r(x, y, 22), 0.32);
-            if (!spot || t(Math.floor(spot[0]), Math.floor(spot[1])) !== TILE.WALL) continue;
-            const kind = v < 0.03 ? 10 + (v < 0.015 ? 1 : 0) : v < 0.08 ? 12 : v < 0.1 ? 14 : 13;
+            // At the cliff foot, just in front of the face: small cacti, scrub, a dead acacia.
+            if (v > 0.18 * dense) continue;
+            const kind = v < 0.06 ? 12 : v < 0.075 ? 14 : 13;
+            const spot = f.foot(x + r(x, y, 21), y + r(x, y, 22), kind === 14 ? -0.25 : -0.12);
+            if (!spot || Math.abs(spot[0] - x - 0.5) > 1.1 || Math.abs(spot[1] - y - 0.5) > 1.1 || f.S(spot[0], spot[1]) < -0.3) continue;
             put(spot[0], spot[1], kind, 0.75 + r(x, y, 23) * 0.4);
-          } else if (s > 1.0 && v < 0.07 * dense) {
-            // On the ridge tops.
+          } else if (s > 1.3 && v < 0.07 * dense) {
+            // On the ridge tops, back from the rim.
             const px = x + r(x, y, 24), pz = y + r(x, y, 25);
-            const kind = v < 0.02 ? 10 + (v < 0.01 ? 1 : 0) : v < 0.03 ? 14 : 13;
+            const kind = v < 0.025 ? 10 + (v < 0.012 ? 1 : 0) : v < 0.035 ? 14 : 13;
             put(px, pz, kind, 0.7 + r(x, y, 26) * 0.4, f.rockTop(px, pz) - 0.05);
           }
         } else if (tile === TILE.FLOOR) {
@@ -794,7 +814,8 @@ export class Flora {
           const pz = sparse ? y + hash(x, y, 2) : y + hash(x, y * 7 + k, 2);
           const s = 0.5 + hash(x, y + k, 4) * 0.45;
           const dry = desert ? sparse : mt === 1;
-          if (dry) c.setRGB(dryTint[0] * 1.6, dryTint[1] * 1.5, dryTint[2] * 1.4);
+          if (dry && desert) c.setRGB(2.6, 1.45, 1.9); // straw, bleached by the sun
+          else if (dry) c.setRGB(dryTint[0] * 1.6, dryTint[1] * 1.5, dryTint[2] * 1.4);
           else c.setRGB(0.85 + hash(x * 7 + k, y, 6) * 0.3, 1, 0.85);
           tufts.push([px, this.ground.heightAt(px, pz), pz, hash(x + k, y, 3) * 6.28, s, s * (dry ? 1.25 : 1), k % 3, [c.r, c.g, c.b]]);
         }

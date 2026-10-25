@@ -67,21 +67,25 @@ float stoneH = 0.0;`)
   float fine = mix(texture(uNoise, side * 3.3).g, texture(uNoise, sp.xz * 3.3).g, top);
   vec3 c;
 ${rock ? `
-  // Strata: bands about half a metre thick that dip and wander across the ridge.
-  float warp = (texture(uNoise, sp.xz * 0.037).r - 0.5) * 1.9 + (texture(uNoise, sp.xz * 0.19 + 0.3).g - 0.5) * 0.4;
-  float s = sp.y * 2.1 + warp, id = floor(s), f = fract(s);
-  float hk = fract(sin(id * 91.17 + 3.1) * 43758.5453);
-  c = mix(vec3(0.79, 0.47, 0.27), vec3(0.93, 0.71, 0.49), hk);
-  c = mix(c, vec3(0.6, 0.3, 0.19), step(0.8, hk) * 0.75);
-  c = mix(c, vec3(0.96, 0.85, 0.67), step(hk, 0.13) * 0.7);
-  c *= (0.8 + 0.32 * grain) * (0.9 + 0.2 * fine);
-  // Desert varnish: dark streaks run down the faces from the ledges.
-  float streak = texture(uNoise, vec2((sp.x + sp.z) * 0.55, sp.y * 0.045)).a;
-  c *= 1.0 - smoothstep(0.55, 0.8, streak) * (1.0 - an.y) * 0.5;
+  // Strata: broad beds a metre or two thick in close warm tones, dipping and wandering across the ridge,
+  // with thin bedding lines in them; vertical flutes where rain ran down; dark varnish streaks.
+  float warp = (texture(uNoise, sp.xz * 0.031).r - 0.5) * 2.4 + (texture(uNoise, sp.xz * 0.17 + 0.3).g - 0.5) * 0.5;
+  float s = sp.y * 0.62 + warp * 0.45, id = floor(s), f = fract(s);
+  float h0 = fract(sin(id * 91.17 + 3.1) * 43758.5453), h1 = fract(sin((id + 1.0) * 91.17 + 3.1) * 43758.5453);
+  float hk = mix(h0, h1, smoothstep(0.8, 1.0, f));
+  c = mix(vec3(0.78, 0.5, 0.32), vec3(0.88, 0.67, 0.47), hk);
+  c = mix(c, vec3(0.93, 0.8, 0.63), smoothstep(0.82, 0.95, hk) * 0.8);
+  float bed = sp.y * 4.3 + warp * 1.3;
+  float line = 1.0 - smoothstep(0.0, 0.12, abs(fract(bed) - 0.5) * 2.0 - 0.82);
+  float flute = texture(uNoise, vec2(side.x * 1.3 + warp * 0.3, side.y * 0.07)).r;
+  float tone = texture(uNoise, sp.xz * 0.013 + sp.y * 0.01).g;
+  c *= (0.84 + 0.26 * grain) * (0.92 + 0.14 * fine) * (1.0 - 0.04 * line) * (0.92 + 0.12 * flute) * (0.86 + 0.28 * tone);
+  float streak = texture(uNoise, vec2((sp.x + sp.z) * 0.5, sp.y * 0.04)).a;
+  c *= 1.0 - smoothstep(0.58, 0.82, streak) * (1.0 - an.y) * 0.35;
   // Sand settles on whatever faces up.
   float up = smoothstep(0.62, 0.9, sn.y + (grain - 0.5) * 0.35);
   c = mix(c, uSandCol * (0.9 + 0.2 * fine), up * 0.85);
-  stoneH = smoothstep(0.0, 0.16, f) * 0.6 + grain * 0.3 + fine * 0.2;` : `
+  stoneH = sin(bed * 6.2832) * 0.05 + flute * 0.3 + grain * 0.4 + fine * 0.25;` : `
   // Dressed stone: grain, weathering pits, dust of sand at the foot.
   float pits = smoothstep(0.68, 0.84, mix(texture(uNoise, side * 4.3).r, texture(uNoise, sp.xz * 4.3).r, top));
   c = vec3(0.82 + 0.3 * grain) * (0.92 + 0.14 * fine) * (1.0 - 0.28 * pits);
@@ -356,9 +360,7 @@ class DesertBuilder {
     const thick = new Map();
     const profile = (x, z, y, y0, r, dmax) => {
       if (r === 0) return -0.04;
-      const u = (y + (f.n1(x * 0.6, z * 0.6) - 0.5) * 0.9) / 0.62;
-      const band = Math.abs(u - Math.floor(u) - 0.5) * 2;
-      let d = 0.05 + 0.055 * (y - y0) + 0.09 * band + 0.2 * (f.n3(x * 0.9 + y * 0.25, z * 0.9 - y * 0.2) - 0.5);
+      let d = f.faceInset(x, z, y, y0);
       if (r === ROWS) d += 0.16;
       return Math.max(-0.02, Math.min(dmax, d));
     };
@@ -566,14 +568,19 @@ class DesertBuilder {
           if (f.isBuilt(x, y)) continue;
           const s = f.S(x + 0.5, y + 0.5);
           // Hard against the foot of a cliff: boulders fallen from it, a monument now and then.
+          // Against the foot of a cliff: boulders fallen from it, bones, now and then a colossal head
+          // half sunk into the rock.
           const v = r(1);
-          const spot = s < 0.75 && v < 0.25 ? this.footSpot(x, y, v < 0.16 ? 0.25 : v < 0.19 ? 0.42 : v < 0.22 ? 0.5 : 0.3) : null;
+          const spot = s < 0.75 && v < 0.22 ? this.footSpot(x, y, v < 0.14 ? -0.08 : v < 0.17 ? 0.15 : -0.3) : null;
           if (spot) {
-            if (v < 0.16 * dense) this.boulders(spot[0], spot[1], r, 0.6);
-            else if (v < 0.16) continue;
-            else if (v < 0.19) this.obelisk(spot[0], spot[1], r);
-            else if (v < 0.22) this.colossus(spot[0], spot[1], r);
-            else this.ribs(spot[0], spot[1], r);
+            if (v < 0.14 * dense) this.boulders(spot[0], spot[1], r, 0.55);
+            else if (v < 0.14) continue;
+            else if (v < 0.17) this.colossus(spot[0], spot[1], r);
+            else if (v < 0.19) this.ribs(spot[0], spot[1], r);
+            else this.skull(spot[0], spot[1], r);
+          } else if (s > 2.0 && r(5) < 0.01) {
+            const px = x + 0.5, pz = y + 0.5;
+            this.obelisk(px, pz, r, this.topY(px, pz));
           } else if (s > 2.4 && r(2) < 0.012) {
             this.arch(x + 0.5, y + 0.5, r);
           } else if (s > 1.2 && r(3) < 0.02 * dense) {
@@ -604,9 +611,10 @@ class DesertBuilder {
   }
 
   /** A spot against the cliff foot inside rock tile (x, y): [x, z] about `inset` into the rock, or null. */
-  footSpot(x, y, inset = 0.25) {
-    const spot = this.field.foot(x + 0.25 + 0.5 * this.rnd(x, y, 300), y + 0.25 + 0.5 * this.rnd(x, y, 301), inset);
-    return spot && this.tile(Math.floor(spot[0]), Math.floor(spot[1])) === TILE.WALL ? spot : null;
+  footSpot(x, y, off) {
+    const spot = this.field.foot(x + 0.25 + 0.5 * this.rnd(x, y, 300), y + 0.25 + 0.5 * this.rnd(x, y, 301), off);
+    // Close to this tile, and no more than a little way out onto the sand.
+    return spot && Math.abs(spot[0] - x - 0.5) < 1.1 && Math.abs(spot[1] - y - 0.5) < 1.1 && this.field.S(spot[0], spot[1]) > -0.32 ? spot : null;
   }
 
   groundY(x, z) {
@@ -649,8 +657,8 @@ class DesertBuilder {
 
   pebbles(x, z, r) {
     for (let i = 0; i < 2 + Math.floor(r(40) * 3); i++) {
-      const px = x + (r(41 + i) - 0.5) * 0.7, pz = z + (r(46 + i) - 0.5) * 0.7, s = 0.04 + 0.07 * r(51 + i);
-      this.rock.add(this.pebble[i % 3], xf(px, this.groundY(px, pz) + s * 0.2, pz, 0, r(56 + i) * 6.28, 0, s, s * 0.7, s * 1.2), lin(0xffe2c8, 0.9 + 0.2 * r(60 + i)));
+      const px = x + (r(41 + i) - 0.5) * 0.7, pz = z + (r(46 + i) - 0.5) * 0.7, s = 0.03 + 0.05 * r(51 + i);
+      this.stone.add(this.pebble[i % 3], xf(px, this.groundY(px, pz) + s * 0.15, pz, 0, r(56 + i) * 6.28, 0, s, s * 0.7, s * 1.2), lin([0xb8a894, 0x9a8a7a, 0xc8a080][i % 3], 0.85 + 0.2 * r(60 + i)));
     }
   }
 
@@ -666,7 +674,7 @@ class DesertBuilder {
     }
   }
 
-  obelisk(x, z, r) {
+  obelisk(x, z, r, base) {
     const geo = this.obeliskGeo || (this.obeliskGeo = (() => {
       const shaft = new THREE.CylinderGeometry(0.2, 0.3, 3.0, 4, 1).toNonIndexed();
       shaft.rotateY(Math.PI / 4);
@@ -678,7 +686,7 @@ class DesertBuilder {
       base.translate(0, 0.08, 0);
       return [shaft, tip, base];
     })());
-    const y = this.groundY(x, z) - 0.15 - 0.6 * r(90);
+    const y = (base ?? this.groundY(x, z)) - 0.15 - 0.6 * r(90);
     const m = xf(x, y, z, (r(91) - 0.5) * 0.12, r(92) * 1.57, (r(93) - 0.5) * 0.12, 0.9 + 0.25 * r(94)).clone();
     this.stone.add(geo[0], m, lin(0xe9cfa4));
     this.stone.add(geo[1], m, lin(0xc79c5a));
@@ -887,4 +895,167 @@ export function buildDesert(world) {
 export function updateDesert(world, f, t) {
   SAND.uTime.value = t % 1000;
   SAND.uDay.value = f.dl;
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Props and set pieces for World: the game's props given a desert look, the stairs down and the gate to the
+// desert in the overworld. Plain vertex-coloured meshes on shared materials, so the level's batching merges
+// the static ones.
+
+const PROP_MATS = {};
+function propMat(kind) {
+  return PROP_MATS[kind] || (PROP_MATS[kind] = new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: kind === 'clay' ? 0.8 : kind === 'bone' ? 0.7 : 0.88, metalness: 0,
+  }));
+}
+
+/** One mesh, in local coordinates, from [geometry, matrix, colour, fn] parts (see Chunks.add). */
+function baked(kind, parts) {
+  const c = new Chunks();
+  c.bucket = function bucket() {
+    let b = this.map.get(0);
+    if (!b) this.map.set(0, b = { pos: [], nor: [], col: [] });
+    return b;
+  };
+  for (const [geo, m, color, fn] of parts) c.add(geo, m, color, fn);
+  const [mesh] = c.meshes(propMat(kind), 'desert-' + kind);
+  mesh.matrixAutoUpdate = true;
+  return mesh;
+}
+
+const LOCAL = new THREE.Matrix4();
+
+/** A mesh of one geometry in a colour or painted by fn, in local coordinates. */
+function piece(kind, geo, m = LOCAL, color = null, fn = null) {
+  return baked(kind, [[geo, m, color, fn]]);
+}
+
+let tpl = null;
+function templates() {
+  if (tpl) return tpl;
+  const pot = lathe([[0, 0], [0.12, 0.02], [0.2, 0.14], [0.21, 0.28], [0.15, 0.42], [0.08, 0.5], [0.09, 0.56], [0, 0.56]], 12);
+  const jar = lathe([[0, 0], [0.12, 0.02], [0.26, 0.22], [0.28, 0.45], [0.2, 0.68], [0.12, 0.76], [0.14, 0.82], [0, 0.82]], 12);
+  const shaft = new THREE.CylinderGeometry(0.2, 0.23, 1, 16, 4, false).toNonIndexed();
+  const P = shaft.attributes.position;
+  for (let i = 0; i < P.count; i++) {
+    _v.fromBufferAttribute(P, i);
+    const rr = Math.hypot(_v.x, _v.z), k = rr < 0.05 ? 1 : 1 - 0.05 * (0.5 + 0.5 * Math.cos(Math.atan2(_v.z, _v.x) * 16));
+    P.setXYZ(i, _v.x * k, _v.y + 0.5, _v.z * k);
+  }
+  shaft.computeVertexNormals();
+  tpl = {
+    pot, jar, shaft, plinth: chamferBox(0.32, 0.1, 0.32, 0.025), block: chamferBox(0.5, 0.5, 0.5, 0.03),
+    bone: new THREE.CylinderGeometry(0.025, 0.02, 0.4, 5).toNonIndexed(),
+    cranium: new THREE.SphereGeometry(0.1, 8, 6).toNonIndexed(), snout: new THREE.BoxGeometry(0.12, 0.07, 0.1).toNonIndexed(),
+    socket: new THREE.SphereGeometry(0.025, 5, 4).toNonIndexed(), face: new THREE.SphereGeometry(0.12, 8, 6).toNonIndexed(),
+    disc: new THREE.CylinderGeometry(0.16, 0.16, 0.05, 16).toNonIndexed(),
+    drift: new THREE.SphereGeometry(0.7, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2).toNonIndexed(),
+    coffin: chamferBox(0.45, 0.22, 0.24, 0.03), lid: chamferBox(0.47, 0.05, 0.26, 0.03),
+  };
+  return tpl;
+}
+
+const TERRACOTTA = (r) => (c, lx, ly) => c.copy(lin(r < 0.5 ? 0xb8673e : 0xc98a58)).multiplyScalar(Math.floor(ly * 14) % 5 === 2 ? 0.62 : 1);
+
+/**
+ * The game's props on a desert floor, or null for those that keep their usual look: clay pots and jars,
+ * broken sandstone columns, bleached skulls and bones, a painted sarcophagus. r is the prop's random value.
+ */
+export function desertProp(name, r) {
+  const t = templates();
+  const g = new THREE.Group();
+  const add = (m) => { m.castShadow = true; g.add(m); return m; };
+  switch (name) {
+    case 'URN': add(piece('clay', t.pot, xf(0, 0, 0, 0, 0, 0, 0.9 + 0.3 * r).clone(), null, TERRACOTTA(r))); break;
+    case 'BARREL': add(piece('clay', t.jar, xf(0, 0, 0, 0, 0, 0, 0.85 + 0.2 * r).clone(), null, TERRACOTTA(1 - r))); break;
+    case 'PILLAR': case 'COLUMN': {
+      const h = name === 'COLUMN' ? 1.9 : 1.1 + 0.6 * r;
+      add(piece('stone', t.plinth, xf(0, 0.08, 0, 0, 0, 0, 1).clone(), lin(0xdcc29a)));
+      add(piece('stone', t.shaft, xf(0, 0.17, 0, 0, r * 6, 0, 1, h, 1).clone(), null, (c, lx, ly) => c.copy(lin(0xe6cda4)).multiplyScalar(1 - 0.12 * (1 - ly))));
+      if (name === 'COLUMN') add(piece('stone', t.plinth, xf(0, h + 0.2, 0, 0, 0.3, 0, 1.15, 1, 1.15).clone(), lin(0xdcc29a)));
+      break;
+    }
+    case 'SKULLS': case 'BONEPILE': {
+      const parts = [];
+      for (let i = 0; i < (name === 'BONEPILE' ? 6 : 3); i++) {
+        const a = i * 2.3 + r * 6, d = 0.1 + 0.08 * i;
+        parts.push([t.bone, xf(Math.cos(a) * d, 0.02 + (i > 3 ? 0.04 : 0), Math.sin(a) * d, Math.PI / 2, a * 1.7, 0, 1, 0.6 + 0.4 * ((i * 0.37 + r) % 1), 1).clone(), lin(0xeee4d0)]);
+      }
+      // A skull or two: cranium, snout and dark sockets.
+      for (let i = 0; i < (name === 'SKULLS' ? 2 : 1); i++) {
+        const ox = (i - 0.5) * 0.2, yaw = r * 6 + i * 2, sy = Math.sin(yaw), cy = Math.cos(yaw);
+        parts.push([t.cranium, xf(ox, 0.09, 0, 0, yaw, 0, 1, 0.9, 1.1).clone(), lin(0xf2ead8)]);
+        parts.push([t.snout, xf(ox + sy * 0.07, 0.04, cy * 0.07, 0, yaw, 0, 1).clone(), lin(0xe8dcc6)]);
+        for (const s of [-1, 1]) parts.push([t.socket, xf(ox + sy * 0.085 + cy * s * 0.04, 0.1, cy * 0.085 - sy * s * 0.04, 0, 0, 0, 1).clone(), lin(0x2a2018)]);
+      }
+      add(baked('bone', parts));
+      break;
+    }
+    case 'SARCOPHAGUS': {
+      const bands = (c, lx) => c.copy(Math.abs(Math.floor(lx * 9 + 10)) % 3 === 0 ? lin(0x2a4a8a) : lin(0xc89a3a));
+      add(baked('stone', [
+        [t.coffin, xf(0, 0.22, 0, 0, 0, 0, 1).clone(), null, bands],
+        [t.lid, xf(0, 0.48, 0, 0, 0, 0, 1).clone(), null, bands],
+        // The face at the head end of the lid.
+        [t.face, xf(0.34, 0.53, 0, 0, 0, 0, 0.6, 0.5, 1).clone(), lin(0xd8a850)],
+      ]));
+      break;
+    }
+    default: return null;
+  }
+  return g;
+}
+
+/** The way down: a sandstone-framed stairwell going into the dark under the sand. */
+export function desertStairs() {
+  const t = templates();
+  const g = new THREE.Group();
+  const parts = [];
+  // The frame: four kerb blocks around the opening.
+  for (const [x, z, sx, sz] of [[0, -0.52, 1.2, 0.22], [0, 0.52, 1.2, 0.22], [-0.52, 0, 0.22, 0.82], [0.52, 0, 0.22, 0.82]]) {
+    parts.push([t.block, xf(x, 0.06, z, 0, 0, 0, sx, 0.2, sz).clone(), lin(0xdcc096)]);
+  }
+  // Steps dropping away from the near side, darker as they go down.
+  for (let i = 0; i < 4; i++) {
+    parts.push([t.block, xf(0, 0.014 - i * 0.003, 0.3 - i * 0.2, 0, 0, 0, 0.8, 0.02, 0.2).clone(), lin(0xc8a87c, 0.75 - i * 0.18)]);
+  }
+  const mesh = baked('stone', parts);
+  mesh.receiveShadow = true;
+  g.add(mesh);
+  const dark = new THREE.Mesh(new THREE.PlaneGeometry(0.82, 0.82), new THREE.MeshBasicMaterial({ color: 0x050302 }));
+  dark.rotation.x = -Math.PI / 2;
+  dark.position.y = 0.008;
+  g.add(dark);
+  return g;
+}
+
+/**
+ * The overworld's way into the Scorched Sands: an old sandstone gateway (two battered pylons under a
+ * corniced lintel with a sun disc) half buried in drifted sand, with the desert's hot glare beyond it.
+ */
+export function desertGate() {
+  const t = templates();
+  const g = new THREE.Group();
+  const parts = [];
+  for (const s of [-1, 1]) {
+    for (let c = 0; c < 6; c++) {
+      const w = 0.62 - c * 0.035;
+      parts.push([t.block, xf(s * (0.82 + c * 0.012), 0.2 + c * 0.4, 0, 0, 0, 0, w, 0.39, 0.7 - c * 0.02).clone(), lin(c % 2 ? 0xe2c79c : 0xd8bb8e)]);
+    }
+  }
+  parts.push([t.block, xf(0, 2.55, 0, 0, 0, 0, 2.4, 0.32, 0.62).clone(), lin(0xe6cca2)]);
+  parts.push([t.block, xf(0, 2.78, 0, 0, 0, 0, 2.6, 0.14, 0.72).clone(), lin(0xdcc096)]);
+  parts.push([t.disc, xf(0, 2.55, 0.33, Math.PI / 2, 0, 0, 1).clone(), lin(0xc8a040)]);
+  // Drifted sand banked against the pylons.
+  for (const s of [-1, 1]) parts.push([t.drift, xf(s * 1.15, -0.05, 0.25, 0, 0, 0, 1, 0.45, 1.1).clone(), lin(0xe4c48e)]);
+  const mesh = baked('stone', parts);
+  mesh.castShadow = true;
+  g.add(mesh);
+  const glare = new THREE.Mesh(new THREE.PlaneGeometry(1.05, 2.3), new THREE.MeshBasicMaterial({
+    color: 0xffc27a, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false,
+  }));
+  glare.position.set(0, 1.15, 0);
+  glare.userData.dynamic = true;
+  g.add(glare);
+  return g;
 }

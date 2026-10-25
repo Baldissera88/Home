@@ -285,7 +285,14 @@ void splatPick(inout vec4 best, float w, float layer) {
   float far = smoothstep(16.0, 42.0, distance(vGroundPos.xz, cameraPosition.xz));
   uv += (texture(uNoise, tp * 0.07 + vec2(0.0, uTime * 0.21)).rg - 0.5) * 0.05 * far * uDay;
 #endif
+#ifdef DESERT
+  // The sand's texture bends over the land, so its ripples sweep in long curves instead of repeating
+  // every 4 m; paving and the rest stay straight.
+  vec2 uvSand = uv + (texture(uNoise, tp * 0.019).rg - 0.5) * 0.9;
+  vec4 c1 = texture(uLayers, vec3(best.y < 1.5 ? uvSand : uv, best.y)), c2 = texture(uLayers, vec3(best.w < 1.5 ? uvSand : uv, best.w));
+#else
   vec4 c1 = texture(uLayers, vec3(uv, best.y)), c2 = texture(uLayers, vec3(uv, best.w));
+#endif
   // Height blend: the higher texture wins near the seam; the second layer's height counts only where it is present.
   float s1 = best.x + c1.a * uHeightBlend;
   float s2 = best.z + c2.a * uHeightBlend * min(best.z * 16.0, 1.0);

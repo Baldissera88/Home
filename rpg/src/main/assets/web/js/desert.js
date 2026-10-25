@@ -117,6 +117,25 @@ export class DesertField {
     for (let k = 0; k < s.length; k++) s[k] = (rock[k] ? toOpen[k] - 0.5 : 0.5 - toRock[k]) / FIELD_RES;
     blur(s, nx, ny, 2);
     blur(s, nx, ny, 1);
+    // How thick the rock is around each point (the field's largest value within a tile and a half): lone
+    // outcrops stay low, broad ridges rise high.
+    const r = Math.round(1.5 * FIELD_RES), m = this.thick = new Float32Array(s), tmp = new Float32Array(Math.max(nx, ny));
+    for (let j = 0; j < ny; j++) {
+      for (let i = 0; i < nx; i++) {
+        let v = -1e9;
+        for (let k = Math.max(0, i - r); k <= Math.min(nx - 1, i + r); k++) v = Math.max(v, s[j * nx + k]);
+        tmp[i] = v;
+      }
+      for (let i = 0; i < nx; i++) m[j * nx + i] = tmp[i];
+    }
+    for (let i = 0; i < nx; i++) {
+      for (let j = 0; j < ny; j++) {
+        let v = -1e9;
+        for (let k = Math.max(0, j - r); k <= Math.min(ny - 1, j + r); k++) v = Math.max(v, m[k * nx + i]);
+        tmp[j] = v;
+      }
+      for (let j = 0; j < ny; j++) m[j * nx + i] = tmp[j];
+    }
     this.n1 = valueNoise(this.seed + 11);
     this.n2 = valueNoise(this.seed + 12);
     this.n3 = valueNoise(this.seed + 13);
@@ -173,11 +192,11 @@ export class DesertField {
     return this.tile(x, y) === TILE.WALL && !this.built[y * this.w + x] ? 1 : 0;
   }
 
-  /** Signed distance into the ridges at a point, bilinear. */
-  S(x, z) {
+  /** Signed distance into the ridges at a point, bilinear (or another grid of the field's size). */
+  S(x, z, s = this.s) {
     const fx = Math.min(this.nx - 1.001, Math.max(0, (x + PAD) * FIELD_RES - 0.5));
     const fz = Math.min(this.ny - 1.001, Math.max(0, (z + PAD) * FIELD_RES - 0.5));
-    const ix = fx | 0, iz = fz | 0, tx = fx - ix, tz = fz - iz, s = this.s, n = this.nx;
+    const ix = fx | 0, iz = fz | 0, tx = fx - ix, tz = fz - iz, n = this.nx;
     const a = s[iz * n + ix], b = s[iz * n + ix + 1], c = s[iz * n + n + ix], d = s[iz * n + n + ix + 1];
     return a + (b - a) * tx + (c - a + (d - c - b + a) * tx) * tz;
   }
@@ -194,10 +213,11 @@ export class DesertField {
     return THREE.MathUtils.smoothstep(n, 0.55, 0.72) * THREE.MathUtils.smoothstep(edge, 3, 7);
   }
 
-  /** Height of the ridge tops: higher further in, rolling, with a flat mesa now and then. */
+  /** Height of the ridge tops: higher further in, rolling, with a flat mesa now and then; lone outcrops stay low. */
   top(x, z, s = this.S(x, z)) {
     const roll = this.n1(x / 6.5, z / 6.5), mesa = this.n2(x / 15, z / 15);
-    let h = 2.15 + 1.25 * THREE.MathUtils.smoothstep(s, 0.4, 3.2) + 1.1 * (roll - 0.5) + 1.3 * THREE.MathUtils.smoothstep(mesa, 0.5, 0.8);
+    const big = THREE.MathUtils.smoothstep(this.S(x, z, this.thick), 0.35, 1.4);
+    let h = 1.3 + 0.95 * big + 1.25 * THREE.MathUtils.smoothstep(s, 0.4, 3.2) + (0.5 + 0.6 * big) * (roll - 0.5) + 1.3 * big * THREE.MathUtils.smoothstep(mesa, 0.5, 0.8);
     h += 0.5 * Math.min(1, this.outside(x, z) / PAD);
     return h * (1 - 0.55 * this.dune(x, z));
   }
@@ -209,14 +229,30 @@ export class DesertField {
   }
 
   /**
-   * A spot about `inset` into the rock at the foot of the cliff nearest (x, z), as [x, z], or null where
-   * there is no clear face (the field is flat there).
+   * How far into the field (S) a cliff face stands at height y (its foot y0): it leans back as it rises,
+   * steps in and out band by band, bulges and is cut by gullies. cliffs.js builds the faces from this.
    */
-  foot(x, z, inset) {
-    const e = 0.15, gx = this.S(x + e, z) - this.S(x - e, z), gz = this.S(x, z + e) - this.S(x, z - e), l = Math.hypot(gx, gz);
-    if (l < 1e-3) return null;
-    const k = (inset - this.S(x, z)) / (l / (2 * e));
-    return [x + gx / l * k, z + gz / l * k];
+  faceInset(x, z, y, y0) {
+    const u = (y + (this.n1(x * 0.6, z * 0.6) - 0.5) * 0.9) / 0.62;
+    const band = Math.abs(u - Math.floor(u) - 0.5) * 2;
+    return 0.05 + 0.055 * (y - y0) + 0.1 * band + 0.3 * (this.n3(x * 0.9 + y * 0.25, z * 0.9 - y * 0.2) - 0.5)
+      + 0.16 * (this.n1(x * 1.4 + 11, z * 1.4 + 7) - 0.5);
+  }
+
+  /**
+   * A spot at the foot of the cliff nearest (x, z): `off` out from its face (negative: in front of it, on
+   * the sand; positive: into the rock), as [x, z], or null where there is no clear face.
+   */
+  foot(x, z, off) {
+    for (let it = 0; it < 2; it++) {
+      const e = 0.15, gx = this.S(x + e, z) - this.S(x - e, z), gz = this.S(x, z + e) - this.S(x, z - e), l = Math.hypot(gx, gz);
+      if (l < 1e-3) return null;
+      const y0 = this.sand(x, z) - 0.38;
+      const k = (this.faceInset(x, z, y0 + 0.6, y0) + off - this.S(x, z)) / (l / (2 * e));
+      x += gx / l * k;
+      z += gz / l * k;
+    }
+    return [x, z];
   }
 
   /**
@@ -339,42 +375,46 @@ void main() {
     col = mix(col, vec3(0.55, 0.4, 0.3), step(0.88, g2) * (1.0 - rip) * 0.5);
     h = 0.38 + 0.3 * rip * amp + 0.03 * g;
   } else if (uLayer == 2) {
-    // Hardpan: a crust of baked silt split into polygons, a pavement of pebbles and sand in the hollows.
-    vec3 cr = voronoi(uv, 7.0, 20u);
-    float crack = 1.0 - smoothstep(0.0, 0.035 + 0.03 * fine, cr.y);
-    vec3 crust = mix(vec3(0.66, 0.53, 0.4), vec3(0.76, 0.62, 0.47), cr.z) * (0.9 + 0.2 * fine);
-    vec3 pb = voronoi(uv, 46.0, 30u);
-    float has = step(0.45, pb.z);
-    float pebble = has * smoothstep(0.42, 0.18, pb.x);
-    vec3 stone = mix(vec3(0.42, 0.33, 0.27), vec3(0.72, 0.62, 0.52), fract(pb.z * 7.31));
-    stone = mix(stone, vec3(0.55, 0.3, 0.2), step(0.8, fract(pb.z * 3.7)) * 0.7);
+    // Hardpan: a crust of baked silt crazed into small plates, desert pavement (angular pebbles of mixed
+    // stone packed into it) and sand drifted into the hollows.
+    vec3 cr = voronoi(uv, 18.0, 20u);
+    float crack = 1.0 - smoothstep(0.0, 0.02 + 0.02 * fine, cr.y);
+    vec3 crust = mix(vec3(0.72, 0.6, 0.47), vec3(0.8, 0.68, 0.54), cr.z) * (0.92 + 0.16 * fine);
+    vec3 pb = voronoi(uv, 64.0, 30u);
+    float rough = fbm(uv, 32.0, 2, 31u);
+    float pebble = step(0.6, pb.z) * smoothstep(0.42, 0.22, pb.x + (rough - 0.5) * 0.25);
+    float tone = fract(pb.z * 7.31);
+    vec3 stone = mix(vec3(0.46, 0.4, 0.35), vec3(0.72, 0.64, 0.55), tone);
+    stone = mix(stone, vec3(0.58, 0.36, 0.26), step(0.82, fract(pb.z * 3.7)) * 0.7);
+    stone *= 0.8 + 0.35 * smoothstep(0.4, 0.0, pb.x); // lit tops, darker rims
     float drift = smoothstep(0.45, 0.7, fbm(uv, 4.0, 3, 21u));
-    col = mix(crust, sand * 0.95, drift * 0.8);
-    col *= 1.0 - 0.45 * crack * (1.0 - drift);
-    col = mix(col, stone * (0.85 + 0.3 * g), pebble * (1.0 - drift * 0.7));
-    h = 0.4 + 0.05 * (fine - 0.5) - 0.18 * crack * (1.0 - drift) + 0.32 * pebble * (1.0 - drift * 0.7) + drift * 0.04;
+    col = mix(crust, sand * 0.97, drift * 0.85);
+    col *= 1.0 - 0.22 * crack * (1.0 - drift);
+    col = mix(col, stone * (0.9 + 0.2 * g), pebble * (1.0 - drift * 0.85));
+    h = 0.42 + 0.05 * (fine - 0.5) - 0.08 * crack * (1.0 - drift) + 0.25 * pebble * (1.0 - drift * 0.85) + drift * 0.03;
   } else if (uLayer == 3) {
     // Sandstone paving: courses of worn slabs, sand in the joints and drifted over the low corners.
-    float rows = 5.0, ry = uv.y * rows, row = floor(ry), fy = fract(ry);
+    float rows = 6.0, ry = uv.y * rows, row = floor(ry), fy = fract(ry);
     float off = lat(vec2(row, 0.0), rows, 40u);
     float x = fract(uv.x + off);
     float c1 = 0.2 + 0.18 * lat(vec2(row, 1.0), rows, 41u), c2 = 0.55 + 0.2 * lat(vec2(row, 2.0), rows, 42u);
     float a = x < c1 ? 0.0 : x < c2 ? c1 : c2, b = x < c1 ? c1 : x < c2 ? c2 : 1.0;
     float slabId = row * 3.0 + (x < c1 ? 0.0 : x < c2 ? 1.0 : 2.0);
-    float sv = lat(vec2(slabId, 3.0), 15.0, 43u);
+    float sv = lat(vec2(slabId, 3.0), 18.0, 43u), sv2 = lat(vec2(slabId, 5.0), 18.0, 47u);
     // Distance to the nearest joint in metres (a tile of texture is 4 m), roughened.
-    float edge = min(min(x - a, b - x) * 4.0, min(fy, 1.0 - fy) * 4.0 / rows) + (fine - 0.5) * 0.05;
-    float joint = 1.0 - smoothstep(0.012, 0.035, edge);
-    float wear = smoothstep(0.0, 0.12, edge);
-    vec3 slab = mix(vec3(0.78, 0.63, 0.45), vec3(0.88, 0.76, 0.58), sv) * (0.88 + 0.22 * fbm(uv, 16.0, 3, 44u));
-    slab = mix(slab, vec3(0.7, 0.48, 0.34), step(0.82, sv) * 0.5);
-    vec3 ck = voronoi(uv, 9.0, 45u);
-    float crack = (1.0 - smoothstep(0.0, 0.025, ck.y)) * step(0.6, ck.z);
-    slab *= 1.0 - 0.35 * crack;
-    float drift = smoothstep(0.55, 0.75, fbm(uv, 3.0, 3, 46u) + (1.0 - wear) * 0.08);
-    col = mix(slab, sand * 0.9, max(joint, drift));
-    h = mix(0.52 + 0.2 * wear + 0.04 * fine - 0.12 * crack, 0.3, joint);
-    h = mix(h, 0.4, drift);
+    float edge = min(min(x - a, b - x) * 4.0, min(fy, 1.0 - fy) * 4.0 / rows) + (fine - 0.5) * 0.03;
+    float joint = 1.0 - smoothstep(0.018, 0.04, edge);
+    float wear = smoothstep(0.0, 0.1, edge);
+    vec3 slab = mix(vec3(0.8, 0.66, 0.49), vec3(0.9, 0.79, 0.62), sv) * (0.9 + 0.18 * fbm(uv, 16.0, 3, 44u));
+    slab = mix(slab, vec3(0.76, 0.56, 0.42), step(0.8, sv2) * 0.45);
+    // A broken slab now and then: one hairline crack across it.
+    float cut = abs(dot(vec2(x - (a + b) * 0.5, fy - 0.5), normalize(vec2(sv - 0.5, 0.6))) + (fine - 0.5) * 0.02);
+    float crack = (1.0 - smoothstep(0.0, 0.006, cut)) * step(0.7, sv2);
+    slab *= (1.0 - 0.3 * crack) * (0.92 + 0.08 * wear);
+    float drift = smoothstep(0.58, 0.78, fbm(uv, 3.0, 3, 46u) + (1.0 - wear) * 0.06);
+    col = mix(slab, sand * 0.88, max(joint, drift));
+    h = mix(0.55 + 0.17 * wear + 0.05 * fine - 0.08 * crack, 0.28, joint);
+    h = mix(h, 0.42, drift);
   } else {
     // Oasis grass: a thick sward of green and straw blades over damp dark soil.
     float blades = fbm(uv * vec2(1.0, 0.25), 64.0, 2, 50u);

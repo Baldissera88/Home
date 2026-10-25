@@ -7,7 +7,7 @@ import { buildDressing } from './dressing.js';
 import { batchStatic } from './batch.js';
 import { buildBackdrop, updateBackdrop } from './backdrop.js';
 import { DesertField, SAND, SAND_LAYERS, bakeSandLayers, desertNoise } from './desert.js';
-import { buildDesert, updateDesert } from './cliffs.js';
+import { buildDesert, desertGate, desertProp, desertStairs, updateDesert } from './cliffs.js';
 
 const WALL_HEIGHT = 1.9;
 
@@ -216,6 +216,12 @@ export class World {
         const dark = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 1.3), new THREE.MeshBasicMaterial({ color: 0x000000 }));
         dark.position.set(0, 0.65, 0.02);
         g.add(dark);
+      } else if (region === 3) {
+        // The way to the desert: a sandstone gateway facing into the map, the glare of the sands beyond.
+        g.add(desertGate());
+        const lv = this.level;
+        g.rotation.y = Math.round(Math.atan2(lv.w / 2 - x, lv.h / 2 - y) / (Math.PI / 2)) * (Math.PI / 2);
+        this.lights.push({ x: x + 0.5, y: 1.2, z: y + 0.5, color: 0xffb060, radius: 5, intensity: 1.2, flicker: false });
       } else if (region === 1) {
         // The caves: a heap of boulders around a dark mouth.
         for (let k = 0; k < 7; k++) {
@@ -331,8 +337,12 @@ export class World {
 
   buildExit() {
     const [x, y] = this.level.exit;
-    const stairs = this.assets.piece('dungeon', 'stairs');
-    if (stairs) {
+    const stairs = this.desert ? null : this.assets.piece('dungeon', 'stairs');
+    if (this.desert) {
+      const s = desertStairs();
+      s.position.set(x + 0.5, this.heightAt(x + 0.5, y + 0.5), y + 0.5);
+      this.group.add(s);
+    } else if (stairs) {
       const s = fit(stairs, 1.1);
       s.position.set(x + 0.5, -0.02, y + 0.5);
       this.group.add(s);
@@ -368,7 +378,11 @@ export class World {
       return p ? fit(p, w, h) : null;
     };
     const r = hash(Math.floor(x * 7), Math.floor(y * 7), i);
-    let o = null;
+    let o = this.desert ? desertProp(name, r) : null;
+    if (o) {
+      o.rotation.y = r * Math.PI * 2;
+      return o;
+    }
     switch (name) {
       case 'BARREL': o = k(r < 0.5 ? 'barrel_large' : 'keg', 0.55); break;
       case 'URN': o = k(r < 0.5 ? 'bottle_A_green' : 'bottle_B_brown', 0.32); break;
@@ -411,12 +425,12 @@ export class World {
 
   altar() {
     const g = new THREE.Group();
-    const stone = new THREE.MeshStandardMaterial({ color: 0x5a524c, roughness: 0.8 });
+    const stone = new THREE.MeshStandardMaterial({ color: this.desert ? 0xc8a478 : 0x5a524c, roughness: 0.8 });
     const base = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.5, 0.55), stone);
     base.position.y = 0.25;
     base.castShadow = base.receiveShadow = true;
     g.add(base);
-    const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.02, 0.58), new THREE.MeshStandardMaterial({ color: 0x7a1010, roughness: 0.9 }));
+    const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.02, 0.58), new THREE.MeshStandardMaterial({ color: this.desert ? 0x1e3a7a : 0x7a1010, roughness: 0.9 }));
     cloth.position.y = 0.51;
     g.add(cloth);
     const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.1), new THREE.MeshStandardMaterial({ color: 0xff2040, emissive: 0xff1030, emissiveIntensity: 2 }));
@@ -472,7 +486,7 @@ export class World {
 
   shrine() {
     const g = new THREE.Group();
-    const stone = new THREE.MeshStandardMaterial({ color: 0x8a8a92, roughness: 0.7 });
+    const stone = new THREE.MeshStandardMaterial({ color: this.desert ? 0xd2b088 : 0x8a8a92, roughness: 0.7 });
     const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.4, 0.3, 8), stone);
     plinth.position.y = 0.15;
     g.add(plinth);
