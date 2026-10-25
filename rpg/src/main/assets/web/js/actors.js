@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { ACT, ENEMY, NPC, P, E, EF, HERO, WEAPON, angleDamp, damp } from './defs.js';
 import * as Beasts from './creatures.js';
+import { DESERT_TYPES, desertCreature } from './desert_creatures.js';
 import { enhanceCharacter, updateBlobs } from './charmat.js';
 
 const CHAR_SCALE = 0.52;
@@ -570,6 +571,18 @@ class Monster {
       this.anim = new Animator(this.body, assets.clips);
       this.skeletal = look.model.startsWith('skeleton');
       this.height = 1.35 * (look.scale || 1);
+    } else if (DESERT_TYPES.has(type)) {
+      // The desert's creatures bring their own rig, per-copy materials and death.
+      const beast = desertCreature(type, uid);
+      this.beast = beast;
+      this.root.add(beast.root);
+      this.height = beast.height;
+      this.mats = beast.mats;
+      for (const m of this.mats) {
+        m.userData.baseColor = m.color.clone();
+        m.userData.baseEmissive = m.emissive ? m.emissive.clone() : null;
+      }
+      this.state = { x: 0, y: 0, moving: false, wind: 0, stunned: false, frozen: false, cast: false };
     } else {
       const beast = type === 'WOLF' ? Beasts.wolf() : type === 'SPIDER' ? Beasts.spider() : type === 'SPIDER_QUEEN' ? Beasts.spider(2.2, true)
         : type === 'BAT' ? Beasts.bat() : Beasts.slime();
@@ -581,7 +594,7 @@ class Monster {
     }
   }
 
-  update(e, dt, ground, t, view) {
+  update(e, dt, ground, t, view, f) {
     const x = e[E.X], y = e[E.Y];
     const size = e[E.SIZE];
     const lift = this.look && this.look.float ? this.look.float + Math.sin(t * 2 + this.uid) * 0.08 : 0;
@@ -643,6 +656,11 @@ class Monster {
       // The feet keep walking under a swing while the monster moves.
       if ((wind > 0 || swinging) && moving && v > 0.4 && !this.look.float) a.legsFor(this.skeletal ? SKELETON_GAITS : MONSTER_GAITS, v, k);
       a.update(frozen ? dt * 0.1 : dt);
+    } else if (this.state) {
+      const s = this.state;
+      s.x = x; s.y = y; s.moving = moving; s.wind = wind; s.stunned = stunned; s.frozen = frozen;
+      s.cast = f ? this.casting(f, x, y) : false;
+      this.beast.tick(frozen ? 0 : dt, s);
     } else if (this.beast) {
       this.beast.update(frozen ? 0 : dt, moving, wind, 1);
     }
@@ -661,14 +679,34 @@ class Monster {
     }
   }
 
+  /**
+   * Whether this boss is calling up a spell this frame: a sandstorm just rising anywhere (the pharaoh raises it
+   * on the hero), or a ring of hostile bolts just leaving its body (its volley). Only the Sand Pharaoh casts so.
+   */
+  casting(f, x, y) {
+    if (this.type !== 'SAND_PHARAOH') return false;
+    for (const z of f.zo || []) if (z[3] === 7 && z[4] < 0.12) return true;
+    let near = 0;
+    for (const p of f.pr || []) {
+      const dx = p[0] - x, dy = p[1] - y;
+      if ((p[6] & 2) && dx * dx + dy * dy < 1.2) near++;
+    }
+    return near >= 4;
+  }
+
   die() {
     this.deadTime = 0;
+    if (this.state) this.beast.die();
     if (this.anim) this.anim.play(this.skeletal ? 'Death_C_Skeletons' : 'Death_A', { loop: false, fade: 0.1, speed: 1.3 });
   }
 
   /** Plays out the death, then sinks into the ground; returns false when gone. */
   updateDead(dt, view) {
     this.deadTime += dt;
+    if (this.state) {
+      const step = view ? view.admit(this, dt) : dt;
+      return step >= 0 ? this.beast.dead(step) : this.deadTime < this.beast.deathLength;
+    }
     if (this.beast) {
       this.root.rotation.z = Math.min(1.6, this.deadTime * 4);
       this.root.position.y -= dt * 0.1;
@@ -982,7 +1020,7 @@ export class Actors {
         this.scene.add(m.root);
       }
       m.seen = stamp;
-      m.update(e, dt, ground, f.t, view);
+      m.update(e, dt, ground, f.t, view, f);
     }
     this.enemies.forEach(this.lostEnemy);
     const dying = this.dying;

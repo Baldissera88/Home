@@ -195,7 +195,7 @@ class Blobs {
     const s = m.root.scale.x;
     if (m.body) this.blob(m.root, FIGURE_R * m.body.scale.x * s / CHAR_SCALE, 1, 0, rank);
     else {
-      const b = BEAST[m.type] || BEAST.SLIME;
+      const b = (m.beast && m.beast.blob) || BEAST[m.type] || BEAST.SLIME;
       this.blob(m.root, b[0] * s, 1, b[1] * s, rank);
     }
   }
