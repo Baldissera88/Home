@@ -1832,7 +1832,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         val m = spellMult()
         val fx = SkillFx(Skill.FROZEN_ORB, sx, sy, sx, sy, p.faceX, p.faceY, ORB_LIFE + 0.1f, 0.45f)
         skillFx += fx
-        orbs += FrozenOrb(dungeon, sx, sy, p.faceX, p.faceY, p.damage * (0.55f + 0.12f * (lvl - 1)) * m, p.damage * (1.2f + 0.3f * (lvl - 1)) * m, fx)
+        orbs += FrozenOrb(dungeon, sx, sy, p.faceX, p.faceY, p.damage * (0.45f + 0.1f * (lvl - 1)) * m, p.damage * (1f + 0.25f * (lvl - 1)) * m, fx)
         burst(sx, sy - 0.3f, ORB_ICE, 10, glow = true)
         sfx.frost()
     }
@@ -1921,7 +1921,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         zones += z
         val fx = SkillFx(Skill.BLACK_HOLE, z.x, z.y, z.x, z.y, 1f, 0f, HOLE_TIME + 0.1f, HOLE_PULL)
         skillFx += fx
-        vortices += Vortex(dungeon, z, fx, p.damage * (0.3f + 0.08f * (lvl - 1)) * m, p.damage * (3f + 0.6f * (lvl - 1)) * m)
+        vortices += Vortex(dungeon, z, fx, p.damage * (0.4f + 0.1f * (lvl - 1)) * m, p.damage * (4f + (lvl - 1)) * m)
         ring(z.x, z.y, 0.3f, Skill.BLACK_HOLE.color, 30, 3f)
         shake = max(shake, 0.4f)
         sfx.portal()

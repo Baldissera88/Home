@@ -248,7 +248,7 @@ enum class Skill(val label: String, val icon: String, val mana: Float, val coold
 
     // Sorceress.
     FROZEN_ORB("Frozen Orb", "💠", 22f, 2.5f, Color(0xFF81D4FA), { l ->
-        "A slow orb sprays ice shards in every direction, then bursts. ${55 + (l - 1) * 12}% damage per shard and ${120 + (l - 1) * 30}% for the burst; its ice slows enemies by half."
+        "A slow orb sprays ice shards in every direction, then bursts. ${45 + (l - 1) * 10}% damage per shard and ${100 + (l - 1) * 25}% for the burst; its ice slows enemies by half."
     }),
     BLIZZARD("Blizzard", "🌨️", 32f, 8f, Color(0xFFB3E5FC), { l ->
         "Ice rains down on the target area for 5 s, slowing enemies in it by half. ${70 + (l - 1) * 18}% damage a second."
@@ -257,7 +257,7 @@ enum class Skill(val label: String, val icon: String, val mana: Float, val coold
         "Blink up to ${"%.1f".format(4.5f + 0.5f * l)} tiles ahead (walls stop you), with an arcane burst where you leave and where you land. ${80 + (l - 1) * 20}% damage."
     }),
     BLACK_HOLE("Black Hole", "🕳️", 60f, 30f, Color(0xFF7C4DFF), { l ->
-        "Open a vortex that drags enemies in for 3 s, tearing at them for ${30 + (l - 1) * 8}% damage twice a second, then implodes, stunning them. ${300 + (l - 1) * 60}% damage."
+        "Open a vortex that drags enemies in for 3 s, tearing at them for ${40 + (l - 1) * 10}% damage twice a second, then implodes, stunning them. ${400 + (l - 1) * 100}% damage."
     }),
 }
 
