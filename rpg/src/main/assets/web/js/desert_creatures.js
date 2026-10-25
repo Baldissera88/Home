@@ -515,14 +515,14 @@ class Creature {
 // ---------------------------------------------------------------------------------------------------------------
 // The giant scorpion.
 
-const CHITIN = new THREE.Color(0x1c0c06), CHITIN_EDGE = new THREE.Color(0x8c3e12), AMBER = new THREE.Color(0xa85a18);
+const CHITIN = new THREE.Color(0x160a05), CHITIN_EDGE = new THREE.Color(0x6a2c0c), AMBER = new THREE.Color(0x9a5014);
 const MEMBRANE = new THREE.Color(0x5a3412);
 
 /** Dark plates that turn amber toward their edges and underside; keels and joints a little lighter. */
 function chitin(edge = 1, dark = CHITIN) {
   return (v) => {
     const e = clamp(1 - v.n.y, 0, 1.6) / 1.6;
-    v.c.copy(dark).lerp(CHITIN_EDGE, Math.pow(e, 1.7) * edge);
+    v.c.copy(dark).lerp(CHITIN_EDGE, Math.pow(e, 2.2) * edge);
     v.s[0] = 0.45;
   };
 }
@@ -579,7 +579,7 @@ function buildScorpion() {
         const ridge = Math.max(0, Math.cos(a * 4)) ** 6;
         v.c.lerp(CHITIN_EDGE, ridge * 0.5);
         const t = -v.lp.z / L;
-        v.c.lerp(AMBER, smooth(0.8, 1, t) * 0.5 + (1 - smooth(0, 0.12, t)) * 0.3);
+        v.c.lerp(AMBER, smooth(0.85, 1, t) * 0.35 + (1 - smooth(0, 0.1, t)) * 0.2);
       },
     });
     rig.add(ell(r * 0.8, r * 0.75, r * 0.55, 8, 5), name, { at: [0, 0, 0], color: 0x2e1608, rough: 0.5 });
@@ -1311,6 +1311,8 @@ class Djinn extends Creature {
     const grow = charge > 0.01 ? charge : 0;
     const flick = 1 + 0.08 * Math.sin(t * 31) + 0.05 * Math.sin(t * 17.3);
     b.orb.scale.setScalar(Math.max(1e-3, grow * flick * (0.4 + 0.6 * grow)));
+    // No orb, no flames to draw.
+    this.meshes[2].visible = grow > 0;
     shift(b.orb, 0, 0.04 * wind, 0.06 * wind + (this.strikeT >= 0 ? thrown * 0.9 : 0));
     turn(b.orb, t * 3, t * 4.3, 0);
     this.smoke.opacity = this.fade;
@@ -1331,6 +1333,7 @@ class Djinn extends Creature {
     for (const S of ['L', 'R']) turn(b[`arm${S}`], -0.3, 0, (S === 'R' ? 1 : -1) * 1.2 * k);
     this.root.scale.setScalar(Math.max(0.01, 1 - 0.7 * k));
     b.orb.scale.setScalar(1e-3);
+    this.meshes[2].visible = false;
     this.setFade(clamp(1 - (d - 0.3) / 1.0, 0, 1));
     this.smoke.opacity = Math.min(1, this.fade * 1.5);
     this.fire.opacity = 0;
