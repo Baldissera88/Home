@@ -110,6 +110,14 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     val meteors = mutableListOf<Meteor>()
     val waves = mutableListOf<Wave>()
     val skillFx = mutableListOf<SkillFx>()
+    // The Knight's and Barbarian's tree skills in flight (declared before init, which enters the first floor):
+    // falling strikes, the Ancient Spear, Seismic Slam waves and the cues of the auras that follow the hero.
+    private val strikes = mutableListOf<Strike>()
+    private var spear: Spear? = null
+    private val slams = mutableListOf<Slam>()
+    private var bulwarkFx: SkillFx? = null
+    private var heavenFx: SkillFx? = null
+    private val heavenRange = 6.5f
     /** Smoothed camera centre in world tiles. */
     var camX = 0f
         private set
@@ -1750,28 +1758,17 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         val cue: SkillFx, var wait: Float = 0f,
     )
 
-    private val strikes = mutableListOf<Strike>()
-
     /** The Barbarian's Ancient Spear: in flight along (dx, dy), dragging [victim] in, or coming [back] empty. */
     private class Spear(
         val fx: SkillFx, val dx: Float, val dy: Float, val dmg: Float, val stun: Float,
         var travel: Float = 0f, var victim: Enemy? = null, var back: Boolean = false,
     )
 
-    private var spear: Spear? = null
-
     /** A Seismic Slam shockwave rolling along (dx, dy); it hits each monster once. */
     private class Slam(
         val fx: SkillFx, val dx: Float, val dy: Float, val dmg: Float, val stun: Float,
         var travel: Float = 0f, var crack: Float = 0f, val hit: MutableSet<Enemy> = mutableSetOf(),
     )
-
-    private val slams = mutableListOf<Slam>()
-
-    /** The cues of the auras that follow the hero: Iron Bulwark and Heaven's Fury. */
-    private var bulwarkFx: SkillFx? = null
-    private var heavenFx: SkillFx? = null
-    private val heavenRange = 6.5f
 
     /** Whether a beam, a spear or a shockwave passes over this spot (open ground or water, not walls). */
     private fun lanceOpen(x: Float, y: Float) = dungeon.walkableAt(x, y) || dungeon.tile(floorInt(x), floorInt(y)) == WATER
