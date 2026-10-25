@@ -233,22 +233,32 @@ enum class Skill(val label: String, val icon: String, val mana: Float, val coold
     AVALANCHE("Avalanche", "🏔️", 55f, 28f, Color(0xFFD7CCC8), { l -> "Boulders crash down in a wide cone in front of you. ${200 + (l - 1) * 40}% damage per boulder." }),
 
     // Assassin.
-    BLADE_DANCE("Blade Dance", "🔪", 25f, 6f, Color(0xFFCE93D8), { l -> "Dash between up to 5 nearby enemies, striking each one. ${140 + (l - 1) * 30}% damage." }),
-    DEATH_TRAP("Death Trap", "💣", 20f, 4f, Color(0xFFFFB74D), { l ->
-        "Plant a trap (up to 3) that bursts into shrapnel when an enemy comes near. ${220 + (l - 1) * 45}% damage."
+    BLADE_DANCE("Blade Dance", "🔪", 22f, 6f, Color(0xFFCE93D8), { l ->
+        "Dash between up to 5 enemies near you, striking each one. Nothing can hurt you while you dance. ${140 + (l - 1) * 30}% damage per strike."
+    }),
+    DEATH_TRAP("Death Trap", "💣", 20f, 3f, Color(0xFFFFB74D), { l ->
+        "Plant a trap (up to 3) that arms in half a second and bursts into shrapnel when an enemy comes near. ${220 + (l - 1) * 45}% damage around it."
     }),
     MARK_FOR_DEATH("Mark for Death", "🎯", 15f, 10f, Color(0xFFFF5252), { l ->
-        "Mark the nearest foe: it takes +${40 + 4 * l}% damage for 8 s. Killing it gives your mana back."
+        "Mark the nearest foe for 8 s: it takes +${40 + 5 * (l - 1)}% damage from everything. Killing it restores ${15 + 3 * l}% mana and readies the mark again."
     }),
-    DEATH_BLOSSOM("Death Blossom", "🌸", 50f, 25f, Color(0xFFF48FB1), { l -> "For 3 s a whirling ring of blades shreds everything near you. ${80 + (l - 1) * 20}% damage per hit." }),
+    DEATH_BLOSSOM("Death Blossom", "🌸", 50f, 28f, Color(0xFFF48FB1), { l ->
+        "For 3 s a whirling ring of blades follows you and shreds everything near you while you fight on. ${75 + (l - 1) * 20}% damage, 4 hits a second."
+    }),
 
     // Sorceress.
-    FROZEN_ORB("Frozen Orb", "💠", 25f, 3f, Color(0xFF81D4FA), { l ->
-        "A slow orb sprays ice shards in every direction, then bursts. ${60 + (l - 1) * 15}% damage per shard, and it chills."
+    FROZEN_ORB("Frozen Orb", "💠", 22f, 2.5f, Color(0xFF81D4FA), { l ->
+        "A slow orb sprays ice shards in every direction, then bursts. ${55 + (l - 1) * 12}% damage per shard and ${120 + (l - 1) * 30}% for the burst; its ice slows enemies by half."
     }),
-    BLIZZARD("Blizzard", "🌨️", 35f, 8f, Color(0xFFB3E5FC), { l -> "Ice rains down on the target area for 5 s, slowing enemies. ${70 + (l - 1) * 18}% damage a second." }),
-    TELEPORT("Teleport", "💫", 15f, 4f, Color(0xFFB388FF), { l -> "Blink up to 6 tiles ahead, with an arcane burst where you leave and land. ${80 + (l - 1) * 20}% damage." }),
-    BLACK_HOLE("Black Hole", "🕳️", 60f, 30f, Color(0xFF7C4DFF), { l -> "Open a vortex that pulls enemies in for 3 s, then implodes. ${300 + (l - 1) * 60}% damage." }),
+    BLIZZARD("Blizzard", "🌨️", 32f, 8f, Color(0xFFB3E5FC), { l ->
+        "Ice rains down on the target area for 5 s, slowing enemies in it by half. ${70 + (l - 1) * 18}% damage a second."
+    }),
+    TELEPORT("Teleport", "💫", 12f, 3f, Color(0xFFB388FF), { l ->
+        "Blink up to ${"%.1f".format(4.5f + 0.5f * l)} tiles ahead (walls stop you), with an arcane burst where you leave and where you land. ${80 + (l - 1) * 20}% damage."
+    }),
+    BLACK_HOLE("Black Hole", "🕳️", 60f, 30f, Color(0xFF7C4DFF), { l ->
+        "Open a vortex that drags enemies in for 3 s, tearing at them for ${30 + (l - 1) * 8}% damage twice a second, then implodes, stunning them. ${300 + (l - 1) * 60}% damage."
+    }),
 }
 
 /** The playable classes. Each has its own look, weapons, strengths and four skills. */
@@ -484,9 +494,12 @@ class Player : Body {
     var stealth = 0f
     var venom = 0f
     var venomPct = 0.5f
+    /** Seconds left of a Blade Dance (the hero hops between enemies and can't be hurt), and of a Death Blossom's ring of blades. */
+    var dance = 0f
+    var blossom = 0f
     /** Height of a leap above the ground, in tiles. */
     val leapZ: Float get() = if (leap > 0f) kotlin.math.sin((1f - leap / leapDur) * Math.PI.toFloat()) * 1.2f else 0f
-    val busy: Boolean get() = spin > 0f || charge > 0f || leap > 0f
+    val busy: Boolean get() = spin > 0f || charge > 0f || leap > 0f || dance > 0f
 
     // ---- talents from the skill tree
 
@@ -674,7 +687,9 @@ class Enemy(
 ) : Body {
     val uid = Ids.next()
     private val scale = (1f + 0.3f * (level - 1)) * (if (elite) 3f else 1f)
-    val speed = type.speed * (if (Affix.FAST in affixes) 1.45f else 1f)
+    private val baseSpeed = type.speed * (if (Affix.FAST in affixes) 1.45f else 1f)
+    /** Walking speed; chilled monsters (Frozen Orb, Blizzard) move at half speed. */
+    val speed: Float get() = if (chill > 0f) baseSpeed * 0.5f else baseSpeed
     val attackCooldown = type.cooldown * (if (Affix.FAST in affixes) 0.65f else 1f)
     val maxHp = type.hp * scale
     var hp = maxHp
@@ -707,6 +722,13 @@ class Enemy(
     var blinkCd = 4f + Random.nextFloat() * 2f
     /** Burning champions erupt in flames when this reaches zero (the last 0.8 s are telegraphed). */
     var burnCd = 3f + Random.nextFloat() * 2f
+    /** Seconds left of the slow from frost spells. */
+    var chill = 0f
+    /** Seconds left of an assassin's Mark for Death, and the damage multiplier it puts on every hit taken. */
+    var mark = 0f
+    var markMult = 1f
+    /** Multiplier on all damage this monster takes. */
+    val damageTakenMult: Float get() = if (mark > 0f) markMult else 1f
     val name: String get() = title ?: if (elite) "Champion ${type.label.removePrefix("The ")}" else type.label
     val affixText: String get() = affixes.joinToString(" · ") { it.label }
 }
@@ -726,6 +748,8 @@ class Projectile(
     val small: Boolean = false,
     /** Poison damage per second applied on hit (venom-coated knives). */
     val poison: Float = 0f,
+    /** Seconds of chill (half speed) applied on hit (Frozen Orb shards). */
+    val chill: Float = 0f,
 )
 
 sealed interface LootKind {
