@@ -356,8 +356,7 @@ class DesertBuilder {
       return i;
     };
     const key = (kx, kz, r) => ((kz + 4 * PAD) * 4096 + kx + 4 * PAD) * 16 + r;
-    // The face profile: how far into the field (s) the face stands at a height, by band.
-    const thick = new Map();
+    // The face profile: how far into the field (s) the face stands at a height (the rim set back a little).
     const profile = (x, z, y, y0, r, dmax) => {
       if (r === 0) return -0.04;
       let d = f.faceInset(x, z, y, y0);
@@ -396,7 +395,6 @@ class DesertBuilder {
         // How thick the rock is here limits how far its faces may step back.
         const sc = f.S(x + 0.5, z + 0.5);
         const dmax = Math.max(0.1, sc - 0.12);
-        thick.set(z * 10000 + x, sc);
         for (const [nx, nz] of DIRS) {
           if (rock(x + nx, z + nz)) continue;
           // The edge's three half-grid points, in order along it.
@@ -494,7 +492,7 @@ class DesertBuilder {
           if (!horiz && !vert) {
             // A pier: one squared block per course.
             if (c === courses - 1 && this.rnd(x, y, 40 + c) < 0.3) continue;
-            this.block(blockGeo, x + 0.5, yc, y + 0.5, T * 1.07, T * 1.07, 0, c, x, y, stoneCol, col);
+            this.block(blockGeo, x + 0.5, yc, y + 0.5, T * 1.07, T * 1.07, c, x, y, stoneCol, col);
             continue;
           }
           const L = 0.52 + 0.06 * this.rnd(x, y, 3);
@@ -514,7 +512,7 @@ class DesertBuilder {
             if (c >= 2 && this.rnd(x * 4 + k, y, 20 + c) < 0.07) continue;
             const len = u1 - u0;
             const cx = vert ? x + 0.5 : x + (u0 + u1) / 2, cz = vert ? y + (u0 + u1) / 2 : y + 0.5;
-            this.block(blockGeo, cx, yc, cz, vert ? T : len, vert ? len : T, 0, c, x * 4 + k, y, stoneCol, col);
+            this.block(blockGeo, cx, yc, cz, vert ? T : len, vert ? len : T, c, x * 4 + k, y, stoneCol, col);
           }
         }
         // Fallen blocks at the foot of a broken stretch, half sunk in the sand.
@@ -534,7 +532,7 @@ class DesertBuilder {
   }
 
   /** One block of masonry: footprint sx by sz centred at (x, z), from y up one course, a little askew. */
-  block(geos, x, y, z, sx, sz, _unused, c, hx, hy, palette, col) {
+  block(geos, x, y, z, sx, sz, c, hx, hy, palette, col) {
     const r = (k) => this.rnd(hx, hy, 100 + c * 13 + k);
     col.copy(palette[Math.floor(r(0) * palette.length)]).multiplyScalar(0.88 + 0.2 * r(1));
     // Weathered lower courses are a little darker.

@@ -588,7 +588,7 @@ export function makeWater(w, h, assets, ground = lastGround, clear = false) {
         vec3 sky = mix(uHorizon, uSky, smoothstep(0.1, 0.9, r.y)) * uLight;
         // Colour by depth: clear and green over the shallows, dark in the deep; ripples catch the light.
         float deep = 1.0 - exp(-d * mix(6.0, 2.6, uClear));
-        vec3 body = mix(uShallow, uDeep, deep) * (0.35 + 0.65 * uLight) * (0.75 + 0.5 * max(dot(n, l), 0.0));
+        vec3 body = mix(uShallow, uDeep, deep) * mix(0.35 + 0.65 * uLight, uLight * uLight, uClear) * (0.75 + 0.5 * max(dot(n, l), 0.0));
         vec3 col = mix(body, sky, 0.16 + 0.7 * fres);
         // Sun glints: a soft sheen and sharp sparkles off the ripple facets.
         float nh = max(dot(n, normalize(l + v)), 0.0);

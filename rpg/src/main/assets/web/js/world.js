@@ -349,7 +349,7 @@ export class World {
     }
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.7, 40), new THREE.MeshBasicMaterial({ color: 0x4fc3f7, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false }));
     ring.rotation.x = -Math.PI / 2;
-    ring.position.set(x + 0.5, 0.04, y + 0.5);
+    ring.position.set(x + 0.5, this.heightAt(x + 0.5, y + 0.5) + 0.04, y + 0.5);
     this.group.add(ring);
     ring.userData.dynamic = true;
     this.exitRing = ring;
