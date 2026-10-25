@@ -254,12 +254,23 @@ class Rig {
     return b;
   }
 
+  /** A bone at (x, y, z) in the creature's space (rest pose), its axes lined up with the creature's. */
+  boneWorld(name, parent, x, y, z) {
+    this.top.updateMatrixWorld(true);
+    const p = this.by[parent];
+    const b = this.bone(name, parent);
+    b.position.copy(p.worldToLocal(new V3(x, y, z)));
+    b.quaternion.copy(p.getWorldQuaternion(new THREE.Quaternion()).invert());
+    return b;
+  }
+
   /**
    * Adds geometry g, placed in bone `name` by o.at / o.rot / o.scale, to a layer ('body' by default).
    * o.color, o.rough, o.metal, o.glow, o.tex, o.alpha set the surface; o.paint(v) may change v.c (Color),
    * v.s ([rough, metal, glow, tex]) and v.a per vertex from v.lp (in the bone), v.wp (in the creature), v.n
    * and v.uv; o.faces paints whole triangles (crisp stripes). o.skin(wp, lp) can spread a vertex over bones:
-   * [[name, weight], ...]. o.uv = [su, sv] scales the texture coordinates.
+   * [[name, weight], ...]. o.uv = [su, sv] scales the texture coordinates. o.world: g is already placed in the
+   * creature's space (rest pose) and is only bound to the bone.
    */
   add(g, name, o = {}) {
     const layer = o.layer || 'body';
@@ -277,10 +288,16 @@ class Rig {
     }
     const r = o.rot || [0, 0, 0], sc = o.scale || [1, 1, 1], at = o.at || [0, 0, 0];
     g.applyMatrix4(_m.compose(_v.set(at[0], at[1], at[2]), new THREE.Quaternion().setFromEuler(new THREE.Euler(r[0], r[1], r[2])), _w.set(sc[0], sc[1], sc[2])));
-    const local = g.attributes.position.clone();
     this.top.updateMatrixWorld(true);
     const bone = this.by[name];
-    g.applyMatrix4(bone.matrixWorld);
+    let local;
+    if (o.world) {
+      // Given in the creature's space: only bound to the bone.
+      local = g.attributes.position.clone().applyMatrix4(_m.copy(bone.matrixWorld).invert());
+    } else {
+      local = g.attributes.position.clone();
+      g.applyMatrix4(bone.matrixWorld);
+    }
     const p = g.attributes.position, nrm = g.attributes.normal, uv = g.attributes.uv;
     const alpha = layer !== 'body';
     const colors = new Float32Array(count * (alpha ? 4 : 3)), surf = new Float32Array(count * 4);
@@ -717,9 +734,373 @@ class Scorpion extends Creature {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Linen: a tileable wrap texture (colour and normal map) drawn once, for the mummy and the pharaoh's rags.
+
+/** Tileable value noise of period p (cells per tile) at (u, v) in tile units. */
+function tnoise(u, v, p, seed) {
+  const fx = u * p, fy = v * p, x0 = Math.floor(fx), y0 = Math.floor(fy);
+  const sx = ease(fx - x0), sy = ease(fy - y0);
+  const h = (i, j) => hash3(((i % p) + p) % p, ((j % p) + p) % p, seed);
+  return mix(mix(h(x0, y0), h(x0 + 1, y0), sx), mix(h(x0, y0 + 1), h(x0 + 1, y0 + 1), sx), sy);
+}
+
+/** World size of one texture tile on wrapped limbs. */
+const LINEN_TILE = 0.24;
+let linen = null;
+
+function linenMaps() {
+  if (linen) return linen;
+  const S = 256, H = new Float32Array(S * S), rgba = new Uint8Array(S * S * 4);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const u = x / S, v = y / S;
+      const wob = tnoise(u, v, 8, 1) - 0.5;
+      // Strips wound around the limb at a slant, each overlapping the one below with a raised lip...
+      const pa = v * 5 + u + wob * 0.35, fa = pa - Math.floor(pa);
+      let h = smooth(0, 0.1, fa) * (1 - smooth(0.84, 1, fa)) * (0.7 + 0.3 * Math.sin(fa * Math.PI)) + 0.22 * smooth(0.66, 0.8, fa) * (1 - smooth(0.8, 0.95, fa));
+      // ...and in patches a second wrap crossing over them the other way.
+      const pb = v * 4 - u * 2 + wob * 0.3, fb = pb - Math.floor(pb);
+      const cross = smooth(0, 0.1, fb) * (1 - smooth(0.82, 1, fb)) * smooth(0.5, 0.62, tnoise(u, v, 3, 2));
+      h = Math.max(h, cross * 1.2);
+      const fibre = tnoise(u, v, 64, 4), weave = 0.5 + 0.25 * (Math.sin(TAU * u * 64) + Math.sin(TAU * v * 64));
+      const frayed = smooth(0.6, 0.8, tnoise(u, v, 16, 5)) * 0.15;
+      H[y * S + x] = h * 0.85 + weave * 0.06 + fibre * 0.08 - frayed;
+      // Pale linen, darker down in the gaps, yellowed and stained in blotches.
+      const lum = (0.62 + 0.38 * smooth(0.05, 0.6, h)) * (0.9 + 0.1 * fibre) * (0.92 + 0.08 * weave);
+      const stain = smooth(0.55, 0.8, tnoise(u, v, 6, 7)) * 0.4 + smooth(0.68, 0.86, tnoise(u, v, 14, 8)) * 0.25;
+      const shade = 0.9 + 0.2 * tnoise(u + Math.floor(pa) * 0.21, v, 4, 3);
+      const r = mix(0.86, 0.56, stain) * lum * shade, g = mix(0.82, 0.47, stain) * lum * shade, b = mix(0.72, 0.34, stain) * lum * shade;
+      const o = (y * S + x) * 4;
+      rgba[o] = clamp(r * 255, 0, 255);
+      rgba[o + 1] = clamp(g * 255, 0, 255);
+      rgba[o + 2] = clamp(b * 255, 0, 255);
+      rgba[o + 3] = 255;
+    }
+  }
+  const nrm = new Uint8Array(S * S * 4), k = 5;
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const dx = H[y * S + ((x + 1) % S)] - H[y * S + ((x + S - 1) % S)];
+      const dy = H[((y + 1) % S) * S + x] - H[((y + S - 1) % S) * S + x];
+      _n.set(-dx * k, -dy * k, 1).normalize();
+      const o = (y * S + x) * 4;
+      nrm[o] = (_n.x * 0.5 + 0.5) * 255;
+      nrm[o + 1] = (_n.y * 0.5 + 0.5) * 255;
+      nrm[o + 2] = (_n.z * 0.5 + 0.5) * 255;
+      nrm[o + 3] = 255;
+    }
+  }
+  const tex = (data, srgb) => {
+    const t = new THREE.DataTexture(data, S, S);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.generateMipmaps = true;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.anisotropy = 4;
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    t.needsUpdate = true;
+    return t;
+  };
+  linen = { map: tex(rgba, true), normal: tex(nrm, false) };
+  return linen;
+}
+
+/** A wrapped limb from a to b (in the bone), its radius easing r0 to r1 with lumps; textured with linen. */
+function wrapped(a, b, r0, r1, seed = 0, radial = 10, rows = 6) {
+  const g = loft(line(a, b, rows), (t) => mix(r0, r1, t) * (1 + 0.05 * Math.sin(t * 19 + seed * 3) + 0.03 * Math.sin(t * 41 + seed)), { radial });
+  const around = Math.max(1, Math.round((TAU * (r0 + r1)) / 2 / LINEN_TILE));
+  const uv = g.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * around, (uv.getY(i) + seed * 0.37) / LINEN_TILE);
+  return g;
+}
+
+/** Sphere UVs stretched so the linen keeps about the same size on a head or a foot. */
+function wrappedEll(rx, ry, rz, w, h) {
+  const g = ell(rx, ry, rz, w, h), uv = g.attributes.uv;
+  const around = Math.max(1, Math.round((Math.PI * (rx + rz)) / LINEN_TILE)), tall = (Math.PI * ry) / LINEN_TILE;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * around, uv.getY(i) * tall);
+  return g;
+}
+
+/** Smooth 3D value noise in 0..1. */
+function vnoise(x, y, z) {
+  const x0 = Math.floor(x), y0 = Math.floor(y), z0 = Math.floor(z);
+  const sx = ease(x - x0), sy = ease(y - y0), sz = ease(z - z0);
+  const h = (i, j, k) => hash3(x0 + i, y0 + j, z0 + k);
+  return mix(
+    mix(mix(h(0, 0, 0), h(1, 0, 0), sx), mix(h(0, 1, 0), h(1, 1, 0), sx), sy),
+    mix(mix(h(0, 0, 1), h(1, 0, 1), sx), mix(h(0, 1, 1), h(1, 1, 1), sx), sy), sz);
+}
+
+/** Linen tinted per part; holes in the wraps show dark, dried flesh. */
+function linenPaint(tint = 0xe8dcc0, holes = 0, seed = 0) {
+  const base = new THREE.Color(tint), flesh = new THREE.Color(0x2a1a0f);
+  return (v) => {
+    v.c.copy(base);
+    v.s[0] = 0.92;
+    v.s[3] = 1;
+    if (holes > 0) {
+      const n = vnoise(v.wp.x * 16 + seed, v.wp.y * 12, v.wp.z * 16);
+      const k = smooth(1 - holes * 0.6, 1 - holes * 0.35, n);
+      v.c.lerp(flesh, k);
+      v.s[3] = 1 - smooth(0.4, 1, k) * 0.85;
+    }
+  };
+}
+
+const CURSE = 0x5dffc0;
+
+// ---------------------------------------------------------------------------------------------------------------
+// The mummy.
+
+/** Loose strips of linen hanging from the body: [parent bone, offset in it, length, width, turn]. */
+const MUMMY_STRIPS = [
+  ['foreL', [0.03, -0.18, 0.0], 0.38, 0.05, 0.3],
+  ['foreR', [-0.02, -0.12, 0.02], 0.28, 0.045, -0.4],
+  ['armR', [0.04, -0.1, 0.0], 0.24, 0.045, 0.8],
+  ['hips', [-0.09, -0.04, 0.09], 0.4, 0.06, 0.2],
+  ['hips', [0.11, -0.05, -0.06], 0.34, 0.055, -0.5],
+  ['hips', [0.02, -0.04, -0.1], 0.3, 0.055, 0.1],
+  ['head', [0.05, 0.06, -0.08], 0.34, 0.045, 0.6],
+  ['chest', [-0.12, 0.12, 0.06], 0.26, 0.05, -0.2],
+];
+
+/** Hangs a strip of linen from bone `parent`: two bones of its own so it can swing and trail. */
+function addStrips(rig, list, tint) {
+  rig.top.updateMatrixWorld(true);
+  return list.map(([parent, off, len, width, angle], i) => {
+    const at = rig.by[parent].localToWorld(new V3(off[0], off[1], off[2]));
+    const a = `strip${i}a`, b = `strip${i}b`;
+    rig.boneWorld(a, parent, at.x, at.y, at.z);
+    rig.bone(b, a, 0, -len * 0.5, 0);
+    const g = loft(bend([0, 0, 0], [0.05 * Math.sin(i * 2.1), -len * 0.5, 0.03], [0.02 * Math.cos(i), -len, -0.02], 7),
+      (t) => width * (1 - 0.45 * t) * (1 - 0.5 * smooth(0.8, 1, t)), { radial: 4, flat: [0.07, 1], caps: false });
+    const uv = g.attributes.uv;
+    for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) * 0.3, (uv.getY(k) + i * 0.4) / LINEN_TILE);
+    rig.add(g, a, {
+      at: [at.x, at.y, at.z], rot: [0, angle, 0], world: true,
+      skin: (wp) => {
+        const t = smooth(0.25, 0.75, (at.y - wp.y) / len);
+        return [[a, 1 - t], [b, t]];
+      },
+      paint: (v) => {
+        linenPaint(tint)(v);
+        // Frayed, darker ends.
+        v.c.multiplyScalar(1 - 0.35 * smooth(0.6, 1, (at.y - v.wp.y) / len));
+      },
+    });
+    return { a, b, parent, phase: i * 1.7 };
+  });
+}
+
+function buildMummy() {
+  const rig = new Rig();
+  rig.bone('hips', null, 0, 0.715, 0);
+  rig.bone('spine', 'hips', 0, 0.06, 0, 0.3, 0, 0);
+  rig.bone('chest', 'spine', 0, 0.2, 0, 0.24, 0, 0);
+  rig.bone('neck', 'chest', 0, 0.21, 0.01, -0.2, 0, 0);
+  rig.bone('head', 'neck', 0, 0.08, 0, -0.3, 0, 0);
+  for (const s of [-1, 1]) {
+    const S = s > 0 ? 'R' : 'L';
+    rig.bone(`arm${S}`, 'chest', 0.19 * s, 0.15, 0, s > 0 ? -1.25 : -1.38, 0, 0.16 * s);
+    rig.bone(`fore${S}`, `arm${S}`, 0, -0.27, 0, -0.18, 0, 0);
+    rig.bone(`hand${S}`, `fore${S}`, 0, -0.25, 0, 0.35, 0, 0);
+    rig.bone(`thigh${S}`, 'hips', 0.1 * s, -0.05, 0, -0.16, 0, 0.03 * s);
+    rig.bone(`shin${S}`, `thigh${S}`, 0, -0.36, 0, 0.28, 0, 0);
+    rig.bone(`foot${S}`, `shin${S}`, 0, -0.32, 0, -0.12, 0, 0);
+  }
+  const tint = 0xe2dccc, dusty = 0xc4baa4;
+  // Torso: pelvis, a gaunt belly with a tear, a broad hunched chest and bony shoulders.
+  rig.add(wrapped([0, -0.09, 0], [0, 0.09, 0], 0.118, 0.11, 0, 12, 4), 'hips', { scale: [1, 1, 0.74], paint: linenPaint(dusty) });
+  rig.add(wrapped([0, -0.03, 0], [0, 0.22, 0], 0.12, 0.135, 1, 12, 5), 'spine', { scale: [1, 1, 0.72], paint: linenPaint(tint, 0.35, 2) });
+  rig.add(warp(wrapped([0, -0.02, 0], [0, 0.22, 0], 0.14, 0.12, 2, 12, 6), (p) => {
+    const t = clamp(p.y / 0.22, 0, 1);
+    p.x *= 1 + 0.32 * Math.sin(Math.PI * clamp(t * 1.15, 0, 1));
+    p.z *= 0.74;
+    // A hunched, bony back.
+    if (p.z < 0) p.z -= 0.045 * Math.sin(Math.PI * clamp(t * 1.1, 0, 1));
+  }), 'chest', { paint: linenPaint(tint, 0.3, 5) });
+  for (const s of [-1, 1]) rig.add(wrappedEll(0.05, 0.05, 0.052, 10, 8), 'chest', { at: [0.158 * s, 0.135, -0.015], paint: linenPaint(tint) });
+  rig.add(wrapped([0, -0.02, 0], [0, 0.1, 0], 0.05, 0.045, 3, 8, 3), 'neck', { paint: linenPaint(dusty) });
+  // The head: a wrapped skull with sunken sockets, a glowing stare and a slit of a mouth.
+  const sockets = [[-0.04, 0.035], [0.04, 0.035]];
+  rig.add(warp(wrappedEll(0.108, 0.128, 0.118, 18, 14), (p) => {
+    if (p.y < -0.02) p.x *= 1 - 0.18 * smooth(-0.02, -0.12, p.y);
+    if (p.z < 0) p.z *= 1.08;
+    if (p.z > 0) {
+      for (const [sx, sy] of sockets) {
+        const d = Math.hypot(p.x - sx, (p.y - sy) * 1.2);
+        if (d < 0.04) p.z -= 0.03 * (1 - d / 0.04) ** 2;
+      }
+      // A heavy brow over the sockets.
+      p.z += 0.012 * Math.exp(-(((p.y - 0.07) / 0.02) ** 2)) * smooth(0.07, 0.02, Math.abs(p.x));
+    }
+  }), 'head', { at: [0, 0.1, 0.01], paint: (v) => {
+    linenPaint(tint)(v);
+    if (v.lp.z > 0.06) {
+      for (const [sx, sy] of sockets) {
+        const d = Math.hypot(v.lp.x - sx, (v.lp.y - 0.1 - sy) * 1.2);
+        const k = smooth(0.042, 0.022, d);
+        v.c.lerp(new THREE.Color(0x140a06), k);
+        v.s[3] *= 1 - k;
+      }
+      const mouth = smooth(0.012, 0.004, Math.abs(v.lp.y - 0.1 + 0.055)) * smooth(0.045, 0.03, Math.abs(v.lp.x));
+      v.c.lerp(new THREE.Color(0x1a0e08), mouth);
+    }
+  } });
+  for (const [sx, sy] of sockets) {
+    rig.add(ell(0.017, 0.013, 0.01, 8, 6), 'head', { at: [sx, 0.1 + sy, 0.092], color: CURSE, glow: 4, rough: 0.3 });
+  }
+  // Arms reaching out, hands drooping into hooked, half-bared fingers.
+  for (const s of [-1, 1]) {
+    const S = s > 0 ? 'R' : 'L';
+    rig.add(wrapped([0, 0.02, 0], [0, -0.28, 0], 0.064, 0.052, 4 + s, 10, 6), `arm${S}`, { paint: linenPaint(tint, 0.25, 7 + s) });
+    rig.add(wrapped([0, 0.01, 0], [0, -0.25, 0], 0.053, 0.042, 6 + s, 10, 6), `fore${S}`, { paint: linenPaint(dusty, 0.2, 9 + s) });
+    rig.add(wrappedEll(0.035, 0.045, 0.022, 8, 6), `hand${S}`, { at: [0, -0.035, 0], paint: linenPaint(dusty) });
+    for (let f = 0; f < 4; f++) {
+      const x = (-0.024 + f * 0.016) * s, L = f === 0 || f === 3 ? 0.065 : 0.08;
+      rig.add(loft(bend([x, -0.07, 0], [x * 1.1, -0.07 - L * 0.7, 0.005], [x * 1.1, -0.06 - L, 0.04], 4), (t) => 0.0085 * (1 - 0.6 * t), { radial: 5 }), `hand${S}`, {
+        paint: (v) => {
+          const t = smooth(-0.09, -0.13, v.lp.y) + smooth(0.0, 0.03, v.lp.z);
+          v.c.set(0xb8a888).lerp(new THREE.Color(0x231509), clamp(t, 0, 1));
+          v.s[0] = 0.7;
+          v.s[3] = 1 - clamp(t, 0, 1);
+        },
+      });
+    }
+    rig.add(loft(bend([0.03 * s, -0.04, 0.01], [0.04 * s, -0.08, 0.03], [0.025 * s, -0.1, 0.05], 3), (t) => 0.009 * (1 - 0.5 * t), { radial: 5 }), `hand${S}`, { color: 0x6a5840, rough: 0.7 });
+    // Legs: thick wrapped thighs, thinner shins and bound feet.
+    rig.add(wrapped([0, 0.02, 0], [0, -0.37, 0], 0.075, 0.058, 8 + s, 10, 6), `thigh${S}`, { paint: linenPaint(tint, s < 0 ? 0.3 : 0, 11) });
+    rig.add(wrapped([0, 0.0, 0], [0, -0.33, 0], 0.056, 0.042, 10 + s, 10, 6), `shin${S}`, { paint: linenPaint(dusty, 0, 12) });
+    rig.add(warp(wrappedEll(0.045, 0.035, 0.1, 10, 6), (p) => {
+      if (p.y < -0.015) p.y = -0.015 + (p.y + 0.015) * 0.3;
+    }), `foot${S}`, { at: [0, -0.02, 0.045], paint: linenPaint(0xa89878) });
+  }
+  const strips = addStrips(rig, MUMMY_STRIPS, tint);
+  const maps = linenMaps();
+  return {
+    rig: rig.finish(),
+    materials: { body: bodyMaterial({ map: maps.map, normalMap: maps.normal, normalScale: new THREE.Vector2(1.3, 1.3) }) },
+    strips,
+    scale: 1.08,
+    height: 1.6,
+    blob: [0.48, 0],
+  };
+}
+
+const _qTop = new THREE.Quaternion(), _qInv = new THREE.Quaternion(), _qP = new THREE.Quaternion(), _qS = new THREE.Quaternion();
+const _e = new THREE.Euler();
+
+/** Strips of cloth hanging from a body: they keep hanging down whatever the limb does, and trail behind its moves. */
+class Hanging {
+  constructor(c, list) {
+    this.c = c;
+    this.list = list.map((s) => ({ a: c.b[s.a], b: c.b[s.b], parent: c.b[s.parent], phase: s.phase, sx: 0, sz: 0, vx: 0, vz: 0, last: new V3(), first: true }));
+  }
+
+  update(dt, gust) {
+    const t = this.c.time, h = Math.min(dt, 0.05);
+    this.c.root.getWorldQuaternion(_qTop);
+    _qInv.copy(_qTop).invert();
+    for (const s of this.list) {
+      // How fast the attachment moves in the creature's frame swings the strip back; a little wind sways it.
+      s.a.getWorldPosition(_v);
+      if (s.first) { s.last.copy(_v); s.first = false; }
+      _w.subVectors(_v, s.last).applyQuaternion(_qInv);
+      s.last.copy(_v);
+      const k = dt > 1e-4 ? 1 / dt : 0;
+      const wind = Math.sin(t * 2.1 + s.phase) * 0.12 * gust + Math.sin(t * 5.3 + s.phase * 2) * 0.04;
+      const tx = clamp(_w.z * k * 0.25, -0.9, 0.9) + wind * 0.5, tz = clamp(-_w.x * k * 0.25, -0.9, 0.9) + wind;
+      s.vx += ((tx - s.sx) * 40 - s.vx * 5) * h;
+      s.vz += ((tz - s.sz) * 40 - s.vz * 5) * h;
+      s.sx = clamp(s.sx + s.vx * h, -1.2, 1.2);
+      s.sz = clamp(s.sz + s.vz * h, -1.2, 1.2);
+      // Hang straight down in the creature's frame, turned by the swing.
+      s.parent.getWorldQuaternion(_qP);
+      _qS.setFromEuler(_e.set(s.sx, 0, s.sz));
+      s.a.quaternion.copy(_qP.invert()).multiply(_qTop).multiply(_qS);
+      s.b.rotation.set(s.sx * 0.5 + wind * 0.3, 0, s.sz * 0.5);
+    }
+  }
+}
+
+class Mummy extends Creature {
+  constructor(tpl, uid) {
+    super(tpl, uid);
+    this.castLength = 0;
+    this.hang = new Hanging(this, tpl.strips);
+    this.lurch = 0;
+  }
+
+  animate(dt, s) {
+    const b = this.b, t = this.time, w = this.walk;
+    // A slow, dragging gait: the right leg steps, the stiff left one is hauled after it.
+    const rate = clamp(this.speed / 1.25, 0.55, 1.4);
+    this.phase += dt * TAU * (s.moving ? rate : 0) * (s.stunned ? 0.3 : 1);
+    const ph = this.phase + 0.35 * Math.sin(this.phase);
+    const wind = s.wind > 0 ? ease(s.wind) : 0;
+    const hit = this.strikeT >= 0 ? strikeCurve(this.strikeT / 0.55, 0.3) : 0;
+    const raise = Math.max(wind, 0) * (1 - hit);
+    const sw = Math.sin(ph), cw = Math.cos(ph);
+    const breathe = Math.sin(t * 1.4);
+    turn(b.thighR, (-0.42 * sw) * w - hit * 0.25, 0, 0);
+    turn(b.shinR, (0.85 * Math.max(0, cw) + 0.1) * w + hit * 0.25, 0, 0);
+    turn(b.footR, (-0.25 * Math.max(0, cw) + 0.2 * Math.max(0, -sw)) * w, 0, 0);
+    turn(b.thighL, (0.26 * sw) * w + hit * 0.2, 0, -0.14 * Math.max(0, -cw) * w);
+    turn(b.shinL, 0.06 * w, 0, 0);
+    turn(b.footL, (0.35 * Math.max(0, -cw)) * w, 0, 0);
+    // The body lurches over the good leg and sags on the bad one.
+    const sag = (0.035 * Math.max(0, sw) + 0.015 * Math.abs(cw)) * w;
+    shift(b.hips, 0.02 * sw * w, -sag - hit * 0.06 + raise * 0.02, hit * 0.1);
+    turn(b.hips, 0.04 * w, 0.12 * sw * w, (0.09 * sw + 0.02 * Math.sin(t * 0.7)) * (0.4 + w));
+    turn(b.spine, breathe * 0.02 + 0.05 * w - raise * 0.3 + hit * 0.45, -0.08 * sw * w, -0.05 * sw * w + 0.03 * Math.sin(t * 0.6));
+    turn(b.chest, breathe * 0.015 - raise * 0.25 + hit * 0.2, 0, -0.04 * sw * w);
+    turn(b.neck, raise * 0.15 - hit * 0.15, 0.1 * Math.sin(t * 0.5), 0);
+    turn(b.head, raise * 0.25 - hit * 0.1 + 0.05 * Math.sin(t * 0.8), 0.15 * Math.sin(t * 0.37 + 1), 0.12 * Math.sin(t * 0.45) * (1 - w * 0.5));
+    // Arms: reaching out ahead, swaying with the lurch; raised high on the wind-up, hammered down on the blow.
+    for (const S of ['L', 'R']) {
+      const k = S === 'R' ? 1 : -1, off = k > 0 ? 0 : 1.3;
+      const sway = Math.sin(t * 1.1 + off) * 0.06 + Math.sin(ph + off) * 0.1 * w;
+      turn(b[`arm${S}`], sway - raise * 1.35 + hit * 0.75, 0.15 * k * raise, k * (0.04 * Math.sin(t * 0.9 + off) - 0.12 * raise));
+      turn(b[`fore${S}`], -0.1 * Math.sin(t * 1.3 + off) - raise * 0.55 + hit * 0.15, 0, 0);
+      turn(b[`hand${S}`], 0.12 * Math.sin(t * 1.7 + off) - raise * 0.3 - hit * 0.3, 0, 0);
+    }
+    if (s.stunned) turn(b.head, 0.3 * Math.sin(t * 9), 0.3 * Math.sin(t * 5), 0.2);
+    this.hang.update(dt, 0.6 + w);
+  }
+
+  dying(dt, d) {
+    const b = this.b;
+    // Knees buckle, it slumps forward onto its hands and crumbles away into the sand.
+    const kneel = ease(d / 0.5), fall = ease((d - 0.35) / 0.6);
+    turn(b.thighR, -1.3 * kneel, 0, 0);
+    turn(b.thighL, -1.15 * kneel, 0, -0.1 * kneel);
+    turn(b.shinR, 1.95 * kneel, 0, 0);
+    turn(b.shinL, 1.85 * kneel, 0, 0);
+    turn(b.footR, 0.5 * kneel, 0, 0);
+    turn(b.footL, 0.5 * kneel, 0, 0);
+    shift(b.hips, 0, -0.36 * kneel - 0.06 * fall, 0.08 * kneel + 0.1 * fall);
+    turn(b.hips, 0.3 * fall, 0, 0.08 * kneel);
+    turn(b.spine, 0.75 * fall, 0, 0.1 * fall);
+    turn(b.chest, 0.35 * fall, 0, 0);
+    turn(b.neck, -0.2 * fall, 0, 0);
+    turn(b.head, -0.2 * kneel, 0.4 * kneel, 0.3 * kneel);
+    for (const S of ['L', 'R']) {
+      turn(b[`arm${S}`], 0.5 * kneel + 0.35 * fall, 0, 0);
+      turn(b[`fore${S}`], -0.25 * fall, 0, 0);
+      turn(b[`hand${S}`], 0.2, 0, 0);
+    }
+    this.hang.update(dt, 0.3);
+    if (d > 1.4) this.root.position.y = -(d - 1.4) * 0.35;
+    if (d > 1.5) this.setFade(clamp(1 - (d - 1.5) / 1.0, 0, 1));
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 
 const KINDS = {
   SCORPION: { build: buildScorpion, Ctor: Scorpion, deathLength: 2.4 },
+  MUMMY: { build: buildMummy, Ctor: Mummy, deathLength: 2.6 },
 };
 
 const templates = {};
