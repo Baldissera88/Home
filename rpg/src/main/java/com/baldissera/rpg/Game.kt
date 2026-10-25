@@ -1414,6 +1414,59 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                     hitStop = max(hitStop, 0.04f)
                 }
             }
+            // BULWARK: for 4..6 s the hero takes 50..70% less damage (in hurtPlayer) and sends 60..140% of each melee blow
+            //   back at its striker. Enemies within 6 tiles are taunted: drawn ~1.5 tiles towards him and set on him.
+            //   sf: one aura cue, life = the duration. x,y and tx,ty = the hero (updated every frame); dx,dy = the hero's facing
+            //       (updated every frame); value = the damage cut (0.5..0.7).
+            //   Also: steel ring + wave (radius 6) on cast, a red "!" over each taunted enemy, a pale burst on each reflected
+            //   blow. Hero action 3 (cast) for 0.35 s.
+            Skill.BULWARK -> {
+                p.cast = 0.35f
+                val dur = 3.5f + 0.5f * lvl
+                p.bulwark = dur
+                p.bulwarkCut = 0.5f + 0.05f * (lvl - 1)
+                p.bulwarkReflect = 0.6f + 0.2f * (lvl - 1)
+                var marked = 0
+                for (e in enemies) {
+                    val d = dist(e)
+                    if (d > 6f || d < 0.01f) continue
+                    e.aggro = true
+                    e.fear = 0f
+                    if (!e.type.boss) {
+                        e.kx -= (e.x - p.x) / d * 12f / e.size
+                        e.ky -= (e.y - p.y) / d * 12f / e.size
+                    }
+                    if (marked++ < 8) texts += FloatText(e.x, e.y - 1.3f, "!", HURT_COLOR, big = true)
+                }
+                bulwarkFx = SkillFx(Skill.BULWARK, p.x, p.y, p.x, p.y, p.faceX, p.faceY, dur, p.bulwarkCut).also { skillFx += it }
+                ring(p.x, p.y, 0.3f, Color(0xFFB0BEC5), 30, 4f)
+                waves += Wave(p.x, p.y, 6f, Color(0xFF90A4AE), 0.5f)
+                shake = max(shake, 0.4f)
+                sfx.equip()
+                sfx.rumble(40, 150)
+                texts += FloatText(p.x, p.y - 1.5f, "Bulwark!", Color(0xFFB0BEC5), big = true)
+            }
+            // HEAVENS_FURY: for 4 s, 13..17 pillars of light (one every 4/(12+rank) s) strike random enemies within 6.5 tiles
+            //   of the hero (or random open ground near him when there are none). Each pillar lands 0.25 s after it appears:
+            //   radius 1.3, 150..290% damage, a 0.25 s stun, and it leaves a HOLY_LIGHT zone (radius 1.1, 1.2 s, burning).
+            //   sf, two kinds of cue:
+            //     aura   - value < 0: life 4 s; x,y and tx,ty = the hero (updated every frame); dx = dy = 0; -value = the
+            //              strike range (6.5).
+            //     pillar - value > 0: life 0.5 s; x,y = tx,ty = the strike point; dx = dy = 0; value = pillar radius (1.3).
+            //              The beam comes down during progress 0..0.5 and strikes at 0.5 (0.25 s), then fades.
+            //   Also: zones HOLY_LIGHT; gold ring + wave (radius 6.5) on cast; small gold ring and glowing burst per pillar,
+            //   shake 0.25. Hero action 3 (cast) for 0.45 s.
+            Skill.HEAVENS_FURY -> {
+                p.cast = 0.45f
+                p.heaven = 4f
+                p.heavenTick = 0.12f
+                heavenFx = SkillFx(Skill.HEAVENS_FURY, p.x, p.y, p.x, p.y, 0f, 0f, 4f, -heavenRange).also { skillFx += it }
+                ring(p.x, p.y, 0.4f, Color(0xFFFFF176), 40, 6f)
+                waves += Wave(p.x, p.y, heavenRange, Color(0xFFFFF59D), 0.7f)
+                shake = max(shake, 0.5f)
+                sfx.levelUp()
+                texts += FloatText(p.x, p.y - 1.6f, "Heaven's Fury!", Color(0xFFFFF176), big = true)
+            }
             else -> {} // implemented by the class skill agents
         }
     }
@@ -1558,6 +1611,11 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     private val strikes = mutableListOf<Strike>()
 
+    /** The cues of the auras that follow the hero: Iron Bulwark and Heaven's Fury. */
+    private var bulwarkFx: SkillFx? = null
+    private var heavenFx: SkillFx? = null
+    private val heavenRange = 6.5f
+
     /** Whether a beam, a spear or a shockwave passes over this spot (open ground or water, not walls). */
     private fun lanceOpen(x: Float, y: Float) = dungeon.walkableAt(x, y) || dungeon.tile(floorInt(x), floorInt(y)) == WATER
 
@@ -1568,9 +1626,46 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     /** Leaving a floor ends the skills still in flight. */
     private fun clearMightSkills() {
         strikes.clear()
+        player.bulwark = 0f
+        player.heaven = 0f
+        bulwarkFx = null
+        heavenFx = null
     }
 
     private fun updateMightSkills(dt: Float) {
+        val p = player
+        if (p.bulwark > 0f) {
+            p.bulwark -= dt
+            bulwarkFx?.let {
+                it.x = p.x
+                it.y = p.y
+                it.tx = p.x
+                it.ty = p.y
+                it.dx = p.faceX
+                it.dy = p.faceY
+            }
+            if (rnd.nextFloat() < dt * 6f && particles.size < 600) {
+                val a = rnd.nextFloat() * 6.283f
+                particles += Particle(p.x + cos(a) * 0.7f, p.y + sin(a) * 0.5f, 0f, -0.5f, Color(0xFFCFD8DC), 0.035f, 0.5f, glow = true, z = 0.4f)
+            }
+            if (p.bulwark <= 0f) bulwarkFx = null
+        }
+        if (p.heaven > 0f) {
+            p.heaven -= dt
+            heavenFx?.let {
+                it.x = p.x
+                it.y = p.y
+                it.tx = p.x
+                it.ty = p.y
+            }
+            p.heavenTick -= dt
+            if (p.heavenTick <= 0f) {
+                val lvl = max(1, p.skills[Skill.HEAVENS_FURY] ?: 1)
+                p.heavenTick = 4f / (12 + lvl)
+                heavenPillar(lvl)
+            }
+            if (p.heaven <= 0f) heavenFx = null
+        }
         if (strikes.isNotEmpty()) {
             val si = strikes.iterator()
             while (si.hasNext()) {
@@ -1613,8 +1708,44 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 sfx.explode()
                 sfx.rumble(50, 220)
             }
+            Skill.HEAVENS_FURY -> {
+                zones += Zone(s.x, s.y, 1.1f, 1.2f, ZoneKind.HOLY_LIGHT, s.dmg * 0.15f)
+                ring(s.x, s.y, 0.2f, Color(0xFFFFF59D), 14, 3f)
+                burst(s.x, s.y - 0.3f, Color(0xFFFFF176), 10, glow = true)
+                shake = max(shake, 0.25f)
+                sfx.zap()
+            }
             else -> {}
         }
+    }
+
+    /** One pillar of Heaven's Fury: on a random enemy near the hero, or on open ground near him when there is none. */
+    private fun heavenPillar(lvl: Int) {
+        val p = player
+        val near = enemies.filter { dist(it) < heavenRange }
+        val x: Float
+        val y: Float
+        if (near.isNotEmpty()) {
+            val t = near[rnd.nextInt(near.size)]
+            x = t.x + jitter() * 0.5f
+            y = t.y + jitter() * 0.5f
+        } else {
+            val a = rnd.nextFloat() * 6.283f
+            val r = 1.5f + rnd.nextFloat() * 3.5f
+            x = p.x + cos(a) * r
+            y = p.y + sin(a) * r
+            if (!lanceOpen(x, y)) return
+        }
+        val cue = SkillFx(Skill.HEAVENS_FURY, x, y, x, y, 0f, 0f, 0.5f, 1.3f)
+        skillFx += cue
+        strikes += Strike(Skill.HEAVENS_FURY, x, y, 1.3f, p.damage * (1.5f + 0.35f * (lvl - 1)) * spellMult(), 0.25f, 0.25f, cue)
+    }
+
+    /** Iron Bulwark sends part of a melee blow back at the monster that struck it. */
+    private fun bulwarkReflect(from: Enemy, raw: Float) {
+        damageEnemy(from, raw * player.bulwarkReflect, 4f)
+        burst(from.x, from.y - 0.4f, Color(0xFFCFD8DC), 8, glow = true)
+        sfx.hit()
     }
 
     private fun chainLightning(first: Enemy, lvl: Int) {
@@ -2022,6 +2153,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         if (from != null) championHit(from, raw)
         var dmg = raw * 100f / (100f + player.armorValue * 4f)
         dmg *= player.damageTaken
+        if (player.bulwark > 0f) dmg *= 1f - player.bulwarkCut
         if (player.lastStand && player.hp < player.maxHp * 0.35f) dmg *= 0.6f
         if (player.manaShield) {
             val absorbed = min(dmg * 0.3f, player.mana)
@@ -2029,6 +2161,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             dmg -= absorbed
         }
         if (from != null && player.thorns > 0f && from.hp > 0f) damageEnemy(from, raw * player.thorns, 0f)
+        if (from != null && player.bulwark > 0f && from.hp > 0f) bulwarkReflect(from, raw)
         player.hp -= dmg
         player.hurt = 0.3f
         player.sinceHurt = 0f
