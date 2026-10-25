@@ -185,7 +185,7 @@ function loft(pts, radius, { radial = 8, flat = [1, 1], caps = true, up = null }
   for (let i = 0; i < n - 1; i++) {
     for (let j = 0; j < radial; j++) {
       const a = i * row + j, b = a + row;
-      idx.push(a, b, a + 1, a + 1, b, b + 1);
+      idx.push(a, a + 1, b, a + 1, b + 1, b);
     }
   }
   if (caps) {
@@ -370,7 +370,7 @@ class Rig {
   finish() {
     this.top.updateMatrixWorld(true);
     this.inverses = this.list.map((b) => b.matrixWorld.clone().invert());
-    this.defs = this.list.map((b) => ({ name: b.name, parent: b.parent && b.parent.isBone ? b.parent.userData.i : -1, p: b.position.clone(), q: b.quaternion.clone() }));
+    this.defs = this.list.map((b) => ({ name: b.name, parent: b.parent && b.parent.isBone ? b.parent.userData.i : -1, p: b.position.clone(), q: b.quaternion.clone(), s: b.scale.clone() }));
     this.merged = [];
     this.layers.forEach((list, layer) => {
       const g = mergeGeometries(list);
@@ -389,6 +389,7 @@ class Rig {
       b.name = d.name;
       b.position.copy(d.p);
       b.quaternion.copy(d.q);
+      b.scale.copy(d.s);
       b.userData.rest = { p: d.p.clone(), r: b.rotation.clone() };
       bones.push(b);
       by[d.name] = b;
@@ -868,7 +869,7 @@ const MUMMY_STRIPS = [
 /** Hangs strips of cloth (painted by paint(v)) from their bones: two bones each so they can swing and trail. */
 function addStrips(rig, list, paint) {
   rig.top.updateMatrixWorld(true);
-  return list.map(([parent, off, len, width, angle], i) => {
+  return list.map(([parent, off, len, width, angle, tilt = 0], i) => {
     const at = rig.by[parent].localToWorld(new V3(off[0], off[1], off[2]));
     const a = `strip${i}a`, b = `strip${i}b`;
     rig.boneWorld(a, parent, at.x, at.y, at.z);
@@ -889,7 +890,7 @@ function addStrips(rig, list, paint) {
         v.c.multiplyScalar(1 - 0.35 * smooth(0.6, 1, (at.y - v.wp.y) / len));
       },
     });
-    return { a, b, parent, phase: i * 1.7 };
+    return { a, b, parent, phase: i * 1.7, tilt };
   });
 }
 
@@ -995,7 +996,7 @@ const _e = new THREE.Euler();
 class Hanging {
   constructor(c, list) {
     this.c = c;
-    this.list = list.map((s) => ({ a: c.b[s.a], b: c.b[s.b], parent: c.b[s.parent], phase: s.phase, sx: 0, sz: 0, vx: 0, vz: 0, last: new V3(), first: true }));
+    this.list = list.map((s) => ({ a: c.b[s.a], b: c.b[s.b], parent: c.b[s.parent], phase: s.phase, tilt: s.tilt || 0, sx: s.tilt || 0, sz: 0, vx: 0, vz: 0, last: new V3(), first: true }));
   }
 
   update(dt, gust) {
@@ -1010,7 +1011,7 @@ class Hanging {
       s.last.copy(_v);
       const k = dt > 1e-4 ? 1 / dt : 0;
       const wind = Math.sin(t * 2.1 + s.phase) * 0.12 * gust + Math.sin(t * 5.3 + s.phase * 2) * 0.04;
-      const tx = clamp(_w.z * k * 0.25, -0.9, 0.9) + wind * 0.5, tz = clamp(-_w.x * k * 0.25, -0.9, 0.9) + wind;
+      const tx = clamp(_w.z * k * 0.25, -0.9, 0.9) + wind * 0.5 + s.tilt, tz = clamp(-_w.x * k * 0.25, -0.9, 0.9) + wind;
       s.vx += ((tx - s.sx) * 40 - s.vx * 5) * h;
       s.vz += ((tz - s.sz) * 40 - s.vz * 5) * h;
       s.sx = clamp(s.sx + s.vx * h, -1.2, 1.2);
@@ -1019,7 +1020,7 @@ class Hanging {
       s.parent.getWorldQuaternion(_qP);
       _qS.setFromEuler(_e.set(s.sx, 0, s.sz));
       s.a.quaternion.copy(_qP.invert()).multiply(_qTop).multiply(_qS);
-      s.b.rotation.set(s.sx * 0.5 + wind * 0.3, 0, s.sz * 0.5);
+      s.b.rotation.set((s.sx - s.tilt) * 0.5 + wind * 0.3, 0, s.sz * 0.5);
     }
   }
 }
@@ -1338,11 +1339,327 @@ class Djinn extends Creature {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// The Sand Pharaoh.
+
+const LAPIS = 0x1a3690, CARNELIAN = 0xa8221a, TURQUOISE = 0x2aa89a, ROBE = 0x2c2234;
+
+/** Gold and lapis stripes across lp.y (or a custom coordinate), each `w` wide. */
+function stripes(w, at = (v) => v.lp.y, blue = LAPIS) {
+  return (v) => {
+    const k = Math.floor(at(v) / w);
+    if (k % 2 === 0) gold(v);
+    else { v.c.set(blue); v.s[0] = 0.35; v.s[1] = 0.1; }
+  };
+}
+
+/** Dark, ragged robe cloth on the linen weave. */
+function robePaint(tint = ROBE) {
+  const base = new THREE.Color(tint);
+  return (v) => {
+    v.c.copy(base).multiplyScalar(0.85 + 0.3 * vnoise(v.wp.x * 9, v.wp.y * 7, v.wp.z * 9));
+    v.s[0] = 0.95;
+    v.s[3] = 1;
+  };
+}
+
+/** The flail's strands: chains of gold and lapis beads on swinging bones. */
+function addStrands(rig, parent, at, count, len) {
+  rig.top.updateMatrixWorld(true);
+  const list = [];
+  for (let i = 0; i < count; i++) {
+    const a = `strand${i}a`, b = `strand${i}b`, x = (i - (count - 1) / 2) * 0.022;
+    rig.boneWorld(a, parent, at.x + x, at.y, at.z);
+    rig.bone(b, a, 0, -len * 0.5, 0);
+    for (let k = 0; k < 6; k++) {
+      const y = -0.02 - k * (len / 6);
+      const g = ell(0.014 - k * 0.0008, len / 12, 0.014 - k * 0.0008, 7, 5);
+      rig.add(g, k < 3 ? a : b, { world: true, at: [at.x + x, at.y + y, at.z], paint: k % 2 ? (v) => { v.c.set(LAPIS); v.s[0] = 0.3; } : gold });
+    }
+    list.push({ a, b, parent, phase: i * 2.3 });
+  }
+  return list;
+}
+
+function buildPharaoh() {
+  const rig = new Rig();
+  rig.bone('aura', null, 0, 0, 0);
+  rig.bone('hips', null, 0, 0.75, 0);
+  rig.bone('spine', 'hips', 0, 0.07, 0, 0.08, 0, 0);
+  rig.bone('chest', 'spine', 0, 0.2, 0, 0.06, 0, 0);
+  rig.bone('neck', 'chest', 0, 0.22, 0.0, -0.06, 0, 0);
+  // A big head and headdress read from the game's high camera (bone scale: the parts are built larger).
+  rig.bone('head', 'neck', 0, 0.07, 0.01, -0.06, 0, 0).scale.setScalar(1.22);
+  for (const s of [-1, 1]) {
+    const S = s > 0 ? 'R' : 'L';
+    rig.bone(`arm${S}`, 'chest', 0.2 * s, 0.15, -0.01, 0, 0, 0.16 * s);
+    rig.bone(`fore${S}`, `arm${S}`, 0, -0.27, 0, s > 0 ? -0.55 : -0.85, s > 0 ? 0 : 0.3, 0);
+    rig.bone(`hand${S}`, `fore${S}`, 0, -0.25, 0, 0, 0, 0);
+    rig.bone(`thigh${S}`, 'hips', 0.1 * s, -0.05, 0, 0, 0, 0.02 * s);
+    rig.bone(`shin${S}`, `thigh${S}`, 0, -0.36, 0, 0.04, 0, 0);
+    rig.bone(`foot${S}`, `shin${S}`, 0, -0.33, 0, -0.04, 0, 0);
+  }
+  rig.top.updateMatrixWorld(true);
+  const dark = 0x4a4038;
+  // The robe: a long, dark gown flaring to a tattered hem, swinging with the legs.
+  const robe = loft(line([0, 0.86, 0], [0, 0.03, 0], 12), (t) => 0.15 + 0.15 * Math.pow(t, 1.4), { radial: 20, flat: [0.82, 1], caps: false });
+  warp(robe, (p) => {
+    if (p.y < 0.2) {
+      const a = Math.atan2(p.x, p.z);
+      p.y += (0.2 - p.y) / 0.17 * 0.07 * (0.5 + 0.5 * Math.sin(a * 7) * Math.sin(a * 3 + 1));
+    }
+  });
+  const ruv = robe.attributes.uv;
+  for (let i = 0; i < ruv.count; i++) ruv.setXY(i, ruv.getX(i) * 6, ruv.getY(i) / LINEN_TILE);
+  rig.add(robe, 'hips', {
+    world: true,
+    paint: robePaint(),
+    skin: (wp) => {
+      const t = smooth(0.72, 0.4, wp.y), side = smooth(-0.05, 0.05, wp.x);
+      return [['hips', 1 - t], ['thighR', t * side], ['thighL', t * (1 - side)]];
+    },
+  });
+  // Upper robe over a gaunt chest, a gold belt with a striped apron.
+  rig.add(warp(wrapped([0, -0.1, 0], [0, 0.22, 0], 0.135, 0.15, 3, 14, 5), (p) => {
+    p.x *= 1 + 0.25 * smooth(0.05, 0.2, p.y);
+    p.z *= 0.75;
+  }), 'chest', { at: [0, -0.02, 0], paint: robePaint(), skin: (wp) => {
+    const t = smooth(0.86, 1.0, wp.y);
+    return [['spine', 1 - t], ['chest', t]];
+  } });
+  rig.add(ring(0.15, 0.022, [1.6, 0.7], 6, 22), 'hips', { at: [0, 0.1, 0], scale: [1, 1, 0.83], paint: gold });
+  rig.add(new THREE.BoxGeometry(0.15, 0.3, 0.015, 1, 8, 1), 'hips', { at: [0, -0.07, 0.135], rot: [0.08, 0, 0], faces: true, paint: (v) => {
+    stripes(0.0375)(v);
+    if (Math.abs(v.lp.x) > 0.06) gold(v);
+  } });
+  // The broad collar: rings of gold, lapis, carnelian and turquoise over the shoulders.
+  const collar = new THREE.LatheGeometry([new THREE.Vector2(0.25, -0.1), new THREE.Vector2(0.18, -0.045), new THREE.Vector2(0.12, 0.0), new THREE.Vector2(0.075, 0.03)], 28);
+  rig.add(collar, 'chest', { at: [0, 0.23, 0.0], scale: [1, 1, 0.78], faces: true, paint: (v) => {
+    const r = Math.hypot(v.lp.x, v.lp.z / 0.78);
+    const band = Math.floor((r - 0.075) / 0.026);
+    [gold, (w) => { w.c.set(LAPIS); w.s[0] = 0.35; }, gold, (w) => { w.c.set(CARNELIAN); w.s[0] = 0.3; }, gold, (w) => { w.c.set(TURQUOISE); w.s[0] = 0.3; }, gold][clamp(band, 0, 6)](v);
+  } });
+  for (const s of [-1, 1]) rig.add(ell(0.065, 0.06, 0.065, 10, 8), 'chest', { at: [0.175 * s, 0.11, -0.01], paint: robePaint() });
+  rig.add(loft(line([0, -0.02, 0], [0, 0.09, 0], 2), 0.045, { radial: 10 }), 'neck', { color: dark, rough: 0.8 });
+  // The death mask: a gold face with kohl-lined, glowing eyes.
+  const eyes = [[-0.032, 0.012], [0.032, 0.012]];
+  rig.add(warp(ell(0.085, 0.105, 0.092, 18, 14), (p) => {
+    if (p.y < -0.02) p.x *= 1 - 0.2 * smooth(-0.02, -0.1, p.y);
+    if (p.z > 0) {
+      for (const [ex, ey] of eyes) {
+        const d = Math.hypot(p.x - ex, (p.y - ey) * 1.6);
+        if (d < 0.03) p.z -= 0.014 * (1 - d / 0.03);
+      }
+      p.z += 0.016 * Math.exp(-((p.x / 0.012) ** 2)) * smooth(0.03, -0.01, p.y) * smooth(-0.05, -0.01, p.y);
+    }
+  }), 'head', { at: [0, 0.1, 0.012], paint: (v) => {
+    gold(v);
+    v.s[0] = 0.22;
+    for (const [ex, ey] of eyes) {
+      const dx = v.lp.x - ex, dy = v.lp.y - 0.1 - ey;
+      const k = smooth(0.026, 0.018, Math.hypot(dx, dy * 1.6)) + smooth(0.006, 0.002, Math.abs(dy + dx * 0.25 * Math.sign(ex) - 0.012)) * smooth(0.05, 0.03, Math.abs(dx));
+      if (k > 0) { v.c.lerp(new THREE.Color(0x0a0e22), clamp(k, 0, 1)); v.s[1] *= 1 - clamp(k, 0, 1); }
+    }
+    const mouth = smooth(0.006, 0.002, Math.abs(v.lp.y - 0.1 + 0.058)) * smooth(0.03, 0.02, Math.abs(v.lp.x));
+    v.c.lerp(new THREE.Color(0x3a2008), mouth);
+  } });
+  for (const [ex, ey] of eyes) rig.add(ell(0.013, 0.009, 0.006, 8, 6), 'head', { at: [ex, 0.1 + ey, 0.094], color: CURSE, glow: 6, rough: 0.2 });
+  // The nemes: a striped headcloth with flaring sides, lappets on the chest, the cobra on the brow.
+  rig.add(warp(dome(0.112, 0.1, 0.112, 18, 6), (p) => { p.z -= 0.01 * (p.y / 0.1); }), 'head', { at: [0, 0.135, -0.003], faces: true, paint: stripes(0.016, (v) => v.lp.y + 0.003) });
+  const profile = [new THREE.Vector2(0.113, 0.0), new THREE.Vector2(0.13, -0.06), new THREE.Vector2(0.17, -0.15), new THREE.Vector2(0.23, -0.25), new THREE.Vector2(0.235, -0.28)];
+  const nemes = new THREE.LatheGeometry([...profile].reverse(), 22, 0.75, TAU - 1.5);
+  rig.add(nemes, 'head', { at: [0, 0.135, -0.003], scale: [1, 1, 0.8], faces: true, paint: stripes(0.022, (v) => v.lp.y + 0.3) });
+  // Its dark lining, seen through the open front.
+  rig.add(new THREE.LatheGeometry(profile, 22, 0.75, TAU - 1.5).scale(0.985, 1, 0.985), 'head', { at: [0, 0.133, -0.003], scale: [1, 1, 0.8], color: 0x1a1430, rough: 0.9 });
+  for (const s of [-1, 1]) {
+    rig.add(new THREE.BoxGeometry(0.07, 0.24, 0.016, 1, 8, 1), 'head', { at: [0.135 * s, -0.17, 0.06], rot: [0.12, 0, -0.08 * s], faces: true, paint: stripes(0.03) });
+  }
+  rig.add(ring(0.112, 0.008, [1, 1.6], 4, 24), 'head', { at: [0, 0.14, -0.003], scale: [1, 1, 1], paint: gold });
+  rig.add(loft(bend([0, 0.125, 0.105], [0, 0.17, 0.12], [0, 0.2, 0.108], 4), (t) => 0.011 + 0.005 * t, { radial: 6 }), 'head', { paint: gold });
+  rig.add(ell(0.018, 0.012, 0.014, 8, 6), 'head', { at: [0, 0.205, 0.11], paint: gold });
+  rig.add(ell(0.007, 0.007, 0.006, 6, 4), 'head', { at: [0, 0.2, 0.123], color: CARNELIAN, glow: 1.2 });
+  rig.add(loft(line([0, -0.01, 0.07], [0, -0.1, 0.062], 5), (t) => 0.016 - 0.004 * t, { radial: 8 }), 'head', { faces: true, paint: stripes(0.015, (v) => v.lp.y + 0.2) });
+  // Arms: wrapped and dark, gold at the wrists; withered hands.
+  for (const s of [-1, 1]) {
+    const S = s > 0 ? 'R' : 'L';
+    rig.add(wrapped([0, 0.02, 0], [0, -0.28, 0], 0.06, 0.05, 20 + s, 10, 6), `arm${S}`, { paint: robePaint(0x3a3040) });
+    rig.add(wrapped([0, 0.01, 0], [0, -0.25, 0], 0.048, 0.04, 22 + s, 10, 6), `fore${S}`, { paint: linenPaint(0x8a7c68, 0.3, 30 + s) });
+    rig.add(loft(line([0, -0.13, 0], [0, -0.23, 0], 2), 0.05, { radial: 12 }), `fore${S}`, { faces: true, paint: stripes(0.025, (v) => -v.lp.y) });
+    rig.add(ell(0.036, 0.045, 0.024, 8, 6), `hand${S}`, { at: [0, -0.04, 0], color: dark, rough: 0.8 });
+    for (let f = 0; f < 4; f++) {
+      const x = (-0.022 + f * 0.015) * s;
+      rig.add(loft(bend([x, -0.07, 0.0], [x, -0.1, 0.03], [x * 0.8, -0.085, 0.05], 3), 0.0085, { radial: 5 }), `hand${S}`, { color: dark, rough: 0.8 });
+    }
+    rig.add(loft(bend([0.03 * s, -0.04, 0.015], [0.03 * s, -0.06, 0.05], [0.01 * s, -0.075, 0.055], 3), 0.009, { radial: 5 }), `hand${S}`, { color: dark, rough: 0.8 });
+  }
+  // Legs, mostly hidden: dark wrapped shins and gold sandals.
+  for (const s of [-1, 1]) {
+    const S = s > 0 ? 'R' : 'L';
+    rig.add(wrapped([0, 0.0, 0], [0, -0.36, 0], 0.07, 0.058, 25 + s, 8, 4), `thigh${S}`, { paint: robePaint() });
+    rig.add(wrapped([0, 0.0, 0], [0, -0.33, 0], 0.056, 0.044, 27 + s, 8, 4), `shin${S}`, { paint: linenPaint(0x6a5e50) });
+    rig.add(warp(ell(0.048, 0.035, 0.105, 10, 6), (p) => { if (p.y < -0.012) p.y = -0.012 + (p.y + 0.012) * 0.3; }), `foot${S}`, { at: [0, -0.02, 0.045], paint: (v) => {
+      v.c.set(dark); v.s[0] = 0.8;
+      if (v.lp.y < -0.02) gold(v);
+    } });
+  }
+  // The crook-staff in his right hand: banded gold and lapis, hooked at the top round a glowing eye.
+  const hand = rig.by.handR.localToWorld(new V3(0, -0.05, 0.01));
+  rig.boneWorld('staff', 'handR', hand.x, hand.y, hand.z);
+  rig.add(loft(line([0, -hand.y + 0.02, 0], [0, 0.72, 0], 12), 0.019, { radial: 8 }), 'staff', {
+    at: [hand.x, hand.y, hand.z], world: true, faces: true, paint: stripes(0.06, (v) => v.wp.y),
+  });
+  const hook = [];
+  for (let i = 0; i <= 10; i++) {
+    const a = (i / 10) * Math.PI * 1.25;
+    hook.push(new V3(0, 0.72 + Math.sin(a) * 0.09, -Math.cos(a) * 0.09 + 0.09));
+  }
+  rig.add(loft(hook, (t) => 0.02 - 0.006 * t, { radial: 8 }), 'staff', { at: [hand.x, hand.y, hand.z], world: true, faces: true, paint: stripes(0.04, (v) => v.wp.y + v.wp.z) });
+  rig.add(ell(0.032, 0.04, 0.032, 10, 8), 'staff', { at: [hand.x, hand.y + 0.72, hand.z], world: true, paint: gold });
+  rig.add(ell(0.02, 0.024, 0.02, 10, 8), 'staff', { at: [hand.x, hand.y + 0.75, hand.z + 0.02], world: true, color: CURSE, glow: 4, rough: 0.15 });
+  // The flail in his left: a short banded rod with three beaded strands.
+  const lh = rig.by.handL.localToWorld(new V3(0, -0.05, 0.01));
+  rig.boneWorld('flail', 'handL', lh.x, lh.y, lh.z);
+  rig.add(loft(line([0, -0.06, 0], [0, 0.22, 0.08], 6), 0.014, { radial: 7 }), 'flail', { at: [lh.x, lh.y, lh.z], world: true, faces: true, paint: stripes(0.04, (v) => v.wp.y) });
+  const top = new V3(lh.x, lh.y + 0.22, lh.z + 0.08);
+  rig.add(ell(0.02, 0.02, 0.02, 8, 6), 'flail', { at: [top.x, top.y, top.z], world: true, paint: gold });
+  const strands = addStrands(rig, 'flail', top, 3, 0.22);
+  // The cape: dark rags hanging from the shoulders, and loose strips at the hem and sleeves.
+  const rags = addStrips(rig, [
+    ['chest', [0.0, 0.16, -0.12], 0.95, 0.3, 0.0, 0.3],
+    ['chest', [-0.13, 0.15, -0.09], 0.85, 0.14, 0.4, 0.3],
+    ['chest', [0.13, 0.15, -0.09], 0.88, 0.14, -0.4, 0.3],
+    ['foreL', [0.03, -0.1, 0.0], 0.3, 0.05, 0.4],
+    ['foreR', [-0.03, -0.08, 0.0], 0.26, 0.05, -0.6],
+    ['hips', [0.12, 0.05, 0.08], 0.55, 0.06, -0.3],
+  ], robePaint(0x241c2c));
+  // The aura: pale gold wisps of sand and spirit rising in a slow spiral round him.
+  for (let k = 0; k < 5; k++) {
+    const pts = [];
+    for (let i = 0; i <= 14; i++) {
+      const t = i / 14, a = (k / 5) * TAU + t * 2.4, r = 0.36 - 0.14 * t;
+      pts.push(new V3(Math.cos(a) * r, 0.02 + t * 1.5, Math.sin(a) * r));
+    }
+    rig.add(loft(pts, (t) => 0.045 * Math.sin(Math.PI * t) + 0.01, { radial: 4, flat: [0.2, 1], caps: false }), 'aura', {
+      layer: 'aura', paint: (v) => {
+        const t = clamp(v.lp.y / 1.5, 0, 1);
+        v.c.set(0xffa830).lerp(new THREE.Color(0x30e0b0), smooth(0.35, 1, t));
+        v.a = 0.3 * Math.sin(Math.PI * t) ** 1.5;
+      },
+    });
+  }
+  const groundRing = new THREE.RingGeometry(0.3, 0.55, 32, 1).rotateX(-Math.PI / 2);
+  rig.add(groundRing, 'aura', { layer: 'aura', at: [0, 0.03, 0], paint: (v) => {
+    const r = Math.hypot(v.lp.x, v.lp.z);
+    v.c.set(0xffa030);
+    v.a = r < 0.4 ? 0.22 : 0.0;
+  } });
+  const maps = linenMaps();
+  return {
+    rig: rig.finish(),
+    materials: { body: bodyMaterial({ map: maps.map, normalMap: maps.normal, normalScale: new THREE.Vector2(1.1, 1.1) }), aura: fxMaterial(true) },
+    strips: [...rags, ...strands],
+    scale: 1.62,
+    height: 2.55,
+    blob: [0.85, 0],
+  };
+}
+
+class Pharaoh extends Creature {
+  constructor(tpl, uid) {
+    super(tpl, uid);
+    this.castLength = 1.5;
+    this.hang = new Hanging(this, tpl.strips);
+    this.aura = this.mats[1];
+    this.swings = 0;
+    this.flare = 0;
+  }
+
+  animate(dt, s) {
+    const b = this.b, t = this.time, w = this.walk;
+    // A slow, heavy stride.
+    const rate = clamp(this.speed / (0.95 * 1.62), 0.5, 1.4);
+    this.phase += dt * TAU * (s.moving ? rate * 0.6 : 0);
+    const ph = this.phase, sw = Math.sin(ph), cw = Math.cos(ph);
+    if (s.wind > 0 && this.lastWindStart !== true) { this.swings++; this.lastWindStart = true; }
+    if (s.wind <= 0) this.lastWindStart = false;
+    const flail = this.swings % 2 === 0;
+    const wind = s.wind > 0 ? ease(s.wind) : 0;
+    const hit = this.strikeT >= 0 ? strikeCurve(this.strikeT / 0.6, 0.28) : 0;
+    const cast = this.castT >= 0 ? this.castT / this.castLength : -1;
+    const raise = cast >= 0 ? ease(cast / 0.35) * (1 - ease((cast - 0.75) / 0.25)) : 0;
+    const push = cast >= 0 ? strikeCurve((cast - 0.6) / 0.4, 0.3) : 0;
+    const breathe = Math.sin(t * 1.1);
+    // Legs and hips.
+    turn(b.thighR, -0.38 * sw * w - hit * 0.3, 0, 0);
+    turn(b.shinR, 0.6 * Math.max(0, cw) * w + hit * 0.3, 0, 0);
+    turn(b.footR, -0.2 * Math.max(0, cw) * w, 0, 0);
+    turn(b.thighL, 0.38 * sw * w + hit * 0.15, 0, 0);
+    turn(b.shinL, 0.6 * Math.max(0, -cw) * w, 0, 0);
+    turn(b.footL, -0.2 * Math.max(0, -cw) * w, 0, 0);
+    shift(b.hips, 0, -0.025 * Math.abs(cw) * w - hit * 0.05 + raise * 0.02, hit * 0.08);
+    turn(b.hips, 0, 0.1 * sw * w, 0.03 * sw * w);
+    // The upper body: imposing, leaning back to wind up and over to strike; arched back as it casts.
+    const lean = -wind * (flail ? 0.08 : 0.2) + hit * (flail ? 0.15 : 0.35) - raise * 0.18 + push * 0.2;
+    turn(b.spine, breathe * 0.015 + lean, -0.12 * sw * w + (flail ? -0.3 * wind + 0.5 * hit : 0), 0);
+    turn(b.chest, breathe * 0.012 + lean * 0.4, flail ? -0.2 * wind + 0.3 * hit : 0, 0);
+    turn(b.neck, -lean * 0.4, 0.12 * Math.sin(t * 0.4) * (1 - raise), 0);
+    turn(b.head, -raise * 0.35 + 0.03 * Math.sin(t * 0.7), 0.1 * Math.sin(t * 0.27 + 2) * (1 - raise), 0);
+    // Right arm and the staff: planted, swung overhead and slammed down, or raised high to call the storm.
+    const staffUp = flail ? 0 : wind;
+    turn(b.armR, 0.12 * sw * w - 2.5 * staffUp + 1.6 * hit * (flail ? 0 : 1) - 1.2 * raise - 1.3 * push, 0, -0.05 * staffUp + 0.55 * raise);
+    turn(b.foreR, 0.45 * staffUp - 0.3 * hit * (flail ? 0 : 1) - 0.2 * raise + 0.4 * push, 0, 0);
+    turn(b.handR, 0, 0, 0);
+    // Left arm and the flail: drawn back across the body, lashed out sideways; spread wide when casting.
+    const lashUp = flail ? wind : 0, lash = flail ? hit : 0;
+    turn(b.armL, -0.12 * sw * w - 1.1 * lashUp - 0.6 * lash - 1.1 * raise + 0.04 * breathe, 0.9 * lashUp - 1.4 * lash, -0.5 * lashUp + 0.3 * lash - 0.55 * raise);
+    turn(b.foreL, 0.4 * lashUp + 0.6 * lash - 0.1 * raise, 0, 0);
+    // Aura: a slow turn and pulse, flaring when he casts or strikes.
+    this.flare = Math.max(raise, push, hit * 0.6, this.flare - dt * 1.5);
+    turn(b.aura, 0, t * 0.6, 0);
+    b.aura.scale.setScalar(1 + 0.08 * Math.sin(t * 2.3) + 0.3 * this.flare);
+    this.aura.opacity = (0.75 + 0.25 * Math.sin(t * 3.1) + 0.6 * this.flare) * this.fade;
+    this.body.userData.glow.value = 1 + 0.8 * this.flare + 0.15 * Math.sin(t * 4);
+    if (s.stunned) turn(b.head, 0.25, 0.3 * Math.sin(t * 6), 0.15);
+    this.hang.update(dt, 0.7 + w * 0.5 + this.flare);
+  }
+
+  dying(dt, d) {
+    const b = this.b;
+    // He reels, falls to his knees with his arms flung wide and his face to the sky, his spirit bursts out
+    // of him in a blaze of light, and what is left crumbles into the sand.
+    const reel = strikeCurve(d / 0.7, 0.4), kneel = ease((d - 0.3) / 0.55), burst = ease((d - 0.9) / 0.6);
+    turn(b.thighR, -1.25 * kneel, 0, 0);
+    turn(b.thighL, -1.1 * kneel, 0, -0.08 * kneel);
+    turn(b.shinR, 1.9 * kneel, 0, 0);
+    turn(b.shinL, 1.8 * kneel, 0, 0);
+    turn(b.footR, 0.5 * kneel, 0, 0);
+    turn(b.footL, 0.5 * kneel, 0, 0);
+    shift(b.hips, 0, -0.36 * kneel, -0.08 * reel + 0.08 * kneel);
+    turn(b.hips, 0, 0, 0);
+    turn(b.spine, -0.35 * reel - 0.3 * kneel + 0.5 * ease((d - 1.6) / 0.8), 0, 0);
+    turn(b.chest, -0.2 * kneel, 0, 0);
+    turn(b.neck, -0.3 * kneel, 0, 0);
+    turn(b.head, -0.4 * kneel, 0, 0);
+    turn(b.armR, -0.6 * kneel, 0, 1.2 * kneel);
+    turn(b.foreR, -0.2 * kneel, 0, 0);
+    turn(b.armL, -0.6 * kneel, 0, -1.2 * kneel);
+    turn(b.foreL, -0.2 * kneel, 0, 0);
+    turn(b.aura, 0, d * (1 + d * 3), 0);
+    b.aura.scale.setScalar(1 + burst * 1.4);
+    this.aura.opacity = (0.8 + 0.9 * Math.sin(Math.PI * clamp(burst, 0, 1))) * (1 - ease((d - 1.5) / 0.9));
+    this.body.userData.glow.value = 1 + 3 * Math.sin(Math.PI * clamp((d - 0.8) / 1.2, 0, 1));
+    this.hang.update(dt, 1.5 * (1 - burst) + 0.3);
+    if (d > 1.9) this.root.position.y = -(d - 1.9) * 0.45;
+    if (d > 2.0) this.setFade(clamp(1 - (d - 2.0) / 1.1, 0, 1));
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 
 const KINDS = {
   SCORPION: { build: buildScorpion, Ctor: Scorpion, deathLength: 2.4 },
   MUMMY: { build: buildMummy, Ctor: Mummy, deathLength: 2.6 },
   DJINN: { build: buildDjinn, Ctor: Djinn, deathLength: 1.5 },
+  SAND_PHARAOH: { build: buildPharaoh, Ctor: Pharaoh, deathLength: 3.2 },
 };
 
 const templates = {};
