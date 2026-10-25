@@ -182,13 +182,237 @@ function shrub(seed, lod = 0) {
   return mergeGeometries(parts);
 }
 
+/** Triangles from flat [x, y, z] corner lists, normals facing up-ish (for thin leaves seen from both sides). */
+function sheet(tris, color) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(tris.flat(), 3));
+  g.computeVertexNormals();
+  const nor = g.attributes.normal;
+  for (let i = 0; i < nor.count; i++) if (nor.getY(i) < 0) nor.setXYZ(i, -nor.getX(i), -nor.getY(i), -nor.getZ(i));
+  return paint(g, color);
+}
+
+/** Sets a colour from sRGB components (the plants' vertex colours are linear). */
+function srgb(c, r, g, b) {
+  return c.setRGB(r, g, b, THREE.SRGBColorSpace);
+}
+
+/**
+ * A date palm: a slim trunk patterned with old leaf bases, curving up with `lean`, a crown of long
+ * arching feather fronds (stiff leaflets in a V along each rib; the oldest hang down dry and brown) and
+ * clusters of dates tucked under it.
+ */
+function palm(seed, lean, lod = 0) {
+  const rng = mulberry(seed);
+  const H = 3.6 + rng() * 0.8;
+  const bend = (y) => lean * H * Math.pow(Math.max(0, y) / H, 1.7);
+  let tr = new THREE.CylinderGeometry(0.13, 0.17, H, [8, 6, 5, 5][lod], [14, 7, 3, 4][lod], true);
+  tr.translate(0, H / 2, 0);
+  const P = tr.attributes.position;
+  for (let i = 0; i < P.count; i++) {
+    const y = P.getY(i), k = 1 + 0.06 * Math.sin(y * 16 + Math.atan2(P.getZ(i), P.getX(i)) * 2);
+    P.setXYZ(i, P.getX(i) * k + bend(y), y, P.getZ(i) * k);
+  }
+  tr = clean(tr);
+  tr.computeVertexNormals();
+  const parts = [paint(tr, (c, x, y, z) => srgb(c, 0.45, 0.36, 0.27).multiplyScalar(0.62 + 0.38 * (0.5 + 0.5 * Math.sin(y * 16 + Math.atan2(z, x - bend(y)) * 2))))];
+  const top = new THREE.Vector3(bend(H), H, 0);
+  // A tuft of fibre where the fronds spring from.
+  const boss = clean(new THREE.IcosahedronGeometry(0.24, 0));
+  boss.scale(1, 0.8, 1);
+  boss.translate(top.x, H - 0.05, 0);
+  parts.push(paint(boss, (c) => srgb(c, 0.4, 0.33, 0.2)));
+  const n = [18, 13, 9, 10][lod], steps = [12, 7, 4, 5][lod];
+  const dir = new THREE.Vector3(), side = new THREE.Vector3(), up = new THREE.Vector3();
+  for (let k = 0; k < n; k++) {
+    const a = (k / n) * Math.PI * 2 + rng() * 0.45;
+    const old = k % 5 === 4;
+    const e0 = old ? -0.35 - rng() * 0.5 : 0.25 + rng() * 0.75, L = old ? 1.5 + rng() * 0.4 : 2.0 + rng() * 0.7;
+    const droop = old ? 0.7 : 0.9 + rng() * 0.8;
+    const col = old ? [0.55, 0.45, 0.27] : [0.3 + rng() * 0.08, 0.42 + rng() * 0.08, 0.17];
+    const tris = [];
+    side.set(Math.sin(a), 0, -Math.cos(a));
+    const p = top.clone();
+    for (let i = 0; i < steps; i++) {
+      const t = i / steps, e = e0 - droop * t * t;
+      dir.set(Math.cos(a) * Math.cos(e), Math.sin(e), Math.sin(a) * Math.cos(e));
+      up.crossVectors(side, dir).normalize();
+      const q = p.clone().addScaledVector(dir, L / steps);
+      if (t > 0.08) {
+        // Leaflets: narrow blades from the rib, swept forward and folded up into a V; a plain blade far off.
+        const w = 0.55 * Math.sin(Math.PI * Math.min(1, t * 1.05)) * (old ? 0.7 : 1);
+        const blades = lod < 2 ? 2 : 1;
+        for (let b = 0; b < blades; b++) {
+          const at = p.clone().lerp(q, b / blades), base = at.clone().addScaledVector(dir, lod < 2 ? 0.06 : L / steps);
+          for (const s of [1, -1]) {
+            const tip = at.clone().addScaledVector(side, s * w).addScaledVector(dir, 0.22 * w).addScaledVector(up, (old ? -0.1 : 0.16) * w);
+            tris.push([at.x, at.y, at.z, base.x, base.y, base.z, tip.x, tip.y, tip.z]);
+          }
+        }
+      }
+      // The rib itself, a thin sliver.
+      tris.push([p.x, p.y - 0.015, p.z, q.x, q.y - 0.015, q.z, p.x, p.y + 0.02, p.z]);
+      p.copy(q);
+    }
+    parts.push(sheet(tris, (c, x, y, z) => srgb(c, col[0], col[1], col[2]).multiplyScalar(0.7 + 0.4 * Math.min(1, Math.hypot(x - top.x, z - top.z) / L))));
+  }
+  for (let k = 0; k < 4 && lod < 2; k++) {
+    const a = k * 1.7 + rng();
+    const g = clean(new THREE.IcosahedronGeometry(0.085, 0));
+    g.scale(1, 1.5, 1);
+    g.translate(top.x + Math.cos(a) * 0.2, H - 0.32 - rng() * 0.1, Math.sin(a) * 0.2);
+    parts.push(paint(g, (c) => srgb(c, 0.62, 0.36, 0.12)));
+  }
+  return mergeGeometries(parts);
+}
+
+/** A saguaro: a ribbed column with a rounded top and arms that elbow out and turn up. */
+function saguaro(seed, lod = 0) {
+  const rng = mulberry(seed);
+  const H = 2.4 + rng() * 1.5, R = 0.19 + rng() * 0.05;
+  const radial = [16, 10, 6, 8][lod];
+  const ribs = lod < 2 ? 12 : 0;
+  const rib = (g) => {
+    const P = g.attributes.position;
+    for (let i = 0; i < P.count; i++) {
+      const x = P.getX(i), z = P.getZ(i), th = Math.atan2(z, x);
+      const k = ribs ? 1 - 0.1 * (0.5 - 0.5 * Math.cos(th * ribs)) : 1;
+      P.setX(i, x * k);
+      P.setZ(i, z * k);
+    }
+    return g;
+  };
+  const green = (c, x, y, z) => {
+    const th = Math.atan2(z, x);
+    srgb(c, 0.4, 0.52, 0.3).multiplyScalar((0.75 + 0.3 * (ribs ? 0.5 + 0.5 * Math.cos(th * ribs) : 0.7)) * (0.75 + 0.25 * Math.min(1, y / 1.2)));
+  };
+  const body = rib(new THREE.CylinderGeometry(R, R * 1.06, H, radial, [5, 3, 1, 2][lod], true));
+  body.translate(0, H / 2, 0);
+  const cap = rib(new THREE.SphereGeometry(R, radial, 4, 0, Math.PI * 2, 0, Math.PI / 2));
+  cap.translate(0, H, 0);
+  const parts = [paint(clean(body), green), paint(clean(cap), green)];
+  const arms = Math.floor(rng() * 3.2);
+  for (let k = 0; k < arms; k++) {
+    const a = rng() * Math.PI * 2 + k * 2.1, hs = H * (0.35 + rng() * 0.25), up = 0.5 + rng() * 0.9, out = 0.42 + rng() * 0.2;
+    const ca = Math.cos(a), sa = Math.sin(a), r = R * 0.68;
+    const curve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0, hs, 0), new THREE.Vector3(ca * out * 0.7, hs - 0.04, sa * out * 0.7),
+      new THREE.Vector3(ca * out, hs + 0.25, sa * out), new THREE.Vector3(ca * out, hs + 0.25 + up, sa * out),
+    ]);
+    const arm = new THREE.TubeGeometry(curve, [10, 6, 4, 4][lod], r, [10, 7, 5, 5][lod], false);
+    const tip = new THREE.SphereGeometry(r, [10, 7, 5, 5][lod], 3, 0, Math.PI * 2, 0, Math.PI / 2);
+    tip.translate(ca * out, hs + 0.25 + up, sa * out);
+    parts.push(paint(clean(arm), green), paint(clean(tip), green));
+  }
+  return mergeGeometries(parts);
+}
+
+/** A barrel cactus: a squat ribbed globe crowned with a ring of yellow flowers, sometimes with pups. */
+function barrel(seed, lod = 0) {
+  const rng = mulberry(seed);
+  const parts = [];
+  const count = 1 + Math.floor(rng() * 2.5);
+  for (let b = 0; b < count; b++) {
+    const r = (b ? 0.16 : 0.24) + rng() * 0.06, ox = b ? (rng() - 0.5) * 0.6 : 0, oz = b ? (rng() - 0.5) * 0.6 : 0;
+    let g = new THREE.SphereGeometry(r, [14, 10, 6, 7][lod], [8, 6, 4, 4][lod]);
+    const P = g.attributes.position;
+    for (let i = 0; i < P.count; i++) {
+      const x = P.getX(i), y = P.getY(i), z = P.getZ(i), th = Math.atan2(z, x);
+      const k = lod < 2 ? 1 - 0.1 * (0.5 - 0.5 * Math.cos(th * 14)) : 1;
+      P.setXYZ(i, x * k, Math.max(y, -r * 0.3) * 1.25, z * k);
+    }
+    g.translate(ox, r * 0.36, oz);
+    g = clean(g);
+    g.computeVertexNormals();
+    parts.push(paint(g, (c, x, y, z) => srgb(c, 0.45, 0.55, 0.3).multiplyScalar(0.7 + 0.35 * (lod < 2 ? 0.5 + 0.5 * Math.cos(Math.atan2(z - oz, x - ox) * 14) : 0.7))));
+    for (let k = 0; k < 6 && lod < 2; k++) {
+      const a = k / 6 * Math.PI * 2;
+      const fl = clean(new THREE.ConeGeometry(0.035, 0.07, 5));
+      fl.translate(ox + Math.cos(a) * r * 0.35, r * 1.6 + 0.02, oz + Math.sin(a) * r * 0.35);
+      parts.push(paint(fl, (c) => srgb(c, 0.98, 0.8, 0.25)));
+    }
+  }
+  return mergeGeometries(parts);
+}
+
+/** Desert scrub: wiry twigs fanning out of the sand and a few dusty grey-green clumps. */
+function scrub(seed, lod = 0) {
+  const rng = mulberry(seed);
+  const parts = [];
+  for (let k = 0; k < [9, 6, 0, 4][lod]; k++) {
+    const g = new THREE.CylinderGeometry(0.006, 0.014, 0.5 + rng() * 0.3, 3, 1, true);
+    g.translate(0, 0.3, 0);
+    g.rotateZ(0.3 + rng() * 0.7);
+    g.rotateY(rng() * 6.28);
+    parts.push(paint(clean(g), (c) => srgb(c, 0.45, 0.38, 0.3)));
+  }
+  for (let k = 0; k < 4; k++) {
+    let g = new THREE.IcosahedronGeometry(0.13 + rng() * 0.08, [1, 1, 0, 0][lod]);
+    g.translate((rng() - 0.5) * 0.4, 0.18 + rng() * 0.18, (rng() - 0.5) * 0.4);
+    g = lumpy(g, 0.04, 7, k + seed);
+    parts.push(paint(g, (c, x, y) => srgb(c, 0.6, 0.6, 0.45).multiplyScalar(0.6 + y)));
+  }
+  return mergeGeometries(parts);
+}
+
+/** A dead acacia, bleached by the sun: a short twisted trunk and bare limbs spreading flat. */
+function acacia(seed, lod = 0) {
+  const rng = mulberry(seed);
+  const bark = [0.33, 0.27, 0.2];
+  const parts = [trunk(rng, 1.3, 0.12, 0.07, bark, lod)];
+  for (let k = 0; k < 4; k++) {
+    let g = new THREE.CylinderGeometry(0.02, 0.06, 1.3 + rng() * 0.5, [6, 4, 3, 4][lod], lod ? 1 : 3, true);
+    g.translate(0, 0.65, 0);
+    g.rotateZ(0.9 + rng() * 0.4);
+    g.rotateY(k * 1.6 + rng());
+    g.translate(0, 1.15 + rng() * 0.15, 0);
+    g = lumpy(g, 0.015, 7, k);
+    parts.push(paint(g, (c) => c.setRGB(bark[0], bark[1], bark[2]).multiplyScalar(0.85 + rng() * 0.2)));
+    for (let j = 0; j < 2 && lod < 2; j++) {
+      const tw = new THREE.CylinderGeometry(0.008, 0.02, 0.5, 3, 1, true);
+      tw.translate(0, 0.25, 0);
+      tw.rotateZ(0.5 + rng() * 0.6);
+      tw.rotateY(k * 1.6 + rng() * 2);
+      tw.translate(Math.cos(k * 1.6) * 0.5, 1.55, -Math.sin(k * 1.6) * 0.5);
+      parts.push(paint(clean(tw), (c) => c.setRGB(bark[0], bark[1], bark[2])));
+    }
+  }
+  return mergeGeometries(parts);
+}
+
+/** A clump of reeds standing in the shallows, a few with brown cattail heads. */
+function reeds(seed, lod = 0) {
+  const rng = mulberry(seed);
+  const tris = [], heads = [];
+  for (let k = 0; k < [16, 10, 6, 8][lod]; k++) {
+    const a = rng() * 6.28, d = rng() * 0.25, h = 0.9 + rng() * 0.7, w = 0.025 + rng() * 0.015;
+    const x = Math.cos(a) * d, z = Math.sin(a) * d, lean = 0.1 + rng() * 0.25, la = rng() * 6.28;
+    const tx = x + Math.cos(la) * lean, tz = z + Math.sin(la) * lean;
+    const sx = -Math.sin(a) * w, sz = Math.cos(a) * w;
+    tris.push([x - sx, 0, z - sz, x + sx, 0, z + sz, tx, h, tz]);
+    if (k % 5 === 0 && lod < 2) {
+      const g = clean(new THREE.CylinderGeometry(0.03, 0.03, 0.16, 5));
+      g.translate(tx * 0.93, h * 0.9, tz * 0.93);
+      heads.push(paint(g, (c) => srgb(c, 0.42, 0.26, 0.14)));
+    }
+  }
+  return mergeGeometries([sheet(tris, (c, x, y) => srgb(c, 0.4 + 0.25 * y, 0.5 + 0.15 * y, 0.22 + 0.08 * y)), ...heads]);
+}
+
 // Tree kinds: 0-2 broadleaf, 3-4 conifer, 5 birch-ish, 6 dead, 7 shrub; each built at every level of detail.
+// The desert's: 8-9 date palms (leaning a little or a lot), 10-11 saguaros, 12 barrel cacti, 13 scrub,
+// 14 dead acacia, 15 reeds.
 const KINDS = [
   (l) => broadleaf(1, {}, l), (l) => broadleaf(2, { radius: 1.05, leaf: 0x4a7428 }, l), (l) => broadleaf(3, { radius: 0.85, leaf: 0x56692a, height: 1.2 }, l),
   (l) => conifer(4, {}, l), (l) => conifer(5, { height: 3.0, color: 0x1a4024 }, l),
   (l) => broadleaf(6, { radius: 0.7, height: 1.6, leaf: 0x7a8a2c, bark: [0.78, 0.76, 0.7], clusters: 10 }, l),
   (l) => deadTree(7, l), (l) => shrub(8, l),
+  (l) => palm(21, 0.08, l), (l) => palm(22, 0.2, l), (l) => saguaro(23, l), (l) => saguaro(24, l),
+  (l) => barrel(25, l), (l) => scrub(26, l), (l) => acacia(27, l), (l) => reeds(28, l),
 ];
+/** Desert kinds that stand stiff in the wind, and the thin ones seen from both sides. */
+const RIGID = new Set([10, 11, 12, 14]);
+const THIN = new Set([8, 9, 15]);
 
 /** Wind: tree tops and grass tips sway; anchored at the ground. */
 function windMaterial(base, strength, uniforms, occlude = false) {
@@ -381,10 +605,12 @@ const _v = new THREE.Vector3();
  * from the camera's view: near trees in full and casting shadows, distant ones light, grass only close by.
  */
 export class Flora {
-  constructor(level, ground, quality) {
+  /** field: the desert's DesertField on desert floors (palms, cacti and scrub instead of woods), else null. */
+  constructor(level, ground, quality, field = null) {
     this.level = level;
     this.ground = ground;
     this.quality = quality;
+    this.field = field;
     this.uniforms = { uTime: { value: 0 }, uWind: { value: 1 }, uFade: { value: new THREE.Vector2(GRASS_FADE[0], GRASS_FADE[1]) } };
     this.group = new THREE.Group();
     // The camera is not handed to us: the first draw of a plant tells which one renders the world.
@@ -412,15 +638,83 @@ export class Flora {
     this.ring = new Int16Array(ring.flat());
     this.buildTrees();
     this.buildGrass();
-    this.buildPalisade();
+    // The village palisade stands on the overworld's walls; the desert's are rock.
+    if (!this.field) this.buildPalisade();
     return this.group;
+  }
+
+  /**
+   * Desert plants as [x, y, z, yaw, scale, scale, kind]: palms on tree tiles near the water and leaning out
+   * over the pool's edge, reeds in its shallows, cacti, scrub and dead acacias on the other tree tiles, at
+   * the foot of the ridges and on their tops, small scrub on the open sand. Nothing big where people walk.
+   */
+  desertPlants() {
+    const lv = this.level, f = this.field, { w, h } = lv;
+    const t = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? TILE.WALL : lv.tiles.charCodeAt(y * w + x) - 48);
+    const seed = lv.seed | 0;
+    const r = (x, y, k) => hash(x, y, seed * 3 + k);
+    const water = (x, y, d) => {
+      for (let dy = -d; dy <= d; dy++) for (let dx = -d; dx <= d; dx++) if (t(x + dx, y + dy) === TILE.WATER) return true;
+      return false;
+    };
+    const list = [];
+    const put = (x, z, kind, s, y = this.ground.heightAt(x, z)) => list.push([x, y, z, hash(Math.floor(x * 9), Math.floor(z * 9), 7) * 6.28, s, s, kind]);
+    const dense = this.quality.grass ?? 1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const tile = t(x, y);
+        if (tile === TILE.TREE) {
+          const px = x + 0.5 + (r(x, y, 1) - 0.5) * 0.3, pz = y + 0.5 + (r(x, y, 2) - 0.5) * 0.3;
+          if (water(x, y, 4)) put(px, pz, r(x, y, 3) < 0.5 ? 8 : 9, 0.85 + r(x, y, 4) * 0.35);
+          else put(px, pz, r(x, y, 3) < 0.55 ? 10 + (r(x, y, 5) < 0.5 ? 1 : 0) : r(x, y, 3) < 0.8 ? 14 : 12, 0.8 + r(x, y, 4) * 0.4);
+        } else if (tile === TILE.WATER) {
+          // The shore: reeds in the shallows, now and then a palm leaning over the water.
+          const land = [[0, 1], [1, 0], [0, -1], [-1, 0]].filter(([dx, dy]) => t(x + dx, y + dy) !== TILE.WATER);
+          if (!land.length) continue;
+          const [dx, dy] = land[Math.floor(r(x, y, 6) * land.length)];
+          if (r(x, y, 7) < 0.55) {
+            for (let k = 0; k < 2; k++) {
+              const along = (r(x, y, 8 + k) - 0.5) * 0.8;
+              put(x + 0.5 + dx * 0.3 + dy * along, y + 0.5 + dy * 0.3 + dx * along, 15, 0.8 + r(x, y, 10 + k) * 0.5);
+            }
+          } else if (r(x, y, 12) < 0.35) {
+            const px = x + 0.5 + dx * 0.4, pz = y + 0.5 + dy * 0.4, s = 0.9 + r(x, y, 13) * 0.3;
+            // Rooted at the water's edge, leaning out over the bank: the lean is along the model's +x.
+            list.push([px, this.ground.heightAt(px, pz), pz, Math.atan2(-dy, dx), s, s, r(x, y, 14) < 0.5 ? 8 : 9]);
+          }
+        } else if (tile === TILE.WALL && !f.isBuilt(x, y)) {
+          const s = f.S(x + 0.5, y + 0.5);
+          const v = r(x, y, 20);
+          if (s < 0.8) {
+            // At the cliff foot, just in front of the face: small cacti, scrub, a dead acacia.
+            if (v > 0.18 * dense) continue;
+            const kind = v < 0.06 ? 12 : v < 0.075 ? 14 : 13;
+            const spot = f.foot(x + r(x, y, 21), y + r(x, y, 22), kind === 14 ? -0.25 : -0.12);
+            if (!spot || Math.abs(spot[0] - x - 0.5) > 1.1 || Math.abs(spot[1] - y - 0.5) > 1.1 || f.S(spot[0], spot[1]) < -0.3) continue;
+            put(spot[0], spot[1], kind, 0.75 + r(x, y, 23) * 0.4);
+          } else if (s > 1.3 && v < 0.07 * dense) {
+            // On the ridge tops, back from the rim.
+            const px = x + r(x, y, 24), pz = y + r(x, y, 25);
+            const kind = v < 0.025 ? 10 + (v < 0.012 ? 1 : 0) : v < 0.035 ? 14 : 13;
+            put(px, pz, kind, 0.7 + r(x, y, 26) * 0.4, f.rockTop(px, pz) - 0.05);
+          }
+        } else if (tile === TILE.FLOOR) {
+          const m = lv.mat ? lv.mat.charCodeAt(y * w + x) - 48 : 0;
+          if (m <= 2 && r(x, y, 30) < 0.025 * dense) put(x + r(x, y, 31), y + r(x, y, 32), 13, 0.45 + r(x, y, 33) * 0.25);
+        }
+      }
+    }
+    return list;
   }
 
   buildTrees() {
     const lv = this.level;
+    if (this.field) {
+      this.placeTrees(this.desertPlants());
+      return;
+    }
     const varOf = (i) => parseInt(lv.var.substr(i * 2, 2), 16) / 255;
     const list = [];
-    const perKind = new Uint32Array(KINDS.length);
     for (let y = 0; y < lv.h; y++) {
       for (let x = 0; x < lv.w; x++) {
         const i = y * lv.w + x;
@@ -436,11 +730,37 @@ export class Flora {
         const s = 0.85 + ((v * 7) % 1) * 0.45;
         const tx = x + 0.5 + (hash(x, y, 3) - 0.5) * 0.4, tz = y + 0.6 + (hash(x, y, 4) - 0.5) * 0.3;
         list.push([tx, this.ground.heightAt(tx, tz), tz, hash(x, y, 5) * 6.28, s, s, k]);
-        perKind[k]++;
       }
     }
+    this.placeTrees(list);
+  }
+
+  /** Instanced meshes for every kind in the list ([x, y, z, yaw, scale, scale y, kind]), per level of detail. */
+  placeTrees(list) {
+    const perKind = new Uint32Array(KINDS.length);
+    for (const e of list) perKind[e[6]]++;
     if (!list.length) return;
     const mat = windMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 }), 0.12, this.uniforms, true);
+    // The desert's stiff cacti and its thin, two-sided fronds and reeds have materials of their own.
+    let rigid = null, thin = null;
+    const matOf = (k) => {
+      if (RIGID.has(k)) {
+        if (!rigid) {
+          rigid = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75, metalness: 0 });
+          rigid.onBeforeCompile = (shader) => applyOcclusion(shader, 1.3);
+          rigid.customProgramCacheKey = () => 'flora-rigid';
+        }
+        return rigid;
+      }
+      if (THIN.has(k)) {
+        if (!thin) {
+          thin = windMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0, side: THREE.DoubleSide }), 0.09, this.uniforms, true);
+          thin.customProgramCacheKey = () => 'flora-thin';
+        }
+        return thin;
+      }
+      return mat;
+    };
     // Per kind: bounding sphere centre height and radius at scale 1, and a mesh for each level of detail.
     this.treeY = new Float32Array(KINDS.length);
     this.treeR = new Float32Array(KINDS.length);
@@ -454,7 +774,7 @@ export class Flora {
           this.treeY[k] = bs.center.y;
           this.treeR[k] = bs.radius + Math.hypot(bs.center.x, bs.center.z);
         }
-        const mesh = dynamicMesh(geo, mat, perKind[k], false);
+        const mesh = dynamicMesh(geo, matOf(k), perKind[k], false);
         mesh.receiveShadow = true; // also on the shadow stand-in, which then shares the trees' program
         if (lod < 3) mesh.onBeforeRender = this.learn;
         else shadowOnly(mesh);
@@ -474,7 +794,9 @@ export class Flora {
     const dryTint = [0.62, 0.55, 0.3];
     const density = this.quality.grass;
     const flowerColors = [0xf4f1ea, 0xf7d23a, 0x7d7af0, 0xd8322a, 0xe98ad8];
-    const grassy = (m) => m === 0 || m === 1 || m === 2;
+    // The desert: a lush sward on the oasis grass (mat 4), a dry tuft here and there on the sand.
+    const desert = !!this.field;
+    const grassy = desert ? (m) => m <= 2 || m === 4 : (m) => m === 0 || m === 1 || m === 2;
     const tufts = [], flowers = [];
     const c = new THREE.Color();
     for (let y = 0; y < lv.h; y++) {
@@ -484,16 +806,20 @@ export class Flora {
         if (t !== TILE.FLOOR && t !== TILE.TREE) continue;
         const mt = lv.mat.charCodeAt(i) - 48;
         if (!grassy(mt)) continue;
-        const n = Math.round((mt === 2 ? 1.5 : mt === 1 ? 4 : 5) * density * (0.6 + hash(x, y, 9) * 0.8));
+        const sparse = desert && mt !== 4;
+        const n = sparse ? (hash(x, y, 19) < 0.07 * density ? 2 : 0)
+          : Math.round((mt === 2 && !desert ? 1.5 : mt === 1 ? 4 : 5) * density * (0.6 + hash(x, y, 9) * 0.8));
         for (let k = 0; k < n; k++) {
-          const px = x + hash(x * 7 + k, y, 1), pz = y + hash(x, y * 7 + k, 2);
+          const px = sparse ? x + hash(x, y, 1) + (k - 0.5) * 0.12 : x + hash(x * 7 + k, y, 1);
+          const pz = sparse ? y + hash(x, y, 2) : y + hash(x, y * 7 + k, 2);
           const s = 0.5 + hash(x, y + k, 4) * 0.45;
-          const dry = mt === 1;
-          if (dry) c.setRGB(dryTint[0] * 1.6, dryTint[1] * 1.5, dryTint[2] * 1.4);
+          const dry = desert ? sparse : mt === 1;
+          if (dry && desert) c.setRGB(2.6, 1.45, 1.9); // straw, bleached by the sun
+          else if (dry) c.setRGB(dryTint[0] * 1.6, dryTint[1] * 1.5, dryTint[2] * 1.4);
           else c.setRGB(0.85 + hash(x * 7 + k, y, 6) * 0.3, 1, 0.85);
           tufts.push([px, this.ground.heightAt(px, pz), pz, hash(x + k, y, 3) * 6.28, s, s * (dry ? 1.25 : 1), k % 3, [c.r, c.g, c.b]]);
         }
-        if (mt === 0 && hash(x, y, 21) < 0.18 * density) {
+        if (mt === 0 && !desert && hash(x, y, 21) < 0.18 * density) {
           c.setHex(flowerColors[Math.floor(hash(x >> 2, y >> 2, 22) * flowerColors.length)]);
           for (let k = 0; k < 6; k++) {
             const fx = x + hash(x, y, 30 + k), fz = y + hash(x, y, 40 + k);

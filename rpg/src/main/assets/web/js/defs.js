@@ -2,6 +2,9 @@
 
 export const TILE = { WALL: 0, FLOOR: 1, STAIRS: 2, TREE: 3, ROCK: 4, WATER: 5, ENTRANCE: 6, BLOCK: 7 };
 
+/** Biomes under the open sky: sun, sky, weather and the time of day light them, not torches in the dark. */
+export const OUTDOOR = new Set(['OVERWORLD', 'DESERT']);
+
 export const ENEMY = ['SLIME', 'BAT', 'SKELETON', 'SPIDER', 'CULTIST', 'BRUTE', 'WOLF', 'BANDIT', 'GHOST', 'IMP', 'GOBLIN',
   'TROLL', 'SKELETON_KING', 'SPIDER_QUEEN', 'DEMON_LORD', 'SHADOW_KING'];
 

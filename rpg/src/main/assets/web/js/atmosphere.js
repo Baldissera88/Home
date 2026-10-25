@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { SKY_VS, SKY_FS, makeSkyNoise, Rain } from './sky.js';
 import { PointBatch } from './fx.js';
 import { hash } from './defs.js';
+import { SAND, SandWind } from './desert.js';
 
 /**
  * Time of day, weather and light: a procedural sky with sun, moon, clouds and stars, the sun's
@@ -17,6 +18,20 @@ const SKY = {
   rainDay: new THREE.Color(0xb4bfcf), rainNight: new THREE.Color(0x3a4a66), white: new THREE.Color(0xffffff),
 };
 const _zenith = new THREE.Color(), _horizon = new THREE.Color(), _sunColor = new THREE.Color(), _fog = new THREE.Color(), _mote = new THREE.Color();
+
+// The desert's sky: a deep clear blue overhead over a pale, dusty horizon by day; a blazing orange dusk; a
+// cool, clear blue night. dust tints the haze toward the sand, storm is the colour of a sandstorm, bounce
+// the light thrown back up by the sand. Fewer clouds: cover is the sky shader's fair-weather threshold.
+const DESERT_SKY = {
+  zenith: new THREE.Color(0x2463c0), zenithDusk: new THREE.Color(0x2c3474), zenithNight: new THREE.Color(0x0a1838),
+  horizon: new THREE.Color(0xe4dcca), horizonDusk: new THREE.Color(0xff8a42), horizonNight: new THREE.Color(0x1c3060),
+  sun: new THREE.Color(0xfff0d6), sunDusk: new THREE.Color(0xff7428), dust: new THREE.Color(0xe2c79e), storm: new THREE.Color(0xc89a62),
+  bounce: new THREE.Color(0xc0905a), bounceNight: new THREE.Color(0x1a2234), moon: new THREE.Color(0x8aa8e8),
+  sand: new THREE.Color(0xf0d2a0), sandNight: new THREE.Color(0x3a4460), cover: 0.6,
+};
+const DESERT_WIND = new THREE.Vector2(1.6, 0.4);
+const MOON = new THREE.Color(0x8aa4e0);
+const _wind = new THREE.Vector2(), _sand = new THREE.Color(), _white = new THREE.Color(0xffffff);
 
 const DUNGEON = {
   CRYPT: { fog: 0x0a0c12, fogDensity: 0.06, hemiSky: 0x5a6680, hemiGround: 0x1a1612, hemi: 0.8, key: 0x8090b0, keyI: 0.5, lantern: 0xffc488 },
@@ -96,6 +111,7 @@ export class Atmosphere {
       uHaze: { value: 8 },
       uFlash: { value: 0 },
       uNoise: { value: makeSkyNoise() },
+      uCover: { value: 0.44 },
     };
     this.sky = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), new THREE.ShaderMaterial({
       uniforms: this.skyUniforms, vertexShader: SKY_VS, fragmentShader: SKY_FS, side: THREE.BackSide, depthWrite: false, depthTest: true, fog: false,
@@ -134,11 +150,18 @@ export class Atmosphere {
 
   setPointScale(v) { this.motes.mat.uniforms.uScale.value = v; }
 
-  /** Switches between the open world and the underground look. */
+  /** Switches between the open world, the desert and the underground look. */
   setLevel(world) {
     this.world = world;
     this.outdoors = world.outdoors;
     this.biome = world.biome;
+    this.desert = !!world.desert;
+    this.skyUniforms.uCover.value = this.desert ? DESERT_SKY.cover : 0.44;
+    if (this.desert && !this.sandWind) {
+      this.sandWind = new SandWind(this.motes.mat.uniforms.uScale, { high: 900, medium: 600, low: 320 }[this.quality.name] || 600);
+      this.scene.add(this.sandWind.mesh);
+    }
+    if (this.sandWind) this.sandWind.mesh.visible = false;
     if (this.outdoors) {
       this.scene.add(this.sky);
       this.scene.background = null;
@@ -211,18 +234,45 @@ export class Atmosphere {
 
   update(f, dt, t, focus, camera, fx) {
     if (fx) fx.particleLight.value = this.outdoors ? 0.35 + 0.65 * f.dl : 0.45;
+    this.storm = this.desert ? this.stormAt(f, focus) : 0;
     if (this.outdoors) this.updateOutdoors(f, t, focus);
     else this.updateDungeon(f, t, focus);
     this.placeShadow(focus, camera);
     this.assignLights(f, t, focus, fx);
     this.updateRain(f, dt, focus, camera);
     this.updateMotes(f, t, focus);
+    if (this.desert) this.updateSand(f, dt, focus, camera);
+  }
+
+  /** How deep the hero stands in a sandstorm (zones of kind SANDSTORM, 7): 0 clear, 1 in the thick of it. */
+  stormAt(f, focus) {
+    let k = 0;
+    const zo = f.zo || [];
+    for (let i = 0; i < zo.length; i++) {
+      const z = zo[i];
+      if (z[3] !== 7) continue;
+      const d = Math.hypot(z[0] - focus.x, z[1] - focus.z);
+      const life = Math.min(1, z[4] * 8, (1 - z[4]) * 5);
+      k = Math.max(k, life * (1 - THREE.MathUtils.smoothstep(d, z[2] * 0.8, z[2] + 9)));
+    }
+    return k;
+  }
+
+  /** The desert's blowing sand, thicker in a sandstorm; the ground's drift streaks follow the same wind. */
+  updateSand(f, dt, focus, camera) {
+    const day = f.dl, storm = this.storm;
+    _wind.copy(DESERT_WIND).multiplyScalar(1 + storm * 2.5);
+    SAND.uWind.value.copy(_wind);
+    _sand.copy(DESERT_SKY.sandNight).lerp(DESERT_SKY.sand, day).multiplyScalar(0.55 + 0.45 * day);
+    this.sandWind.update(0.35 + 0.25 * day + storm * 0.9, dt, focus, camera, _wind, _sand);
   }
 
   updateOutdoors(f, t, focus) {
     const phase = t * Math.PI * 2 / 360;
     const day = f.dl;
-    const rain = f.rn;
+    // It does not rain in the desert; a sandstorm thickens the air instead.
+    const desert = this.desert, D = DESERT_SKY, storm = this.storm || 0;
+    const rain = desert ? 0 : f.rn;
     // The sun climbs to 62 degrees at noon and sets in the west; at night the moon takes over.
     const elev = Math.asin(Math.max(-1, Math.min(1, Math.cos(phase)))) * 0.69;
     const az = phase + 0.6;
@@ -234,12 +284,23 @@ export class Atmosphere {
 
     // Clear blue, overcast grey, a warm dusk and a deep moonlit blue; fog is the horizon's colour.
     const warm = dusk * (1 - night) * (1 - rain);
-    const zenith = _zenith.copy(SKY.zenith).lerp(SKY.zenithRain, rain).lerp(SKY.zenithDusk, warm * 0.6).lerp(SKY.zenithNight, night);
-    const horizon = _horizon.copy(SKY.horizon).lerp(SKY.horizonRain, rain).lerp(SKY.horizonDusk, warm * 0.75).lerp(SKY.horizonNight, night);
+    const P = desert ? D : SKY;
+    const zenith = _zenith.copy(P.zenith).lerp(SKY.zenithRain, rain).lerp(P.zenithDusk, warm * 0.6).lerp(P.zenithNight, night);
+    const horizon = _horizon.copy(P.horizon).lerp(SKY.horizonRain, rain).lerp(P.horizonDusk, warm * 0.75).lerp(P.horizonNight, night);
     zenith.multiplyScalar(1 - 0.3 * rain * night);
     horizon.multiplyScalar(1 - 0.3 * rain * night);
-    const sunColor = _sunColor.copy(SKY.sun).lerp(SKY.sunDusk, dusk);
+    const sunColor = _sunColor.copy(P.sun).lerp(P.sunDusk, dusk);
     const fogCol = _fog.copy(horizon).lerp(zenith, 0.15).lerp(SKY.flash, flash * 0.3);
+    if (desert) {
+      // A warm, dusty haze low over the sand; a storm swallows the sky in its colour.
+      fogCol.lerp(D.dust, 0.3 * (1 - night) * (1 - warm * 0.5));
+      if (storm > 0) {
+        const sc = _mote.copy(D.storm).multiplyScalar(0.25 + 0.75 * day);
+        fogCol.lerp(sc, storm * 0.85);
+        horizon.lerp(sc, storm * 0.8);
+        zenith.lerp(sc, storm * 0.6);
+      }
+    }
     // The sky draws the moon lower than its light comes from, where the chase camera can see it.
     const me = Math.min(Math.asin(moon.y), 0.2), mh = Math.cos(me) / (Math.hypot(moon.x, moon.z) || 1);
     const u = this.skyUniforms;
@@ -251,23 +312,29 @@ export class Atmosphere {
     u.uSunColor.value.copy(sunColor);
     u.uTime.value = t;
     u.uNight.value = night;
-    u.uCloud.value = Math.min(1, 0.15 + rain * 0.9);
+    u.uCloud.value = desert ? storm * 0.3 : Math.min(1, 0.15 + rain * 0.9);
     u.uRain.value = rain;
     u.uFlash.value = flash;
 
     // Key light: the sun by day, a cold moon at night.
     const lightDir = night > 0.5 ? moon : sun;
     this.keyDir = lightDir;
-    const sunI = (1 - night) * Math.min(1, Math.max(0, sun.y) * 4) * (1 - rain * 0.65);
-    const moonI = night * 1.1;
-    if (night > 0.5) this.sun.color.setHex(0x8aa4e0); else this.sun.color.copy(sunColor);
-    this.sun.intensity = night > 0.5 ? moonI : 3.0 * sunI + 0.05;
-    this.hemi.color.copy(zenith).lerp(new THREE.Color(0xffffff), 0.35);
-    this.hemi.groundColor.setHex(0x5a4a36).lerp(new THREE.Color(0x1a2232), night);
-    this.hemi.intensity = 0.8 + 0.5 * day - 0.15 * rain + flash * 2.5;
+    const sunI = (1 - night) * Math.min(1, Math.max(0, sun.y) * 4) * (1 - rain * 0.65) * (1 - storm * 0.6);
+    const moonI = night * (desert ? 1.35 : 1.1);
+    if (night > 0.5) this.sun.color.copy(desert ? D.moon : MOON); else this.sun.color.copy(sunColor);
+    this.sun.intensity = night > 0.5 ? moonI : (desert ? 3.5 : 3.0) * sunI + 0.05;
+    this.hemi.color.copy(zenith).lerp(_white, 0.35);
+    if (desert) {
+      // Fill: the blue sky from above, the sunlit sand from below.
+      this.hemi.groundColor.copy(D.bounce).lerp(D.bounceNight, night);
+      this.hemi.intensity = 0.7 + 0.55 * day + storm * 0.5;
+    } else {
+      this.hemi.groundColor.setHex(0x5a4a36).lerp(new THREE.Color(0x1a2232), night);
+      this.hemi.intensity = 0.8 + 0.5 * day - 0.15 * rain + flash * 2.5;
+    }
 
     this.fog.color.copy(fogCol);
-    this.fog.density = 0.012 + f.fg * 0.09 + rain * 0.012 + night * 0.012;
+    this.fog.density = desert ? 0.0095 + f.fg * 0.04 + night * 0.008 + storm * 0.075 : 0.012 + f.fg * 0.09 + rain * 0.012 + night * 0.012;
     // The sky's horizon haze is the fog colour exactly, in a band that widens with the fog.
     u.uFog.value.copy(fogCol);
     u.uHaze.value = 1 / (0.05 + this.fog.density * 4);
@@ -284,7 +351,7 @@ export class Atmosphere {
       w.uLight.value = 0.25 + 0.75 * day;
     }
     // Refresh reflections as the light changes over the day.
-    const key = Math.round(day * 12) + Math.round(rain * 4) * 100;
+    const key = Math.round(day * 12) + Math.round(rain * 4) * 100 + Math.round(storm * 4) * 1000;
     if (key !== this.envKey) {
       this.envKey = key;
       this.updateEnvironment(false);
@@ -481,7 +548,7 @@ export class Atmosphere {
   }
 
   updateRain(f, dt, focus, camera) {
-    const r = this.outdoors ? f.rn : 0;
+    const r = this.outdoors && !this.desert ? f.rn : 0;
     // Streaks catch the daylight; at night they turn faint and blue, and lightning shows them all.
     if (r > 0.03) this.rain.uniforms.uColor.value.copy(SKY.rainNight).lerp(SKY.rainDay, f.dl).lerp(SKY.white, Math.min(1, this.flash) * 0.5);
     this.rain.update(r, dt, focus, camera, this.rainGround);
@@ -491,7 +558,18 @@ export class Atmosphere {
     const m = this.motes;
     m.begin();
     const c = _mote;
-    if (this.outdoors) {
+    if (this.desert) {
+      // Dust hanging low over the sand: big faint puffs drifting with the wind, a heat haze by day.
+      const day = f.dl, storm = this.storm;
+      c.copy(DESERT_SKY.sandNight).lerp(DESERT_SKY.sand, day);
+      const n = 26 + Math.round(storm * 40), t2 = t * (0.25 + storm * 0.9);
+      for (let i = 0; i < n; i++) {
+        const x = focus.x + ((((hash(i, 1) * 30 + t2 * (1.4 + hash(i, 4))) % 30) + 30) % 30) - 15;
+        const z = focus.z + ((((hash(i, 2) * 30 + t2 * 0.35) % 30) + 30) % 30) - 15;
+        const y = focus.y + 0.25 + hash(i, 3) * (0.8 + storm * 2);
+        m.add(x, y, z, c.r, c.g, c.b, (0.035 + 0.05 * storm) * (0.4 + 0.6 * day), 1.2 + hash(i, 5) * 1.6, 1);
+      }
+    } else if (this.outdoors) {
       // Fireflies after dusk.
       const night = 1 - f.dl;
       if (night > 0.45 && f.rn < 0.3) {
