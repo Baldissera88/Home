@@ -359,6 +359,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         corpses.clear()
         ghosts.clear()
         skillFx.clear()
+        clearMightSkills()
         player.phoenixUsed = false
         player.x = dungeon.start.cx + 0.5f
         player.y = dungeon.start.cy + 0.5f
@@ -787,6 +788,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         updateEnemies(dt)
         updateProjectiles(dt)
         updateZones(dt)
+        updateMightSkills(dt)
         updateLoot(dt)
         reveal()
     }
@@ -1333,6 +1335,85 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 burst(p.x, p.y - 0.5f, Color(0xFF9CCC65), 20, glow = true)
                 sfx.potion()
             }
+            // JUDGMENT: a hammer of light falls on the nearest foe within 7 tiles (else 3 tiles ahead) and lands 0.4 s later.
+            //   sf: one cue, life 0.8 s. x,y = the hero when cast; tx,ty = where the hammer lands; dx,dy = unit direction
+            //       hero -> target; value = blast radius (2.1..2.5 tiles). The hammer falls during progress 0..0.5 and lands
+            //       at progress 0.5 (0.4 s); the second half is the afterglow.
+            //   At the landing (updateMightSkills): ring + wave (gold, radius+1.2), glowing burst, crater decal, shake 0.9,
+            //   hit-stop 0.07. Hero action 3 (cast) for 0.4 s.
+            Skill.JUDGMENT -> {
+                val t = nearestEnemy(7f)
+                var tx = t?.x ?: (p.x + p.faceX * 3f)
+                var ty = t?.y ?: (p.y + p.faceY * 3f)
+                if (t != null) faceToward(t.x, t.y)
+                else if (!lanceOpen(tx, ty)) {
+                    tx = p.x + p.faceX * 1.2f
+                    ty = p.y + p.faceY * 1.2f
+                }
+                p.cast = 0.4f
+                val r = 2f + 0.1f * lvl
+                val cue = SkillFx(Skill.JUDGMENT, p.x, p.y, tx, ty, p.faceX, p.faceY, 0.8f, r)
+                skillFx += cue
+                strikes += Strike(Skill.JUDGMENT, tx, ty, r, p.damage * (2.6f + 0.55f * (lvl - 1)) * spellMult(), 1f + 0.2f * lvl, 0.4f, cue)
+                // Motes of light gather where it will land.
+                repeat(14) {
+                    val a = rnd.nextFloat() * 6.283f
+                    if (particles.size < 600) particles += Particle(tx + cos(a) * r, ty + sin(a) * r, -cos(a) * r * 2f, -sin(a) * r * 2f,
+                        Color(0xFFFFE082), 0.04f, 0.4f, glow = true, z = 0.2f)
+                }
+                sfx.swing()
+            }
+            // LIGHT_LANCE: an instant beam from the hero along his facing (turned to the nearest foe within 9 tiles), 8..10 tiles
+            //   long, cut short by walls (it crosses water). Hits every enemy within 0.55 tiles of the line (plus its radius).
+            //   sf: one cue, life 0.45 s. x,y = beam start (0.5 tiles in front of the hero); tx,ty = beam end; dx,dy = unit
+            //       beam direction; value = beam half-width (0.55). Brightest at progress 0, fading out by 1.
+            //   Also: glowing pale-gold particles along the beam, a small gold ring at the far end, a glowing burst on each
+            //   enemy hit, shake 0.35, hit-stop 0.04 when it hits. Hero action 3 (cast) for 0.3 s.
+            Skill.LIGHT_LANCE -> {
+                nearestEnemy(9f)?.let { faceToward(it.x, it.y) }
+                p.cast = 0.3f
+                val dx = p.faceX
+                val dy = p.faceY
+                val sx = p.x + dx * 0.5f
+                val sy = p.y + dy * 0.5f
+                val reach = 8f + (lvl - 1) / 2
+                var len = 0f
+                while (len < reach && lanceOpen(sx + dx * (len + 0.25f), sy + dy * (len + 0.25f))) len += 0.25f
+                val ex = sx + dx * len
+                val ey = sy + dy * len
+                val dmg = p.damage * (1.8f + 0.4f * (lvl - 1)) * spellMult()
+                var hits = 0
+                for (e in enemies.toList()) {
+                    val rx = e.x - sx
+                    val ry = e.y - sy
+                    val along = rx * dx + ry * dy
+                    if (along < -0.4f || along > len + 0.4f) continue
+                    if (abs(rx * dy - ry * dx) < 0.55f + e.type.radius * e.size) {
+                        damageEnemy(e, dmg, 3f)
+                        burst(e.x, e.y - 0.4f, Color(0xFFFFF59D), 8, glow = true)
+                        hits++
+                    }
+                }
+                for (pr in dungeon.props) {
+                    if (!pr.type.breakable || pr.used) continue
+                    val along = (pr.x - sx) * dx + (pr.y - sy) * dy
+                    if (along in 0f..len && abs((pr.x - sx) * dy - (pr.y - sy) * dx) < 0.6f) breakProp(pr)
+                }
+                skillFx += SkillFx(Skill.LIGHT_LANCE, sx, sy, ex, ey, dx, dy, 0.45f, 0.55f)
+                repeat((len * 3f).toInt() + 4) {
+                    val k = rnd.nextFloat() * len
+                    if (particles.size < 600) particles += Particle(sx + dx * k + jitter() * 0.5f, sy + dy * k + jitter() * 0.5f,
+                        (rnd.nextFloat() - 0.5f) * 0.8f, -0.4f - rnd.nextFloat() * 0.6f, Color(0xFFFFF59D), 0.03f + rnd.nextFloat() * 0.03f,
+                        0.35f + rnd.nextFloat() * 0.3f, glow = true, z = 0.5f)
+                }
+                ring(ex, ey, 0.2f, Color(0xFFFFF176), 14, 3f)
+                shake = max(shake, 0.35f)
+                sfx.zap()
+                if (hits > 0) {
+                    sfx.hit()
+                    hitStop = max(hitStop, 0.04f)
+                }
+            }
             else -> {} // implemented by the class skill agents
         }
     }
@@ -1461,6 +1542,78 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 val lvl = p.skills[Skill.CONSECRATE] ?: 1
                 p.hp = min(p.maxHp, p.hp + p.maxHp * (0.02f + 0.01f * lvl) * 0.5f)
             }
+        }
+    }
+
+    // ---------------------------------------------------------------- Knight and Barbarian skills from the skill tree
+
+    /**
+     * A blow from the sky that lands at (x, y) when [t] runs out: Judgment's hammer, a pillar of Heaven's Fury or an
+     * Avalanche boulder. [cue] is its visual; a boulder waits [wait] seconds before it starts to fall and shows its cue.
+     */
+    private class Strike(
+        val skill: Skill, val x: Float, val y: Float, val radius: Float, val dmg: Float, val stun: Float, var t: Float,
+        val cue: SkillFx, var wait: Float = 0f,
+    )
+
+    private val strikes = mutableListOf<Strike>()
+
+    /** Whether a beam, a spear or a shockwave passes over this spot (open ground or water, not walls). */
+    private fun lanceOpen(x: Float, y: Float) = dungeon.walkableAt(x, y) || dungeon.tile(floorInt(x), floorInt(y)) == WATER
+
+    private fun smashPropsAt(x: Float, y: Float, r: Float) {
+        for (pr in dungeon.props) if (pr.type.breakable && !pr.used && hypot(pr.x - x, pr.y - y) < r) breakProp(pr)
+    }
+
+    /** Leaving a floor ends the skills still in flight. */
+    private fun clearMightSkills() {
+        strikes.clear()
+    }
+
+    private fun updateMightSkills(dt: Float) {
+        if (strikes.isNotEmpty()) {
+            val si = strikes.iterator()
+            while (si.hasNext()) {
+                val s = si.next()
+                if (s.wait > 0f) {
+                    s.wait -= dt
+                    if (s.wait <= 0f) skillFx += s.cue
+                    continue
+                }
+                s.t -= dt
+                if (s.t > 0f) continue
+                si.remove()
+                landStrike(s)
+            }
+        }
+    }
+
+    private fun landStrike(s: Strike) {
+        val knock = when (s.skill) {
+            Skill.JUDGMENT -> 4f
+            Skill.HEAVENS_FURY -> 1f
+            else -> 5f
+        }
+        for (e in enemies.toList()) if (hypot(e.x - s.x, e.y - s.y) < s.radius + e.type.radius * e.size) {
+            damageEnemy(e, s.dmg, knock)
+            if (s.stun > 0f) {
+                e.stun = max(e.stun, if (e.type.boss) s.stun * 0.3f else s.stun)
+                e.windup = 0f
+            }
+        }
+        smashPropsAt(s.x, s.y, s.radius)
+        when (s.skill) {
+            Skill.JUDGMENT -> {
+                ring(s.x, s.y, 0.3f, Color(0xFFFFD54F), 36, 6f)
+                waves += Wave(s.x, s.y, s.radius + 1.2f, Color(0xFFFFD54F), 0.55f)
+                burst(s.x, s.y, Color(0xFFFFF59D), 26, glow = true)
+                addDecal(s.x, s.y, 4, 1.6f)
+                shake = max(shake, 0.9f)
+                hitStop = max(hitStop, 0.07f)
+                sfx.explode()
+                sfx.rumble(50, 220)
+            }
+            else -> {}
         }
     }
 

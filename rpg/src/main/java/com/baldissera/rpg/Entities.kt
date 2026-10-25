@@ -215,22 +215,35 @@ enum class Skill(val label: String, val icon: String, val mana: Float, val coold
 
     // Learned deeper in the skill tree (SkillTree.kt), four per class in the order of HeroClass.allSkills.
     // Knight.
-    JUDGMENT("Hammer of Judgment", "🔨", 30f, 8f, Color(0xFFFFD54F), { l ->
-        "A giant hammer of light crashes down on the nearest foe, stunning everything around it. ${250 + (l - 1) * 50}% damage."
+    JUDGMENT("Hammer of Judgment", "🔨", 30f, 7f, Color(0xFFFFD54F), { l ->
+        "A giant hammer of light crashes down on the nearest foe within 7 tiles, stunning everything around it for ${"%.1f".format(1f + 0.2f * l)} s. " +
+            "${260 + (l - 1) * 55}% damage."
     }),
-    LIGHT_LANCE("Lance of Light", "🌠", 22f, 4f, Color(0xFFFFF9C4), { l -> "A beam of holy light pierces everything in a line before you. ${180 + (l - 1) * 40}% damage." }),
+    LIGHT_LANCE("Lance of Light", "🌠", 22f, 3f, Color(0xFFFFF9C4), { l ->
+        "A beam of holy light pierces every enemy in a line up to ${8 + (l - 1) / 2} tiles long. ${180 + (l - 1) * 40}% damage."
+    }),
     BULWARK("Iron Bulwark", "🏰", 25f, 18f, Color(0xFF90A4AE), { l ->
-        "Brace behind your shield for ${3 + l} s: take ${50 + 4 * l}% less damage, taunt nearby enemies and reflect melee blows."
+        "Brace behind your shield for ${"%.1f".format(3.5f + 0.5f * l)} s: take ${50 + (l - 1) * 5}% less damage, pull nearby enemies to you " +
+            "and send ${60 + (l - 1) * 20}% of every melee blow back."
     }),
-    HEAVENS_FURY("Heaven's Fury", "🌟", 50f, 30f, Color(0xFFFFF176), { l -> "For 4 s pillars of light strike the enemies around you. ${150 + (l - 1) * 35}% damage per strike." }),
+    HEAVENS_FURY("Heaven's Fury", "🌟", 50f, 30f, Color(0xFFFFF176), { l ->
+        "For 4 s, ${12 + l} pillars of light strike the enemies around you and leave searing light where they fall. ${150 + (l - 1) * 35}% damage each."
+    }),
 
     // Barbarian.
-    HARPOON("Ancient Spear", "🔱", 15f, 5f, Color(0xFFBCAAA4), { l -> "Hurl a spear that drags the first enemy hit to you and stuns it. ${150 + (l - 1) * 30}% damage." }),
-    REND("Rend", "💢", 20f, 3f, Color(0xFFE53935), { l ->
-        "A wide cleave that makes enemies bleed for ${120 + (l - 1) * 30}% damage over 4 s. You heal a little for every bleeding foe."
+    HARPOON("Ancient Spear", "🔱", 15f, 4f, Color(0xFFBCAAA4), { l ->
+        "Hurl a spear up to 7 tiles: the first enemy hit is dragged to you and stunned for ${"%.1f".format(0.5f + 0.2f * l)} s. ${150 + (l - 1) * 30}% damage."
     }),
-    SEISMIC_SLAM("Seismic Slam", "🌋", 25f, 2.5f, Color(0xFFA1887F), { l -> "Send a shockwave rolling forward that knocks enemies back. ${170 + (l - 1) * 35}% damage." }),
-    AVALANCHE("Avalanche", "🏔️", 55f, 28f, Color(0xFFD7CCC8), { l -> "Boulders crash down in a wide cone in front of you. ${200 + (l - 1) * 40}% damage per boulder." }),
+    REND("Rend", "💢", 20f, 3f, Color(0xFFE53935), { l ->
+        "A wide cleave for ${80 + (l - 1) * 15}% damage that makes enemies bleed for ${120 + (l - 1) * 30}% more over 4 s. " +
+            "You heal ${"%.1f".format(1f + 0.5f * l)}% life for every bleeding foe (up to 5)."
+    }),
+    SEISMIC_SLAM("Seismic Slam", "🌋", 25f, 3f, Color(0xFFA1887F), { l ->
+        "Send a shockwave rolling 7 tiles forward that hurls enemies back and stuns them for ${"%.1f".format(0.3f + 0.1f * l)} s. ${170 + (l - 1) * 35}% damage."
+    }),
+    AVALANCHE("Avalanche", "🏔️", 50f, 28f, Color(0xFFD7CCC8), { l ->
+        "${10 + 2 * l} boulders crash down in a wide cone before you over 1.5 s, stunning what they hit. ${200 + (l - 1) * 40}% damage per boulder."
+    }),
 
     // Assassin.
     BLADE_DANCE("Blade Dance", "🔪", 25f, 6f, Color(0xFFCE93D8), { l -> "Dash between up to 5 nearby enemies, striking each one. ${140 + (l - 1) * 30}% damage." }),
@@ -484,6 +497,13 @@ class Player : Body {
     var stealth = 0f
     var venom = 0f
     var venomPct = 0.5f
+    /** Iron Bulwark: seconds left, the share of damage it stops and the share of a melee blow it sends back. */
+    var bulwark = 0f
+    var bulwarkCut = 0f
+    var bulwarkReflect = 0f
+    /** Heaven's Fury: seconds left and time until the next pillar of light. */
+    var heaven = 0f
+    var heavenTick = 0f
     /** Height of a leap above the ground, in tiles. */
     val leapZ: Float get() = if (leap > 0f) kotlin.math.sin((1f - leap / leapDur) * Math.PI.toFloat()) * 1.2f else 0f
     val busy: Boolean get() = spin > 0f || charge > 0f || leap > 0f
@@ -689,6 +709,9 @@ class Enemy(
     var fear = 0f
     var poison = 0f
     var poisonDps = 0f
+    /** Seconds of bleeding left from the Barbarian's Rend, and the damage a second it does. */
+    var bleed = 0f
+    var bleedDps = 0f
     var kx = 0f
     var ky = 0f
     var faceX = 0f
