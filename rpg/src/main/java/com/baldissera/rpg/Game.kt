@@ -797,6 +797,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         updateProjectiles(dt)
         updateZones(dt)
         updateMightSkills(dt)
+        updateAssassinSorceressSkills(dt)
         updateLoot(dt)
         reveal()
     }
@@ -1203,6 +1204,77 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 meteors += Meteor(tx, ty, p.damage * (3f + 0.6f * (lvl - 1)) * spellMult())
                 sfx.fireball()
             }
+            // ---- Assassin and Sorceress skills from the skill tree (state and per-frame logic under "Assassin and
+            // Sorceress skill-tree actives" below). Each comment lists what the 3D view gets; "sf" entries are
+            // [skillOrdinal, x, y, tx, ty, dx, dy, progress = age / life, value].
+
+            // BLADE_DANCE: the hero hops between up to 5 different enemies within 6 tiles (nearest first, 0.12 s per hop,
+            // only along clear paths) and strikes each once; nothing can hurt him meanwhile. No target: refunded.
+            //   sf, one per hop: x, y = where the hop starts; tx, ty = the strike point next to the enemy; dx, dy = unit
+            //   direction of the hop; value = hop index 0..4; life 0.35 s.
+            //   Also: ghosts "gh" every frame along the path, hero action 2 (attack) restarted at every hop, violet spark
+            //   particles and a 0.03 s hit-stop at each strike, a violet wave "wa" (radius 1.6) when the dance ends.
+            Skill.BLADE_DANCE -> if (!bladeDance(lvl)) {
+                p.mana += cost
+                p.cooldowns[skill] = 0f
+                texts += FloatText(p.x, p.y - 1.4f, "No target", skill.color)
+            }
+            // DEATH_TRAP: plants a trap 0.9 tiles ahead (underfoot next to a wall); up to 3, the oldest fizzles when a
+            // fourth is planted. It arms after 0.5 s, lasts 15 s and goes off when an enemy comes within 1.3 tiles.
+            //   Zone "zo" kind TRAP: [x, y, 1.3 (trigger radius), 4, progress]; armed once progress >= 0.5 / 15 = 0.033.
+            //   The zone disappears when the trap goes off: then 10 shrapnel projectiles "pr" (small, color 0xFFFFCC80,
+            //   speed 10, life 0.38 s), an orange wave "wa" (radius blast + 0.4), ring/burst particles, a scorch decal,
+            //   shake 0.6 and a 0.05 s hit-stop. No sf. Hero action 3 (cast) while planting.
+            Skill.DEATH_TRAP -> plantTrap(lvl)
+            // MARK_FOR_DEATH: marks the nearest enemy within 8 tiles for 8 s: it takes +40..60% damage from every source
+            // (damageEnemy and poison use Enemy.damageTakenMult). Killing it restores mana and resets this cooldown.
+            // A new mark replaces the old one. No target: refunded.
+            //   sf: x, y = the marked enemy (updated every frame); tx, ty = the hero (updated every frame); dx, dy = 0;
+            //   value = the enemy's body radius in tiles (type radius x size), to size the sigil; life 8 s, removed early
+            //   when the enemy dies or the mark is replaced.
+            //   Also: red ring particles + "Marked" text on the enemy; at the kill a red ring, a blue burst and "+N mana".
+            //   Hero action 3 (cast).
+            Skill.MARK_FOR_DEATH -> if (!markForDeath(lvl)) {
+                p.mana += cost
+                p.cooldowns[skill] = 0f
+                texts += FloatText(p.x, p.y - 1.4f, "No target", skill.color)
+            }
+            // DEATH_BLOSSOM (ultimate): for 3 s a ring of blades (radius 2.3) spins around the hero, hitting everything
+            // inside 4 times a second; the hero keeps moving, attacking and casting.
+            //   sf: x, y = the hero (updated every frame); tx, ty = the hero too; dx, dy = (cos, sin) of the ring's spin
+            //   angle (turns at 11 rad/s); value = ring radius 2.3; life 3 s.
+            //   Also: pink glow petal particles along the ring, a pink ring/wave at the start, hero action 10 (sweep)
+            //   for 0.45 s at the start.
+            Skill.DEATH_BLOSSOM -> deathBlossom(lvl)
+            // FROZEN_ORB: a slow orb (3.4 tiles/s, 1.6 s) flies toward the nearest enemy within 8 tiles (or ahead),
+            // passing through enemies and spraying an ice shard every 0.07 s, then bursts (radius 2.2, chills 3 s);
+            // it bursts early against a wall. Every shard chills (half speed) for 1.5 s.
+            //   sf: x, y = the orb (updated every frame); tx, ty = where it was launched; dx, dy = unit flight direction;
+            //   value = orb radius 0.45; life 1.6 s (removed at the burst).
+            //   Shards: small projectiles "pr" (color 0xFFB3E5FC, radius 0.1, speed 7, life 0.45 s; 12 more fly out
+            //   radially at the burst). Burst: frost ring particles + wave "wa", glow burst, shake 0.35. Hero action 3.
+            Skill.FROZEN_ORB -> frozenOrb(lvl)
+            // BLIZZARD: ice rains on the nearest enemy within 8 tiles (or ahead) for 5 s, radius 2.5..2.9: damage every
+            // 0.5 s through the zone code, and everything inside is chilled (half speed).
+            //   Zone "zo" kind BLIZZARD: [x, y, radius, 2, progress]. Also a pale blue wave "wa" at the cast and frost
+            //   glint particles on the ground while it lasts. No sf. Hero action 3 (cast).
+            Skill.BLIZZARD -> blizzard(lvl)
+            // TELEPORT: blinks 5..7 tiles along the joystick (or facing), stopping before walls and water, with an arcane
+            // burst (radius 1.6, knocks back) where the hero leaves and where he lands.
+            //   sf: x, y = from; tx, ty = to; dx, dy = unit direction; value = burst radius 1.6; life 0.5 s.
+            //   Also: a ghost "gh" at the start point, violet ring particles + waves "wa" and glow bursts at both ends.
+            //   Hero action 3 (cast).
+            Skill.TELEPORT -> teleport(lvl)
+            // BLACK_HOLE (ultimate): a vortex on the biggest pack within 8 tiles (or ahead) pulls enemies within 4.5 tiles
+            // toward its centre for 3 s (walls still stop them; bosses resist), hurting them twice a second, then
+            // implodes (radius 2.8): big damage, outward knock-back and a stun.
+            //   Zone "zo" kind BLACK_HOLE: [x, y, 4.5 (pull radius), 3, progress] for the 3 s pull.
+            //   sf vortex: x, y = tx, ty = centre; dx, dy = (cos, sin) of the swirl angle (turns at 6 rad/s); value = pull
+            //   radius 4.5; life 3 s (removed at the implosion).
+            //   sf implosion: x, y = tx, ty = centre; dx = dy = 0; value = NEGATIVE implosion radius (-2.8); life 0.5 s.
+            //   Also: violet particles spiralling inward during the pull; at the implosion a violet wave "wa", ring and
+            //   glow bursts, a scorch decal, shake 1 and a 0.1 s hit-stop. Hero action 3 (cast) for 0.5 s.
+            Skill.BLACK_HOLE -> blackHole(lvl)
             Skill.SHIELD_CHARGE -> {
                 nearestEnemy(6f)?.let { faceToward(it.x, it.y) }
                 p.charge = 0.32f + 0.02f * lvl
@@ -1640,6 +1712,10 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     /** Skills that take over the hero's movement for a moment. Returns true while one is running. */
     private fun updateClassMoves(dt: Float): Boolean {
         val p = player
+        if (p.dance > 0f) {
+            updateBladeDance(dt)
+            return true
+        }
         if (p.leap > 0f) {
             p.leap -= dt
             val k = (1f - p.leap / p.leapDur).coerceIn(0f, 1f)
@@ -1736,6 +1812,8 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 sandstorm(z, dt)
                 continue
             }
+            // Visual-only zones (Death Traps, Black Holes) do their work elsewhere.
+            if (z.dps <= 0f) continue
             z.tick -= dt
             if (z.tick > 0f) continue
             z.tick = 0.5f
@@ -2081,6 +2159,551 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         }
         sfx.zap()
         shake = max(shake, 0.15f)
+    }
+
+    // ---------------------------------------------------------------- Assassin and Sorceress skill-tree actives
+
+    /** A planted Death Trap: its zone (kind TRAP), the blast damage and the blast radius. */
+    private class Trap(val zone: Zone, val dmg: Float, val blast: Float)
+
+    /** A Frozen Orb in flight on [home]: damage per shard and of the final burst, and its cue in [skillFx]. */
+    private class FrozenOrb(val home: Dungeon, var x: Float, var y: Float, val dx: Float, val dy: Float, val shard: Float, val burst: Float, val fx: SkillFx) {
+        var life = ORB_LIFE
+        var spray = 0f
+        var angle = 0f
+    }
+
+    /** A Black Hole on [home]: its zone (kind BLACK_HOLE), its vortex cue, damage per tick and of the implosion. */
+    private class Vortex(val home: Dungeon, val zone: Zone, val fx: SkillFx, val tick: Float, val implode: Float) {
+        var t = 0f
+        var tickT = 0f
+        var angle = 0f
+    }
+
+    private val traps = mutableListOf<Trap>()
+    private val orbs = mutableListOf<FrozenOrb>()
+    private val vortices = mutableListOf<Vortex>()
+    /** Blade Dance: enemies struck so far, the one the current hop goes for, and the hop itself. */
+    private val danceHit = mutableListOf<Enemy>()
+    private var danceTarget: Enemy? = null
+    private var danceDungeon: Dungeon? = null
+    private var danceHop = 0f
+    private var danceFromX = 0f
+    private var danceFromY = 0f
+    private var danceToX = 0f
+    private var danceToY = 0f
+    private var dancePower = 1.4f
+    private var markTarget: Enemy? = null
+    private var markFx: SkillFx? = null
+    private var blossomFx: SkillFx? = null
+    private var blossomTick = 0f
+    private var blossomAngle = 0f
+    private var blossomPower = 0.75f
+
+    /** How far the hero gets from (x, y) going up to [range] tiles along the unit vector (dx, dy) before a wall or water stops him. */
+    private fun blinkReach(x: Float, y: Float, dx: Float, dy: Float, range: Float): Float {
+        val steps = kotlin.math.ceil(range / 0.1f).toInt()
+        var reach = 0f
+        for (i in 1..steps) {
+            val s = range * i / steps
+            if (blocked(x + dx * s, y + dy * s, 0.28f)) break
+            reach = s
+        }
+        return reach
+    }
+
+    /** A spot up to [ahead] tiles in front of the hero, short of any wall. */
+    private fun spotAhead(ahead: Float): Pair<Float, Float> {
+        val p = player
+        val r = blinkReach(p.x, p.y, p.faceX, p.faceY, ahead)
+        return (p.x + p.faceX * r) to (p.y + p.faceY * r)
+    }
+
+    /** Knocks [e] away from (x, y), the way [damageEnemy] knocks it away from the hero. */
+    private fun shoveFrom(e: Enemy, x: Float, y: Float, knock: Float) {
+        val dx = e.x - x
+        val dy = e.y - y
+        val d = hypot(dx, dy).coerceAtLeast(0.01f)
+        val k = if (e.type.boss) knock * 0.12f else knock / e.size
+        e.kx += dx / d * k
+        e.ky += dy / d * k
+    }
+
+    /** Frost slows a monster to half speed for [seconds] (half as long for bosses). */
+    private fun chillEnemy(e: Enemy, seconds: Float) {
+        e.chill = max(e.chill, if (e.type.boss) seconds * 0.5f else seconds)
+    }
+
+    private fun bladeDance(lvl: Int): Boolean {
+        val p = player
+        danceHit.clear()
+        danceDungeon = dungeon
+        dancePower = 1.4f + 0.3f * (lvl - 1)
+        val fromX = p.x
+        val fromY = p.y
+        if (!nextDanceHop()) return false
+        burst(fromX, fromY - 0.4f, Skill.BLADE_DANCE.color, 14, glow = true)
+        sfx.swing()
+        return true
+    }
+
+    /** Starts the next hop of a Blade Dance, toward the nearest reachable enemy not struck yet; false when none is left. */
+    private fun nextDanceHop(): Boolean {
+        val p = player
+        if (danceHit.size >= DANCE_TARGETS) return false
+        val candidates = enemies.filter { it.hp > 0f && it !in danceHit && dist(it) < DANCE_REACH }.sortedBy { dist(it) }
+        for (t in candidates) {
+            val dx = t.x - p.x
+            val dy = t.y - p.y
+            val d = hypot(dx, dy).coerceAtLeast(0.01f)
+            // Stop just short of the enemy, and only if no wall is in the way.
+            val stop = (d - t.type.radius * t.size - 0.35f).coerceAtLeast(0f)
+            if (blinkReach(p.x, p.y, dx / d, dy / d, stop) < stop - 0.001f) continue
+            danceHit += t
+            danceTarget = t
+            danceFromX = p.x
+            danceFromY = p.y
+            danceToX = p.x + dx / d * stop
+            danceToY = p.y + dy / d * stop
+            danceHop = DANCE_HOP
+            p.dance = DANCE_HOP
+            faceToward(t.x, t.y)
+            p.swingTime = DANCE_HOP + 0.06f
+            p.swing = p.swingTime
+            skillFx += SkillFx(Skill.BLADE_DANCE, danceFromX, danceFromY, danceToX, danceToY, dx / d, dy / d, 0.35f, (danceHit.size - 1).toFloat())
+            return true
+        }
+        return false
+    }
+
+    /** Carries the hero along the current hop of a Blade Dance and strikes at its end. Runs instead of walking. */
+    private fun updateBladeDance(dt: Float) {
+        val p = player
+        if (danceDungeon !== dungeon) {
+            p.dance = 0f
+            danceTarget = null
+            return
+        }
+        danceHop -= dt
+        val k = (1f - danceHop / DANCE_HOP).coerceIn(0f, 1f)
+        p.x = danceFromX + (danceToX - danceFromX) * k
+        p.y = danceFromY + (danceToY - danceFromY) * k
+        p.vx = 0f
+        p.vy = 0f
+        p.moving = true
+        ghosts += Ghost(p.x, p.y, dirRow(p.faceX, p.faceY))
+        if (danceHop > 0f) {
+            p.dance = danceHop
+            return
+        }
+        val t = danceTarget
+        if (t != null && t.hp > 0f && t in enemies) {
+            faceToward(t.x, t.y)
+            damageEnemy(t, p.damage * dancePower, 3f)
+            onHitPowers(t)
+            burst(t.x, t.y - 0.4f, Skill.BLADE_DANCE.color, 8, glow = true)
+            hitStop = max(hitStop, 0.03f)
+            sfx.hit()
+        }
+        if (!nextDanceHop()) {
+            p.dance = 0f
+            danceTarget = null
+            waves += Wave(p.x, p.y, 1.6f, Skill.BLADE_DANCE.color, 0.35f)
+            sfx.swing()
+        }
+    }
+
+    private fun plantTrap(lvl: Int) {
+        val p = player
+        var tx = p.x + p.faceX * 0.9f
+        var ty = p.y + p.faceY * 0.9f
+        if (blinkReach(p.x, p.y, p.faceX, p.faceY, 0.9f) < 0.899f) {
+            tx = p.x
+            ty = p.y
+        }
+        traps.removeAll { it.zone !in zones }
+        if (traps.size >= MAX_TRAPS) {
+            val old = traps.removeAt(0)
+            zones.remove(old.zone)
+            burst(old.zone.x, old.zone.y, Color(0xFF8D6E63), 8)
+        }
+        val z = Zone(tx, ty, TRAP_TRIGGER, TRAP_LIFE, ZoneKind.TRAP, 0f)
+        zones += z
+        traps += Trap(z, p.damage * (2.2f + 0.45f * (lvl - 1)), 2.1f + 0.1f * lvl)
+        p.cast = 0.25f
+        burst(tx, ty, Skill.DEATH_TRAP.color, 8)
+        sfx.equip()
+    }
+
+    private fun trapBlast(tr: Trap) {
+        val z = tr.zone
+        for (e in enemies.toList()) if (e.hp > 0f && hypot(e.x - z.x, e.y - z.y) < tr.blast + e.type.radius * e.size) {
+            damageEnemy(e, tr.dmg, 0f)
+            shoveFrom(e, z.x, z.y, 6f)
+        }
+        for (pr in dungeon.props) if (pr.type.breakable && !pr.used && hypot(pr.x - z.x, pr.y - z.y) < tr.blast) breakProp(pr)
+        // Shrapnel flies out in every direction.
+        for (k in 0 until 10) {
+            val a = (k + rnd.nextFloat() * 0.5f) * 2f * PI.toFloat() / 10f
+            projectiles += Projectile(z.x, z.y, cos(a) * 10f, sin(a) * 10f, tr.dmg * 0.18f, hostile = false,
+                color = Color(0xFFFFCC80), life = 0.38f, radius = 0.1f, small = true)
+        }
+        ring(z.x, z.y, 0.3f, Skill.DEATH_TRAP.color, 28, 5f)
+        waves += Wave(z.x, z.y, tr.blast + 0.4f, Color(0xFFFF8A65), 0.45f)
+        burst(z.x, z.y, Color(0xFFFFAB40), 26, glow = true)
+        addDecal(z.x, z.y, 4, 1.2f)
+        shake = max(shake, 0.6f)
+        hitStop = max(hitStop, 0.05f)
+        sfx.explode()
+        sfx.rumble(35, 160)
+    }
+
+    private fun markForDeath(lvl: Int): Boolean {
+        val p = player
+        val t = nearestEnemy(8f) ?: return false
+        clearMark()
+        faceToward(t.x, t.y)
+        p.cast = 0.3f
+        t.mark = MARK_TIME
+        t.markMult = 1.4f + 0.05f * (lvl - 1)
+        markTarget = t
+        val fx = SkillFx(Skill.MARK_FOR_DEATH, t.x, t.y, p.x, p.y, 0f, 0f, MARK_TIME, t.type.radius * t.size)
+        skillFx += fx
+        markFx = fx
+        ring(t.x, t.y, 0.2f, Skill.MARK_FOR_DEATH.color, 18, 2.5f)
+        texts += FloatText(t.x, t.y - 1.5f, "Marked", Skill.MARK_FOR_DEATH.color)
+        sfx.zap()
+        return true
+    }
+
+    private fun clearMark() {
+        markTarget?.let {
+            it.mark = 0f
+            it.markMult = 1f
+        }
+        markFx?.let { skillFx.remove(it) }
+        markTarget = null
+        markFx = null
+    }
+
+    /** The marked monster died: mana comes back and the mark is ready again. Called by [kill]. */
+    private fun markKilled(e: Enemy) {
+        val p = player
+        val lvl = p.skills[Skill.MARK_FOR_DEATH] ?: 1
+        val gain = p.maxMana * (0.15f + 0.03f * lvl)
+        p.mana = min(p.maxMana, p.mana + gain)
+        p.cooldowns[Skill.MARK_FOR_DEATH] = 0f
+        if (markTarget === e) {
+            clearMark()
+        } else {
+            e.mark = 0f
+        }
+        ring(e.x, e.y, 0.3f, Skill.MARK_FOR_DEATH.color, 30, 4f)
+        burst(e.x, e.y - 0.5f, Color(0xFF64B5F6), 16, glow = true)
+        texts += FloatText(p.x, p.y - 1.6f, "+${gain.roundToInt()} mana", Color(0xFF64B5F6))
+    }
+
+    private fun deathBlossom(lvl: Int) {
+        val p = player
+        p.blossom = BLOSSOM_TIME
+        blossomTick = 0f
+        blossomPower = 0.75f + 0.2f * (lvl - 1)
+        p.whirl = 0.45f
+        blossomFx?.let { skillFx.remove(it) }
+        val fx = SkillFx(Skill.DEATH_BLOSSOM, p.x, p.y, p.x, p.y, cos(blossomAngle), sin(blossomAngle), BLOSSOM_TIME, BLOSSOM_RADIUS)
+        skillFx += fx
+        blossomFx = fx
+        ring(p.x, p.y, 0.4f, Skill.DEATH_BLOSSOM.color, 36, 5f)
+        shake = max(shake, 0.4f)
+        sfx.swing()
+    }
+
+    private fun frozenOrb(lvl: Int) {
+        val p = player
+        nearestEnemy(8f)?.let { faceToward(it.x, it.y) }
+        p.cast = 0.3f
+        val sx = p.x + p.faceX * 0.5f
+        val sy = p.y + p.faceY * 0.5f
+        val m = spellMult()
+        val fx = SkillFx(Skill.FROZEN_ORB, sx, sy, sx, sy, p.faceX, p.faceY, ORB_LIFE + 0.1f, 0.45f)
+        skillFx += fx
+        orbs += FrozenOrb(dungeon, sx, sy, p.faceX, p.faceY, p.damage * (0.45f + 0.1f * (lvl - 1)) * m, p.damage * (1f + 0.25f * (lvl - 1)) * m, fx)
+        burst(sx, sy - 0.3f, ORB_ICE, 10, glow = true)
+        sfx.frost()
+    }
+
+    private fun orbBurst(o: FrozenOrb) {
+        for (e in enemies.toList()) if (e.hp > 0f && hypot(e.x - o.x, e.y - o.y) < ORB_BURST + e.type.radius * e.size) {
+            damageEnemy(e, o.burst, 0f)
+            shoveFrom(e, o.x, o.y, 3f)
+            chillEnemy(e, 3f)
+        }
+        for (k in 0 until 12) {
+            val a = k * 2f * PI.toFloat() / 12f
+            projectiles += Projectile(o.x, o.y, cos(a) * 8f, sin(a) * 8f, o.shard, hostile = false,
+                color = ORB_ICE, life = 0.4f, radius = 0.1f, small = true, chill = 1.5f)
+        }
+        ring(o.x, o.y, 0.3f, FROST, 36, 5.5f)
+        burst(o.x, o.y, Color(0xFFE1F5FE), 20, glow = true)
+        shake = max(shake, 0.35f)
+        sfx.frost()
+    }
+
+    private fun blizzard(lvl: Int) {
+        val p = player
+        val t = nearestEnemy(8f)
+        val spot = if (t != null) (t.x to t.y) else spotAhead(4f)
+        t?.let { faceToward(it.x, it.y) }
+        p.cast = 0.4f
+        val r = 2.4f + 0.1f * lvl
+        zones += Zone(spot.first, spot.second, r, BLIZZARD_TIME, ZoneKind.BLIZZARD, p.damage * (0.7f + 0.18f * (lvl - 1)) * spellMult())
+        waves += Wave(spot.first, spot.second, r, ORB_ICE, 0.5f)
+        sfx.frost()
+    }
+
+    private fun teleport(lvl: Int) {
+        val p = player
+        var dx = joyX
+        var dy = joyY
+        val len = hypot(dx, dy)
+        if (len < 0.2f) {
+            dx = p.faceX
+            dy = p.faceY
+        } else {
+            dx /= len
+            dy /= len
+        }
+        p.faceX = dx
+        p.faceY = dy
+        val fromX = p.x
+        val fromY = p.y
+        val reach = blinkReach(fromX, fromY, dx, dy, 4.5f + 0.5f * lvl)
+        val toX = fromX + dx * reach
+        val toY = fromY + dy * reach
+        val dmg = p.damage * (0.8f + 0.2f * (lvl - 1)) * spellMult()
+        val hit = mutableSetOf<Enemy>()
+        ghosts += Ghost(fromX, fromY, dirRow(dx, dy))
+        arcaneBurst(fromX, fromY, dmg, hit)
+        p.x = toX
+        p.y = toY
+        arcaneBurst(toX, toY, dmg, hit)
+        p.cast = 0.2f
+        skillFx += SkillFx(Skill.TELEPORT, fromX, fromY, toX, toY, dx, dy, 0.5f, TELEPORT_BURST)
+        sfx.portal()
+    }
+
+    /** The arcane burst at either end of a Teleport; [hit] keeps an enemy from being hit by both. */
+    private fun arcaneBurst(x: Float, y: Float, dmg: Float, hit: MutableSet<Enemy>) {
+        for (e in enemies.toList()) if (e !in hit && e.hp > 0f && hypot(e.x - x, e.y - y) < TELEPORT_BURST + e.type.radius * e.size) {
+            hit += e
+            damageEnemy(e, dmg, 0f)
+            shoveFrom(e, x, y, 4f)
+        }
+        ring(x, y, 0.3f, Skill.TELEPORT.color, 22, 4f)
+        burst(x, y - 0.4f, Color(0xFF7C4DFF), 14, glow = true)
+    }
+
+    private fun blackHole(lvl: Int) {
+        val p = player
+        // Aim at the biggest pack in reach (the nearest of equal ones).
+        val pack = enemies.filter { dist(it) < 8f }
+            .maxByOrNull { e -> enemies.count { hypot(it.x - e.x, it.y - e.y) < 3f } * 10f - dist(e) }
+        val spot = if (pack != null) (pack.x to pack.y) else spotAhead(4f)
+        pack?.let { faceToward(it.x, it.y) }
+        p.cast = 0.5f
+        val m = spellMult()
+        val z = Zone(spot.first, spot.second, HOLE_PULL, HOLE_TIME + 0.1f, ZoneKind.BLACK_HOLE, 0f)
+        zones += z
+        val fx = SkillFx(Skill.BLACK_HOLE, z.x, z.y, z.x, z.y, 1f, 0f, HOLE_TIME + 0.1f, HOLE_PULL)
+        skillFx += fx
+        vortices += Vortex(dungeon, z, fx, p.damage * (0.4f + 0.1f * (lvl - 1)) * m, p.damage * (4f + (lvl - 1)) * m)
+        ring(z.x, z.y, 0.3f, Skill.BLACK_HOLE.color, 30, 3f)
+        shake = max(shake, 0.4f)
+        sfx.portal()
+        sfx.rumble(40, 120)
+    }
+
+    private fun implode(v: Vortex) {
+        val z = v.zone
+        for (e in enemies.toList()) if (e.hp > 0f && hypot(e.x - z.x, e.y - z.y) < HOLE_IMPLODE + e.type.radius * e.size) {
+            damageEnemy(e, v.implode, 0f)
+            shoveFrom(e, z.x, z.y, 8f)
+            e.stun = max(e.stun, if (e.type.boss) 0.4f else 1.2f)
+            e.windup = 0f
+        }
+        for (pr in dungeon.props) if (pr.type.breakable && !pr.used && hypot(pr.x - z.x, pr.y - z.y) < HOLE_IMPLODE) breakProp(pr)
+        skillFx += SkillFx(Skill.BLACK_HOLE, z.x, z.y, z.x, z.y, 0f, 0f, 0.5f, -HOLE_IMPLODE)
+        waves += Wave(z.x, z.y, HOLE_IMPLODE + 1f, Skill.BLACK_HOLE.color, 0.5f)
+        ring(z.x, z.y, 0.2f, Color(0xFFB388FF), 44, 7f)
+        burst(z.x, z.y, Color(0xFFE1BEE7), 30, glow = true)
+        addDecal(z.x, z.y, 4, 2f)
+        shake = 1f
+        hitStop = max(hitStop, 0.1f)
+        sfx.explode()
+        sfx.rumble(80, 220)
+    }
+
+    /** Per-frame work of the Assassin and Sorceress skill-tree actives (Blade Dance runs in [updateClassMoves]). */
+    private fun updateAssassinSorceressSkills(dt: Float) {
+        val p = player
+        for (e in enemies) {
+            if (e.chill > 0f) {
+                e.chill -= dt
+                if (particles.size < 500 && rnd.nextFloat() < dt * 6f) {
+                    particles += Particle(e.x + jitter(), e.y, 0f, -0.4f, ORB_ICE, 0.05f, 0.6f, glow = true, z = 0.6f)
+                }
+            }
+            if (e.mark > 0f) e.mark -= dt
+        }
+        // Blizzards chill everything under them; their damage is dealt in updateZones.
+        for (z in zones) {
+            if (z.kind != ZoneKind.BLIZZARD) continue
+            for (e in enemies) if (hypot(e.x - z.x, e.y - z.y) < z.radius + e.type.radius * e.size) chillEnemy(e, 0.6f)
+            if (particles.size < 500 && rnd.nextFloat() < dt * 25f) {
+                val a = rnd.nextFloat() * 6.283f
+                val r = rnd.nextFloat() * z.radius
+                particles += Particle(z.x + cos(a) * r, z.y + sin(a) * r, 0f, 0f, Color.White, 0.04f, 0.35f, glow = true, z = 0.08f)
+            }
+        }
+        // Armed Death Traps go off when an enemy comes close.
+        if (traps.isNotEmpty()) {
+            traps.removeAll { it.zone !in zones }
+            for (tr in traps.toList()) {
+                val z = tr.zone
+                if (z.age < TRAP_ARM) continue
+                if (enemies.none { it.hp > 0f && hypot(it.x - z.x, it.y - z.y) < z.radius + it.type.radius * it.size }) continue
+                traps.remove(tr)
+                zones.remove(z)
+                trapBlast(tr)
+            }
+        }
+        // The mark's sigil follows its monster.
+        val marked = markTarget
+        if (marked != null) {
+            val fx = markFx
+            if (marked.mark <= 0f || fx == null || marked !in enemies) clearMark() else {
+                fx.x = marked.x
+                fx.y = marked.y
+                fx.tx = p.x
+                fx.ty = p.y
+            }
+        }
+        if (p.blossom > 0f) {
+            p.blossom -= dt
+            blossomAngle += dt * 11f
+            var fx = blossomFx
+            if (fx == null || fx !in skillFx) {
+                // The cue was cleared with the old floor: the ring goes on spinning here.
+                fx = SkillFx(Skill.DEATH_BLOSSOM, p.x, p.y, p.x, p.y, 1f, 0f, max(p.blossom, 0.05f), BLOSSOM_RADIUS)
+                skillFx += fx
+                blossomFx = fx
+            }
+            fx.x = p.x
+            fx.y = p.y
+            fx.tx = p.x
+            fx.ty = p.y
+            fx.dx = cos(blossomAngle)
+            fx.dy = sin(blossomAngle)
+            blossomTick -= dt
+            if (blossomTick <= 0f) {
+                blossomTick = BLOSSOM_TICK
+                var hit = false
+                for (e in enemies.toList()) if (e.hp > 0f && dist(e) < BLOSSOM_RADIUS + e.type.radius * e.size) {
+                    damageEnemy(e, p.damage * blossomPower, 1.5f)
+                    onHitPowers(e)
+                    hit = true
+                }
+                for (pr in dungeon.props) if (pr.type.breakable && !pr.used && hypot(pr.x - p.x, pr.y - p.y) < BLOSSOM_RADIUS) breakProp(pr)
+                sfx.swing()
+                if (hit) sfx.hit()
+            }
+            if (particles.size < 500) repeat(2) {
+                val a = blossomAngle + rnd.nextFloat() * 6.283f
+                val r = BLOSSOM_RADIUS * (0.8f + rnd.nextFloat() * 0.2f)
+                particles += Particle(p.x + cos(a) * r, p.y + sin(a) * r, -sin(a) * 3f, cos(a) * 3f, Color(0xFFF8BBD0), 0.04f, 0.35f, glow = true, z = 0.5f)
+            }
+            if (p.blossom <= 0f) {
+                p.blossom = 0f
+                blossomFx?.let { skillFx.remove(it) }
+                blossomFx = null
+            }
+        }
+        if (orbs.isNotEmpty()) {
+            val oi = orbs.iterator()
+            while (oi.hasNext()) {
+                val o = oi.next()
+                if (o.home !== dungeon) {
+                    oi.remove()
+                    continue
+                }
+                o.life -= dt
+                val nx = o.x + o.dx * ORB_SPEED * dt
+                val ny = o.y + o.dy * ORB_SPEED * dt
+                val wall = !dungeon.walkableAt(nx, ny) && dungeon.tile(floorInt(nx), floorInt(ny)) != WATER
+                if (!wall) {
+                    o.x = nx
+                    o.y = ny
+                }
+                o.fx.x = o.x
+                o.fx.y = o.y
+                o.spray -= dt
+                while (o.spray <= 0f) {
+                    o.spray += ORB_SPRAY
+                    // The golden angle: shards fan out evenly in every direction.
+                    o.angle += 2.4f
+                    projectiles += Projectile(o.x, o.y, cos(o.angle) * 7f, sin(o.angle) * 7f, o.shard, hostile = false,
+                        color = ORB_ICE, life = 0.45f, radius = 0.1f, small = true, chill = 1.5f)
+                }
+                if (o.life <= 0f || wall) {
+                    oi.remove()
+                    skillFx.remove(o.fx)
+                    orbBurst(o)
+                }
+            }
+        }
+        if (vortices.isNotEmpty()) {
+            val vi = vortices.iterator()
+            while (vi.hasNext()) {
+                val v = vi.next()
+                if (v.home !== dungeon) {
+                    vi.remove()
+                    continue
+                }
+                val z = v.zone
+                v.t += dt
+                v.angle += dt * 6f
+                v.fx.dx = cos(v.angle)
+                v.fx.dy = sin(v.angle)
+                // Drag everything in reach toward the centre, harder near it; walls still stop them, bosses resist.
+                for (e in enemies) {
+                    val dx = z.x - e.x
+                    val dy = z.y - e.y
+                    val d = hypot(dx, dy)
+                    if (d > HOLE_PULL + e.type.radius * e.size || d < 0.3f) continue
+                    val pull = (if (e.type.boss) 0.8f else 3f) * (0.6f + 0.6f * (1f - d / HOLE_PULL).coerceIn(0f, 1f))
+                    val step = min(pull * dt, d - 0.3f)
+                    move(e, dx / d * step, dy / d * step, e.type.radius)
+                }
+                v.tickT -= dt
+                if (v.tickT <= 0f) {
+                    v.tickT = HOLE_TICK
+                    for (e in enemies.toList()) if (e.hp > 0f && hypot(e.x - z.x, e.y - z.y) < HOLE_PULL + e.type.radius * e.size) damageEnemy(e, v.tick, 0f)
+                }
+                if (particles.size < 500) repeat(2) {
+                    val a = rnd.nextFloat() * 6.283f
+                    val r = HOLE_PULL * (0.5f + rnd.nextFloat() * 0.5f)
+                    // Inward and a little sideways, so they spiral in.
+                    particles += Particle(z.x + cos(a) * r, z.y + sin(a) * r, (-cos(a) - sin(a) * 0.6f) * r * 1.6f, (-sin(a) + cos(a) * 0.6f) * r * 1.6f,
+                        if (rnd.nextBoolean()) Skill.BLACK_HOLE.color else Color(0xFFB388FF), 0.045f, 0.5f, glow = true, z = 0.3f + rnd.nextFloat() * 0.5f)
+                }
+                if (v.t >= HOLE_TIME) {
+                    vi.remove()
+                    zones.remove(z)
+                    skillFx.remove(v.fx)
+                    implode(v)
+                }
+            }
+        }
     }
 
     fun drinkPotion() {
@@ -2433,7 +3056,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         val crit = sure || forceCrit || player.stealth > 0f || rnd.nextInt(100) < player.critChance
         if (player.stealth > 0f) player.stealth = 0f
         val execute = if (player.executioner && e.hp < e.maxHp * 0.3f) 1.5f else 1f
-        val dmg = base * (0.85f + rnd.nextFloat() * 0.3f) * (if (crit) player.critMult else 1f) * execute
+        val dmg = base * (0.85f + rnd.nextFloat() * 0.3f) * (if (crit) player.critMult else 1f) * execute * e.damageTakenMult
         e.hp -= dmg
         e.flash = 0.12f
         e.aggro = true
@@ -2457,7 +3080,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     }
 
     private fun hurtPlayer(raw: Float, from: Enemy? = null) {
-        if (player.dodge > 0f || player.leap > 0f || player.charge > 0f) {
+        if (player.dodge > 0f || player.leap > 0f || player.charge > 0f || player.dance > 0f) {
             texts += FloatText(player.x, player.y - 1.2f, "Dodged!", Color(0xFFB0BEC5))
             return
         }
@@ -2512,6 +3135,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     private fun kill(e: Enemy) {
         sfx.kill()
+        if (e.mark > 0f) markKilled(e)
         streak++
         streakTimer = 1.6f
         // Only the 2D renderer draws corpses.
@@ -2866,7 +3490,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             }
             if (e.poison > 0f) {
                 e.poison -= dt
-                e.hp -= e.poisonDps * dt
+                e.hp -= e.poisonDps * dt * e.damageTakenMult
                 if (e.poison <= 0f) e.poisonDps = 0f
                 if (rnd.nextFloat() < dt * 8f) particles += Particle(e.x + jitter(), e.y, 0f, -0.5f, Color(0xFF9CCC65), 0.05f, 0.6f, glow = true, z = 0.6f)
             }
@@ -3205,6 +3829,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                         e.poison = 3f
                         e.poisonDps = max(e.poisonDps, pr.poison)
                     }
+                    if (pr.chill > 0f) chillEnemy(e, pr.chill)
                     sfx.hit()
                 }
                 burst(pr.x, pr.y, pr.color, 6, glow = true)
@@ -3350,3 +3975,27 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         }
     }
 }
+
+// Assassin and Sorceress skill-tree actives (see Game.cast).
+private const val DANCE_HOP = 0.12f
+private const val DANCE_TARGETS = 5
+private const val DANCE_REACH = 6f
+private const val MAX_TRAPS = 3
+private const val TRAP_ARM = 0.5f
+private const val TRAP_LIFE = 15f
+private const val TRAP_TRIGGER = 1.3f
+private const val MARK_TIME = 8f
+private const val BLOSSOM_TIME = 3f
+private const val BLOSSOM_TICK = 0.25f
+private const val BLOSSOM_RADIUS = 2.3f
+private const val ORB_LIFE = 1.6f
+private const val ORB_SPEED = 3.4f
+private const val ORB_SPRAY = 0.07f
+private const val ORB_BURST = 2.2f
+private const val BLIZZARD_TIME = 5f
+private const val TELEPORT_BURST = 1.6f
+private const val HOLE_TIME = 3f
+private const val HOLE_TICK = 0.5f
+private const val HOLE_PULL = 4.5f
+private const val HOLE_IMPLODE = 2.8f
+private val ORB_ICE = Color(0xFFB3E5FC)

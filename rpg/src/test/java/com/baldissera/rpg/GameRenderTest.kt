@@ -665,4 +665,243 @@ class GameRenderTest {
             render(g, a, if (cls == HeroClass.KNIGHT) "40_knight_tree_skills" else "41_barbarian_tree_skills")
         }
     }
+
+    @Test
+    fun assassinSorceressSkills() {
+        val r = Random(23)
+        // The hero's corners stay off walls and water (his radius is 0.28 tiles, as in Game.blocked).
+        fun clear(g: Game, x: Float, y: Float) = listOf(-0.28f to -0.28f, 0.28f to -0.28f, -0.28f to 0.28f, 0.28f to 0.28f)
+            .all { (dx, dy) -> g.dungeon.walkableAt(x + dx, y + dy) }
+        fun ready(g: Game) {
+            g.player.mana = g.player.maxMana
+            g.player.cooldowns.clear()
+        }
+        // Whether the frame's skill cues ("sf", entries [ordinal, ...]) hold one for [s].
+        fun cue(g: Game, s: Skill) = Wire.frame(g, 0f).substringAfter("\"sf\":[").substringBefore("],\"dc\":").contains("[${s.ordinal},")
+        // Puts the hero on a tile with [len] open tiles ahead of him, facing that way; returns the direction.
+        fun placeOpen(g: Game, len: Float): Pair<Float, Float> {
+            val d = g.dungeon
+            for (y in 2 until d.h - 2) for (x in 2 until d.w - 2) {
+                if (!d.walkable(x, y)) continue
+                for (k in 0 until 8) {
+                    val a = k * (Math.PI.toFloat() / 4f)
+                    val dx = kotlin.math.cos(a)
+                    val dy = kotlin.math.sin(a)
+                    val cx = x + 0.5f
+                    val cy = y + 0.5f
+                    if ((0..(len * 4).toInt()).all { i -> clear(g, cx + dx * i / 4f, cy + dy * i / 4f) }) {
+                        g.player.x = cx
+                        g.player.y = cy
+                        g.player.faceX = dx
+                        g.player.faceY = dy
+                        return dx to dy
+                    }
+                }
+            }
+            error("no open ground on floor ${g.floor}")
+        }
+
+        // Every new Assassin and Sorceress skill, cast over and over at ranks 1, 3 and 5 in the crypt, the caves,
+        // the Scorched Sands and the wilds, with monsters around.
+        for (cls in listOf(HeroClass.ASSASSIN, HeroClass.SORCERESS)) {
+            val mine = cls.allSkills.drop(4)
+            check(mine.size == 4)
+            for (rank in listOf(1, 3, 5)) {
+                val g = newGame(cls)
+                g.player.level = 20
+                for (s in mine) {
+                    g.player.skills[s] = rank
+                    check(s.describe(rank).isNotBlank())
+                }
+                mine.forEachIndexed { i, s -> g.player.loadout[i] = s }
+                for (floor in listOf(1, 5, DESERT_FIRST, 0)) {
+                    g.enterFloor(floor)
+                    repeat(6) { k ->
+                        val ex = g.player.x + kotlin.math.cos(k * 1.05f) * 2.5f
+                        val ey = g.player.y + kotlin.math.sin(k * 1.05f) * 2.5f
+                        if (g.dungeon.walkableAt(ex, ey)) g.enemies += Enemy(EnemyType.SKELETON, ex, ey, g.dangerLevel)
+                    }
+                    repeat(720) { i ->
+                        if (i % 25 == 0) {
+                            g.joyX = r.nextFloat() * 2f - 1f
+                            g.joyY = r.nextFloat() * 2f - 1f
+                        }
+                        g.attackHeld = i % 90 < 40
+                        if (i % 15 == 0) {
+                            ready(g)
+                            g.cast(mine[(i / 15 + rank) % 4])
+                        }
+                        g.player.hp = g.player.maxHp
+                        if (g.dead) g.respawn()
+                        if (g.victory) g.victory = false
+                        g.update(1f / 30f)
+                        check(g.dungeon.walkableAt(g.player.x, g.player.y)) { "$cls rank $rank: hero in a wall at ${g.player.x},${g.player.y} on floor ${g.floor}" }
+                        if (i % 45 == 0) Wire.frame(g, 0f)
+                    }
+                    Wire.level(g)
+                    Wire.frame(g, 0f)
+                }
+            }
+        }
+
+        // Teleport in the crypt's narrow halls: never into or through a wall, at most 7 tiles, and a wall right ahead stops it.
+        val t = newGame(HeroClass.SORCERESS)
+        t.player.level = 20
+        t.player.skills[Skill.TELEPORT] = 5
+        t.enterFloor(1)
+        t.enemies.clear()
+        val d = t.dungeon
+        var far = 0
+        var short = 0
+        var walls = 0
+        for (y in 1 until d.h - 1) for (x in 1 until d.w - 1) {
+            if (!d.walkable(x, y)) continue
+            val cx = x + 0.5f
+            val cy = y + 0.5f
+            val dirs = if ((x * 7 + y * 13) % 3 == 0) listOf(r.nextFloat() * 6.283f) else emptyList()
+            // Straight at a neighbouring wall.
+            val wall = listOf(0f to 1f, 1f to 0f, 0f to -1f, -1f to 0f).firstOrNull { (dx, dy) -> !d.walkable(x + dx.toInt(), y + dy.toInt()) }
+            for (a in dirs + (if (wall != null) listOf(Float.NaN) else emptyList())) {
+                t.player.x = cx
+                t.player.y = cy
+                t.joyX = if (a.isNaN()) wall!!.first else kotlin.math.cos(a)
+                t.joyY = if (a.isNaN()) wall!!.second else kotlin.math.sin(a)
+                ready(t)
+                t.cast(Skill.TELEPORT)
+                val moved = hypot(t.player.x - cx, t.player.y - cy)
+                check(clear(t, t.player.x, t.player.y)) { "teleported into a wall at ${t.player.x},${t.player.y}" }
+                check(moved <= 7.01f) { "teleported $moved tiles" }
+                for (i in 1..28) check(d.walkableAt(cx + (t.player.x - cx) * i / 28f, cy + (t.player.y - cy) * i / 28f)) { "teleported through a wall" }
+                if (a.isNaN()) {
+                    check(moved < 0.3f) { "blinked $moved tiles into a wall" }
+                    walls++
+                } else if (moved > 6.9f) far++ else short++
+            }
+        }
+        t.joyX = 0f
+        t.joyY = 0f
+        step(t, 30)
+        check(far > 0 && short > 0 && walls > 0) { "teleports: $far far, $short cut short, $walls into walls" }
+
+        // The other skills on the open sands, against frozen monsters placed around the hero.
+        fun arena(cls: HeroClass): Game {
+            val g = newGame(cls)
+            g.player.level = 20
+            for (s in cls.allSkills) g.player.skills[s] = 3
+            g.enterFloor(DESERT_FIRST)
+            g.enemies.clear()
+            g.player.hp = g.player.maxHp
+            return g
+        }
+        fun foe(g: Game, dir: Pair<Float, Float>, dist: Float): Enemy =
+            Enemy(EnemyType.MUMMY, g.player.x + dir.first * dist, g.player.y + dir.second * dist, 30).also {
+                it.frozen = 60f
+                g.enemies += it
+            }
+
+        // Blade Dance strikes every enemy in reach, and nothing hurts the hero meanwhile.
+        val bd = arena(HeroClass.ASSASSIN)
+        val bdDir = placeOpen(bd, 5f)
+        val dancers = listOf(1.5f, 3f, 4.5f).map { foe(bd, bdDir, it) }
+        ready(bd)
+        bd.cast(Skill.BLADE_DANCE)
+        check(bd.player.dance > 0f) { "no blade dance" }
+        bd.projectiles += Projectile(bd.player.x, bd.player.y, 0f, 0f, 500f, hostile = true, color = androidx.compose.ui.graphics.Color.Red)
+        val hp0 = bd.player.hp
+        step(bd, 1)
+        check(bd.player.hp == hp0) { "hurt while dancing" }
+        check(bd.ghosts.isNotEmpty() && cue(bd, Skill.BLADE_DANCE)) { "no afterimages or dance cue" }
+        step(bd, 60)
+        check(bd.player.dance == 0f) { "the dance never ended" }
+        check(dancers.all { it.hp < it.maxHp }) { "the dance struck ${dancers.count { it.hp < it.maxHp }} of 3" }
+
+        // Mark for Death: more damage taken, and the kill gives mana back and readies the mark again.
+        val mk = arena(HeroClass.ASSASSIN)
+        val mkDir = placeOpen(mk, 3f)
+        val marked = foe(mk, mkDir, 2f)
+        ready(mk)
+        mk.cast(Skill.MARK_FOR_DEATH)
+        check(marked.damageTakenMult > 1.4f && cue(mk, Skill.MARK_FOR_DEATH)) { "no mark" }
+        check(!mk.skillReady(Skill.MARK_FOR_DEATH))
+        step(mk, 30)
+        mk.player.mana = 0f
+        marked.hp = 0f
+        step(mk, 2)
+        check(marked !in mk.enemies && mk.player.mana > mk.player.maxMana * 0.2f) { "no mana back: ${mk.player.mana}" }
+        check(mk.skillReady(Skill.MARK_FOR_DEATH)) { "the mark is not ready again" }
+
+        // Death Traps: three at most, quiet with no one near, and they go off when an enemy steps up.
+        val tr = arena(HeroClass.ASSASSIN)
+        placeOpen(tr, 3f)
+        repeat(4) {
+            ready(tr)
+            tr.cast(Skill.DEATH_TRAP)
+        }
+        check(tr.zones.count { it.kind == ZoneKind.TRAP } == 3) { "${tr.zones.count { it.kind == ZoneKind.TRAP }} traps" }
+        step(tr, 45)
+        check(tr.zones.count { it.kind == ZoneKind.TRAP } == 3) { "a trap went off with no one near" }
+        val trap = tr.zones.first { it.kind == ZoneKind.TRAP }
+        val victim = Enemy(EnemyType.MUMMY, trap.x + 0.3f, trap.y, 30).also {
+            it.frozen = 60f
+            tr.enemies += it
+        }
+        step(tr, 3)
+        check(tr.zones.none { it.kind == ZoneKind.TRAP } && victim.hp < victim.maxHp) { "the traps did not go off" }
+
+        // Death Blossom shreds what is close and spares what is out of reach.
+        val db = arena(HeroClass.ASSASSIN)
+        val dbDir = placeOpen(db, 3.5f)
+        val close = foe(db, dbDir, 1.5f)
+        val away = foe(db, dbDir, 3.4f)
+        ready(db)
+        db.cast(Skill.DEATH_BLOSSOM)
+        step(db, 30)
+        check(cue(db, Skill.DEATH_BLOSSOM) && close.hp < close.maxHp && away.hp == away.maxHp) { "blossom: ${close.hp}/${close.maxHp}, ${away.hp}" }
+        step(db, 200)
+        check(db.player.blossom == 0f && db.skillFx.none { it.skill == Skill.DEATH_BLOSSOM }) { "the blossom never ended" }
+
+        // Frozen Orb: its shards hurt and chill (half speed), then it bursts and is gone.
+        val fo = arena(HeroClass.SORCERESS)
+        val foDir = placeOpen(fo, 4f)
+        val iced = foe(fo, foDir, 3f)
+        ready(fo)
+        fo.cast(Skill.FROZEN_ORB)
+        var slowed = false
+        var orb = false
+        repeat(130) {
+            fo.update(1f / 60f)
+            slowed = slowed || (iced.chill > 0f && iced.speed < iced.type.speed * 0.6f)
+            orb = orb || cue(fo, Skill.FROZEN_ORB)
+        }
+        check(slowed && orb && iced.hp < iced.maxHp) { "orb: slowed=$slowed cue=$orb hp=${iced.hp}" }
+        check(fo.skillFx.none { it.skill == Skill.FROZEN_ORB }) { "the orb never burst" }
+
+        // Blizzard: a zone that hurts and chills, gone after 5 s.
+        val bz = arena(HeroClass.SORCERESS)
+        val bzDir = placeOpen(bz, 4f)
+        val snowed = foe(bz, bzDir, 3f)
+        ready(bz)
+        bz.cast(Skill.BLIZZARD)
+        check(bz.zones.any { it.kind == ZoneKind.BLIZZARD }) { "no blizzard" }
+        step(bz, 60)
+        check(snowed.chill > 0f && snowed.hp < snowed.maxHp) { "the blizzard missed" }
+        step(bz, 300)
+        check(bz.zones.none { it.kind == ZoneKind.BLIZZARD }) { "the blizzard never ended" }
+
+        // Black Hole: drags enemies to its centre, then implodes and stuns them.
+        val bh = arena(HeroClass.SORCERESS)
+        val bhDir = placeOpen(bh, 6f)
+        val core = foe(bh, bhDir, 2.5f)
+        val drifter = foe(bh, bhDir, 5f)
+        ready(bh)
+        bh.cast(Skill.BLACK_HOLE)
+        val hole = bh.zones.first { it.kind == ZoneKind.BLACK_HOLE }
+        val gap = hypot(drifter.x - hole.x, drifter.y - hole.y)
+        step(bh, 60)
+        check(hypot(drifter.x - hole.x, drifter.y - hole.y) < gap - 0.5f) { "the black hole pulled nothing" }
+        check(cue(bh, Skill.BLACK_HOLE) && bh.dungeon.walkableAt(drifter.x, drifter.y))
+        step(bh, 150)
+        check(bh.zones.none { it.kind == ZoneKind.BLACK_HOLE }) { "the black hole never imploded" }
+        check(core.stun > 0f && core.hp < core.maxHp) { "the implosion missed" }
+    }
 }
