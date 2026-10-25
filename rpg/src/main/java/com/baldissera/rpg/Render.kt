@@ -727,6 +727,48 @@ private fun DrawScope.drawZones(g: Game, cam: Camera) {
                 drawOval(Brush.radialGradient(listOf(Color(0xFFFF6D00).copy(alpha = 0.5f * k), Color(0xFF3E0E00).copy(alpha = 0.2f * k)), c, rx), Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f))
                 for (i in 0 until 5) drawFlame(c.x + sin(i * 2.4f) * rx * 0.55f, c.y + kotlin.math.cos(i * 1.7f) * rx * 0.3f, t * 0.3f * k, g.time, i * 3f)
             }
+            ZoneKind.BLIZZARD -> {
+                // A frosty haze with ice streaking down into it.
+                drawOval(
+                    Brush.radialGradient(listOf(Color(0xFFE1F5FE).copy(alpha = 0.4f * k), Color(0xFF4FC3F7).copy(alpha = 0.12f * k)), c, rx),
+                    Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f),
+                )
+                drawOval(Color(0xFFB3E5FC).copy(alpha = 0.7f * k), Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f), style = Stroke(t * 0.03f))
+                for (i in 0 until 14) {
+                    val fall = (g.time * 1.6f + i * 0.37f) % 1f
+                    val px = c.x + sin(i * 2.7f) * rx * 0.8f
+                    val py = c.y + kotlin.math.cos(i * 1.9f) * rx * 0.45f - t * 2.2f * (1f - fall)
+                    drawLine(Color.White.copy(alpha = 0.8f * k), Offset(px + t * 0.25f, py - t * 0.35f), Offset(px, py), strokeWidth = t * 0.05f, cap = StrokeCap.Round)
+                }
+            }
+            ZoneKind.BLACK_HOLE -> {
+                // A dark well with violet arcs spiralling into it.
+                drawOval(
+                    Brush.radialGradient(listOf(Color(0xFF7C4DFF).copy(alpha = 0.35f * k), Color.Transparent), c, rx),
+                    Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f),
+                )
+                for (i in 0 until 6) {
+                    val rr = rx * (0.3f + 0.12f * i)
+                    val ang = (g.time * (320f - i * 35f) + i * 60f) % 360f
+                    drawArc(
+                        Color(0xFFB388FF).copy(alpha = 0.6f * k), ang, 70f, useCenter = false,
+                        topLeft = Offset(c.x - rr, c.y - rr * 0.6f), size = Size(rr * 2f, rr * 1.2f), style = Stroke(t * 0.04f, cap = StrokeCap.Round),
+                    )
+                }
+                val core = rx * 0.25f
+                drawOval(Color.Black.copy(alpha = 0.85f * k), Offset(c.x - core, c.y - core * 0.6f), Size(core * 2, core * 1.2f))
+            }
+            ZoneKind.TRAP -> {
+                // A spiked plate; once armed its light blinks red and its trigger ring shows.
+                val armed = z.age >= 0.5f
+                val s = t * 0.22f
+                drawOval(Color(0xFF3E2723).copy(alpha = 0.9f * k), Offset(c.x - s, c.y - s * 0.6f), Size(s * 2, s * 1.2f))
+                drawOval(Color(0xFFFFB74D).copy(alpha = 0.9f * k), Offset(c.x - s, c.y - s * 0.6f), Size(s * 2, s * 1.2f), style = Stroke(t * 0.03f))
+                if (armed) {
+                    if ((g.time * 3f).toInt() % 2 == 0) drawCircle(Color(0xFFFF5252).copy(alpha = 0.9f * k), t * 0.05f, Offset(c.x, c.y - t * 0.02f))
+                    drawOval(Color(0xFFFF8A65).copy(alpha = 0.25f * k), Offset(c.x - rx, c.y - rx * 0.6f), Size(rx * 2, rx * 1.2f), style = Stroke(t * 0.02f))
+                }
+            }
             ZoneKind.SANDSTORM -> {
                 // A swirling wall of sand: dusty haze, a dashed rim while it gathers, then spinning streaks.
                 val gathering = z.age < SANDSTORM_WARN
@@ -762,6 +804,65 @@ private fun DrawScope.drawZones(g: Game, cam: Camera) {
         val hy = c.y - t * 9f * (1f - k)
         drawLine(Color(0xFFFF7043).copy(alpha = 0.6f), Offset(hx + t * 1.2f, hy - t * 3.6f), Offset(hx, hy), strokeWidth = t * 0.22f, cap = StrokeCap.Round)
         drawCircle(Brush.radialGradient(listOf(Color.White, Color(0xFFFFAB40), Color.Transparent), Offset(hx, hy), t * 0.5f), t * 0.5f, Offset(hx, hy))
+    }
+    drawAssassinSorceressFx(g, cam)
+}
+
+/** Simple 2D stand-ins for the Assassin and Sorceress skill cues (the 3D view draws the real effects). */
+private fun DrawScope.drawAssassinSorceressFx(g: Game, cam: Camera) {
+    val t = cam.t
+    for (fx in g.skillFx) {
+        val k = if (fx.life > 0f) (fx.age / fx.life).coerceIn(0f, 1f) else 1f
+        val fade = 1f - k
+        val a = Offset(cam.sx(fx.x), cam.sy(fx.y))
+        val b = Offset(cam.sx(fx.tx), cam.sy(fx.ty))
+        when (fx.skill) {
+            Skill.BLADE_DANCE -> drawLine(Color(0xFFCE93D8).copy(alpha = 0.8f * fade), a, b, strokeWidth = t * 0.08f * fade + 1f, cap = StrokeCap.Round)
+            Skill.TELEPORT -> {
+                drawLine(Color(0xFFB388FF).copy(alpha = 0.6f * fade), a, b, strokeWidth = t * 0.05f, cap = StrokeCap.Round)
+                val r = fx.value * t * (0.3f + 0.7f * k)
+                for (c in listOf(a, b)) drawOval(Color(0xFFB388FF).copy(alpha = 0.7f * fade), Offset(c.x - r, c.y - r * 0.6f), Size(r * 2, r * 1.2f), style = Stroke(t * 0.04f))
+            }
+            Skill.MARK_FOR_DEATH -> {
+                // A red sigil above the marked monster.
+                val r = t * (fx.value + 0.25f)
+                val c = Offset(a.x, a.y - t * 1.4f)
+                val red = Color(0xFFFF5252).copy(alpha = 0.85f)
+                drawCircle(red, r * 0.5f, c, style = Stroke(t * 0.04f))
+                val s = r * 0.7f
+                drawLine(red, Offset(c.x - s, c.y), Offset(c.x + s, c.y), strokeWidth = t * 0.03f)
+                drawLine(red, Offset(c.x, c.y - s), Offset(c.x, c.y + s), strokeWidth = t * 0.03f)
+            }
+            Skill.DEATH_BLOSSOM -> {
+                // Blades whirling round the hero.
+                val r = fx.value * t
+                val base = atan2(fx.dy, fx.dx)
+                for (i in 0 until 8) {
+                    val ang = base + i * (PI.toFloat() / 4f)
+                    val px = a.x + kotlin.math.cos(ang) * r
+                    val py = a.y + sin(ang) * r * 0.6f
+                    val ex = -sin(ang) * t * 0.25f
+                    val ey = kotlin.math.cos(ang) * 0.6f * t * 0.25f
+                    drawLine(Color(0xFFF48FB1).copy(alpha = 0.9f), Offset(px - ex, py - ey), Offset(px + ex, py + ey), strokeWidth = t * 0.06f, cap = StrokeCap.Round)
+                }
+                drawOval(Color(0xFFF8BBD0).copy(alpha = 0.35f), Offset(a.x - r, a.y - r * 0.6f), Size(r * 2, r * 1.2f), style = Stroke(t * 0.03f))
+            }
+            Skill.FROZEN_ORB -> {
+                val r = fx.value * t * 1.4f
+                val c = Offset(a.x, a.y - t * 0.5f)
+                drawCircle(Brush.radialGradient(listOf(Color.White, Color(0xFF81D4FA), Color.Transparent), c, r), r, c)
+            }
+            Skill.BLACK_HOLE -> if (fx.value < 0f) {
+                // The implosion: a bright ring collapsing.
+                val r = -fx.value * t * (1f - k)
+                drawOval(Color(0xFFE1BEE7).copy(alpha = fade), Offset(a.x - r, a.y - r * 0.6f), Size(r * 2, r * 1.2f), style = Stroke(t * 0.1f * fade + 1f))
+            } else {
+                val r = t * 0.8f
+                val c = Offset(a.x, a.y - t * 0.6f)
+                drawCircle(Brush.radialGradient(listOf(Color.Black, Color(0xFF311B92), Color.Transparent), c, r), r, c)
+            }
+            else -> {}
+        }
     }
 }
 
