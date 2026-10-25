@@ -426,7 +426,30 @@ void splatPick(inout vec4 best, float w, float layer) {
 #endif
 #endif
 #ifdef OPEN
-  col.rgb *= 1.0 - 0.3 * cav;
+  // What the two winning layers are: plants (grass, dry grass, forest floor), earth (dirt, mud), cobbles.
+  float k1 = b1 / (b1 + b2), k2 = 1.0 - k1;
+  float plant = (best.y < 2.5 ? k1 : 0.0) + (best.w < 2.5 ? k2 : 0.0);
+  float cobble = (best.y == 5.0 ? k1 : 0.0) + (best.w == 5.0 ? k2 : 0.0);
+  float mud = (best.y == 6.0 ? k1 : 0.0) + (best.w == 6.0 ? k2 : 0.0);
+  float earth = (best.y == 3.0 ? k1 : 0.0) + (best.w == 3.0 ? k2 : 0.0) + mud;
+  col.rgb *= 1.0 - (0.22 + 0.2 * cobble) * cav;
+  // Worn edges: where a path meets the grass, the grass is trampled thin, dry and dusty.
+  float worn = clamp(plant * (1.0 - plant) * 4.0, 0.0, 1.0) * (0.6 + 0.8 * groundFine.w);
+  col.rgb = mix(col.rgb, vec3(luma) * vec3(1.12, 1.0, 0.72), worn * 0.35);
+  // Dry roughness: plants and dust matte, cobble tops polished by feet, mud always a little damp.
+  groundRough = 0.94 - 0.2 * cobble * smoothstep(0.45, 0.85, splatH) - 0.3 * mud + (groundFine.z - 0.5) * 0.14;
+  groundRelief = mix(0.35, 1.0, 1.0 - plant) * (1.0 - 0.4 * mud);
+  // Rain: everything darkens and turns glossy (paving and earth most), and water stands in the hollows of
+  // the paths: between cobbles, in ruts and low mud, never on the grass.
+  float soak = uRain * (0.55 + 0.45 * (1.0 - plant));
+  float pud = smoothstep(0.6, 0.68, broad * 0.75 + cav * (0.3 * cobble + 0.2 * earth) + mud * 0.25 + (0.5 - groundFine.z) * 0.1 - plant * 0.6 + 0.16)
+    * smoothstep(0.2, 0.7, uRain);
+  col.rgb = mix(vec3(luma), col.rgb, 1.0 + 0.25 * soak) * (1.0 - 0.38 * soak * (1.0 - 0.4 * plant) - 0.1 * pud);
+  groundRough = mix(groundRough, mix(0.38, 0.6, plant), soak);
+  groundRough = mix(groundRough, 0.04, pud);
+  groundRough = mix(groundRough, 0.3, wet);
+  groundPuddle = pud;
+  groundBumpK = 1.0 - 0.85 * pud;
 #endif
   diffuseColor.rgb *= col.rgb * (1.0 + (w1.w * 1.5 - 0.75) * uMacro) * (1.0 - 0.3 * wet) * uTint;
 #endif
@@ -434,7 +457,7 @@ void splatPick(inout vec4 best, float w, float layer) {
 `)
         .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
   roughnessFactor = mix(roughnessFactor, 0.32, groundWet);
-#ifdef DUNGEON
+#if defined(DUNGEON) || defined(OPEN)
   roughnessFactor = groundRough;
 #endif`)
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
