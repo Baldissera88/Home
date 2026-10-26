@@ -634,7 +634,8 @@ class Player : Body {
         (if (chill > 0f) 0.6f else 1f) * (if (stealth > 0f) 1.3f else 1f) * talentSpeed
     /** Fraction of incoming damage that gets through blessings and wards. */
     val damageTaken: Float get() = (if (buff == Buff.WARD) 0.6f else 1f) * (if (holy > 0f) 0.6f else 1f)
-    val xpToNext: Int get() = 40 + level * level * 22
+    /** Grows with the cube of the level, so each new level takes clearly longer than the last. */
+    val xpToNext: Int get() = 60 + level * level * 30 + level * level * level * 3
 }
 
 enum class EnemyType(
@@ -706,14 +707,14 @@ class Enemy(
     val title: String? = null,
 ) : Body {
     val uid = Ids.next()
-    private val scale = (1f + 0.3f * (level - 1)) * (if (elite) 3f else 1f)
+    private val scale = 1.1f * (1f + 0.38f * (level - 1)) * (if (elite) 3f else 1f)
     private val baseSpeed = type.speed * (if (Affix.FAST in affixes) 1.45f else 1f)
     /** Walking speed; chilled monsters (Frozen Orb, Blizzard) move at half speed. */
     val speed: Float get() = if (chill > 0f) baseSpeed * 0.5f else baseSpeed
     val attackCooldown = type.cooldown * (if (Affix.FAST in affixes) 0.65f else 1f)
     val maxHp = type.hp * scale
     var hp = maxHp
-    val dmg = type.dmg * (1f + 0.17f * (level - 1)) * (if (elite) 1.5f else 1f)
+    val dmg = type.dmg * 1.12f * (1f + 0.21f * (level - 1)) * (if (elite) 1.5f else 1f)
     val xp = (type.xp * (1f + 0.22f * (level - 1)) * (if (elite) 3f else 1f)).toInt()
     val size = if (elite) 1.25f else 1f
     var windup = 0f

@@ -486,7 +486,7 @@ class GameRenderTest {
         check(g.inDesert && g.outdoors && g.depth == 1 && g.dungeon.biome == Biome.DESERT)
         check(g.deepest == 0) { "desert counted as deepest" }
         check(g.areaTitle.startsWith("The Scorched Sands")) { g.areaTitle }
-        check(g.enemies.isNotEmpty() && g.enemies.all { it.level == DESERT_LEVEL })
+        check(g.enemies.isNotEmpty() && g.enemies.all { it.level == g.monsterLevel(DESERT_LEVEL) })
         g.enemies.clear()
         g.player.x = g.dungeon.exit.cx + 0.5f
         g.player.y = g.dungeon.exit.cy + 0.5f

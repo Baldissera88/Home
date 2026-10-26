@@ -68,7 +68,7 @@ const val DESERT_FLOORS = 3
 const val DESERT_FIRST = -1
 const val DESERT_LAST = -DESERT_FLOORS
 /** Monster level on desert depth 1; each depth adds one, a match for dungeon floors 5 to 8. */
-const val DESERT_LEVEL = 5
+const val DESERT_LEVEL = 7
 
 fun isDesertFloor(floor: Int) = floor in DESERT_LAST..DESERT_FIRST
 fun desertDepth(floor: Int) = -floor

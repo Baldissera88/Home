@@ -399,7 +399,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             placeFloorShard()
             val bossType = bossFor(floor)
             if (bossType != null) {
-                enemies += Enemy(bossType, dungeon.exit.cx + 0.5f, dungeon.exit.cy - 0.5f, dangerLevel)
+                enemies += Enemy(bossType, dungeon.exit.cx + 0.5f, dungeon.exit.cy - 0.5f, max(dangerLevel, player.level - 2))
                 showMessage("${dungeon.biome.title} — depth $depth\n${bossType.label} awaits…", HURT_COLOR)
             } else {
                 showMessage("${dungeon.biome.title} — depth $depth", Color.White)
@@ -485,14 +485,21 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             val x = rnd.nextInt(d.w - 22, d.w - 6)
             val y = rnd.nextInt(d.h - 26, d.h - 8)
             if (d.walkable(x, y)) {
-                enemies += Enemy(EnemyType.TROLL, x + 0.5f, y + 0.5f, 5)
+                enemies += Enemy(EnemyType.TROLL, x + 0.5f, y + 0.5f, max(5, player.level - 2))
                 break
             }
         }
     }
 
+    /**
+     * The level a monster spawns at: the area's own level, but never more than three below the hero, so places
+     * the hero has outgrown still put up a fight.
+     */
+    fun monsterLevel(area: Int) = max(area, player.level - 3)
+
     /** Creates a monster; champions get a name and one to three affixes depending on the level. */
-    private fun spawn(type: EnemyType, x: Float, y: Float, lvl: Int, elite: Boolean): Enemy {
+    private fun spawn(type: EnemyType, x: Float, y: Float, area: Int, elite: Boolean): Enemy {
+        val lvl = monsterLevel(area)
         if (!elite) return Enemy(type, x, y, lvl)
         val count = when {
             lvl >= 9 -> 3
@@ -762,7 +769,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             streakTimer -= dt
             if (streakTimer <= 0f) {
                 if (streak >= 5) {
-                    val bonus = streak * (4 + player.level * 2)
+                    val bonus = streak * (2 + player.level)
                     showMessage("MASSACRE ×$streak!  +$bonus XP", Color(0xFFFF8A65))
                     gainXp(bonus)
                     sfx.levelUp()
@@ -2887,7 +2894,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         val b = bounty ?: return null
         if (!b.done) return null
         player.gold += b.gold
-        val item = makeItem(max(1, deepest) + player.level / 2 + 1, b.rarity, false)
+        val item = makeItem(max(1, deepest) + 1, b.rarity, false)
         if (player.inventory.size < INVENTORY_SIZE) player.inventory += item else loot += Loot(player.x, player.y + 0.6f, LootKind.Gear(item))
         bounty = null
         rollBounties()
@@ -2983,7 +2990,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         when {
             rnd.nextFloat() < 0.55f -> loot += pop(Loot(pr.x, pr.y + 0.1f, LootKind.Gold(goldAmount(rnd.nextInt(2, 8) * lvl))), 0.6f)
             rnd.nextFloat() < 0.15f -> loot += pop(Loot(pr.x, pr.y + 0.1f, LootKind.Potion), 0.6f)
-            rnd.nextFloat() < 0.08f -> dropGear(pr.x, pr.y + 0.1f, makeItem(ilvl(), Rarity.COMMON, false))
+            rnd.nextFloat() < 0.04f -> dropGear(pr.x, pr.y + 0.1f, makeItem(ilvl(), Rarity.COMMON, false))
         }
     }
 
@@ -2993,9 +3000,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
         burst(pr.x, pr.y - 0.2f, GOLD, 30, glow = true)
         val lvl = levelHere(pr.x, pr.y)
         loot += pop(Loot(pr.x, pr.y + 0.3f, LootKind.Gold(goldAmount(rnd.nextInt(8, 20) * lvl))))
-        repeat(rnd.nextInt(1, 3)) {
-            dropGear(pr.x + (it - 0.5f) * 0.7f, pr.y + 0.6f, makeItem(ilvl(), Rarity.MAGIC, false))
-        }
+        dropGear(pr.x, pr.y + 0.6f, makeItem(ilvl(), if (rnd.nextFloat() < 0.5f) Rarity.MAGIC else Rarity.COMMON, false))
         if (rnd.nextFloat() < 0.4f) loot += pop(Loot(pr.x, pr.y + 0.3f, LootKind.Potion))
         showMessage("Treasure chest!", GOLD)
     }
@@ -3157,7 +3162,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
                 else texts += FloatText(player.x, player.y - 1.8f, "${b.got}/${b.need} ${b.type.plural}", GOLD)
             }
         }
-        gainXp(e.xp)
+        gainXp(killXp(e))
         dropLoot(e)
         if (e.type.boss) {
             val idx = questBosses.indexOf(e.type)
@@ -3179,6 +3184,12 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
             showMessage("${message ?: "${e.type.label} is defeated!"}\n+1 skill point ✨ for a first victory", GOLD)
             texts += FloatText(player.x, player.y - 2.1f, "+1 skill point", GOLD, big = true)
         }
+    }
+
+    /** Monsters well below the hero teach little: full XP down to two levels under, then a quarter less per level. */
+    private fun killXp(e: Enemy): Int {
+        val gap = player.level - e.level - 2
+        return if (gap <= 0) e.xp else max(1, (e.xp * max(0.05f, 1f - 0.25f * gap)).toInt())
     }
 
     private fun gainXp(amount: Int) {
@@ -3208,7 +3219,7 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     private fun jitter() = (rnd.nextFloat() - 0.5f) * 0.6f
 
-    private fun ilvl() = levelHere() + player.level / 2
+    private fun ilvl() = levelHere()
 
     private fun goldAmount(base: Int) = max(1, (base * (1f + player.goldFind / 100f)).toInt())
 
@@ -3234,26 +3245,26 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     private fun dropLoot(e: Enemy) {
         val boss = e.type.boss
         val lvl = e.level
-        if (boss || rnd.nextFloat() < 0.6f) {
+        if (boss || rnd.nextFloat() < 0.45f) {
             val amount = rnd.nextInt(3, 11) * lvl * (if (boss) 12 else if (e.elite) 3 else 1)
             loot += pop(Loot(e.x, e.y, LootKind.Gold(goldAmount(amount))))
         }
-        if (rnd.nextFloat() < (if (boss) 1f else 0.1f)) loot += pop(Loot(e.x, e.y, LootKind.Potion))
+        if (rnd.nextFloat() < (if (boss) 1f else 0.07f)) loot += pop(Loot(e.x, e.y, LootKind.Potion))
         val gearChance = when {
             boss -> 1f
-            e.elite -> 1f
-            e.type == EnemyType.BRUTE -> 0.4f
-            else -> 0.16f
+            e.elite -> 0.6f
+            e.type == EnemyType.BRUTE -> 0.15f
+            else -> 0.06f
         }
         // Champions with more affixes are tougher and pay better.
-        repeat(if (boss) 3 else if (e.affixes.size >= 2) 2 else 1) {
+        repeat(if (boss) 2 else if (e.affixes.size >= 2) 2 else 1) {
             if (rnd.nextFloat() < gearChance) {
                 val min = when {
                     e.affixes.size >= 3 -> Rarity.RARE
                     boss || e.elite -> Rarity.MAGIC
                     else -> Rarity.COMMON
                 }
-                dropGear(e.x, e.y, makeItem(lvl + player.level / 2, min, boss))
+                dropGear(e.x, e.y, makeItem(lvl, min, boss))
             }
         }
         if (e.type == EnemyType.SAND_PHARAOH) pharaohHoard(e)
@@ -3261,15 +3272,15 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
 
     /** The Sand Pharaoh's treasure: a sure legendary (one time in five mythic) and a fortune in gold. */
     private fun pharaohHoard(e: Enemy) {
-        val rarity = if (rnd.nextFloat() < 0.2f) Rarity.MYTHIC else Rarity.LEGENDARY
-        dropGear(e.x, e.y, makeItem(e.level + player.level / 2 + 2, rarity, true, exact = true))
+        val rarity = if (rnd.nextFloat() < 0.08f) Rarity.MYTHIC else Rarity.LEGENDARY
+        dropGear(e.x, e.y, makeItem(e.level + 2, rarity, true, exact = true))
         repeat(8) { loot += pop(Loot(e.x, e.y, LootKind.Gold(goldAmount(rnd.nextInt(40, 81) * e.level))), 1.6f) }
         repeat(2) { loot += pop(Loot(e.x, e.y, LootKind.Potion)) }
         ring(e.x, e.y, 0.4f, GOLD, 48, 5f)
     }
 
     /**
-     * Rolls an item. Rarity: normal 50%, magic 30%, rare 13%, epic 5%, legendary 1.7%, mythic 0.3%
+     * Rolls an item. Rarity: normal 60%, magic 31%, rare 7%, epic 1.6%, legendary 0.35%, mythic 0.05%
      * (bosses roll much better). With [exact] the given rarity is used as is.
      */
     fun makeItem(
@@ -3278,11 +3289,11 @@ class Game(private val sfx: Sfx, private val prefs: SharedPreferences) {
     ): Item {
         val roll = rnd.nextFloat()
         var rarity = if (exact) minRarity else when {
-            roll < (if (bossDrop) 0.04f else 0.003f) -> Rarity.MYTHIC
-            roll < (if (bossDrop) 0.25f else 0.02f) -> Rarity.LEGENDARY
-            roll < (if (bossDrop) 0.55f else 0.07f) -> Rarity.EPIC
-            roll < (if (bossDrop) 0.9f else 0.2f) -> Rarity.RARE
-            roll < 0.5f -> Rarity.MAGIC
+            roll < (if (bossDrop) 0.01f else 0.0005f) -> Rarity.MYTHIC
+            roll < (if (bossDrop) 0.08f else 0.004f) -> Rarity.LEGENDARY
+            roll < (if (bossDrop) 0.3f else 0.02f) -> Rarity.EPIC
+            roll < (if (bossDrop) 0.75f else 0.09f) -> Rarity.RARE
+            roll < 0.4f -> Rarity.MAGIC
             else -> Rarity.COMMON
         }
         if (rarity < minRarity) rarity = minRarity
