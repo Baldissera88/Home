@@ -497,6 +497,8 @@ export class Fx {
     this.loot = new Map();
     this.lootStamp = 0;
     this.sparkles = [];
+    /** The skill-tree actives' cues and zone kinds 2..7 (skillfx.js), set by the engine. */
+    this.skill = null;
   }
 
   /** Sets the pixel scale for particle sizes from the camera and canvas height. */
@@ -504,14 +506,15 @@ export class Fx {
     this.scale.value = height * camera.projectionMatrix.elements[5] * 0.5 * 2.0;
   }
 
-  reset() {
+  reset(level) {
+    if (this.skill) this.skill.setLevel(level);
     for (const l of this.loot.values()) this.group.remove(l.root);
     this.loot.clear();
     this.decalN = -1;
     for (const d of this.decals) { d.count = 0; d.visible = false; }
   }
 
-  update(f, dt, t, ground, camera) {
+  update(f, dt, t, ground, camera, hero) {
     this.lights.length = 0;
     camera.updateMatrixWorld();
     view.setFromProjectionMatrix(tmpMat.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
@@ -520,6 +523,8 @@ export class Fx {
     for (let i = 0; i < batches.length; i++) batches[i].begin();
     this.additive.begin();
     this.normal.begin();
+    const skill = this.skill;
+    if (skill) skill.begin(camera, t);
 
     this.particles(f, ground, camera);
     this.projectiles(f, ground, t);
@@ -529,6 +534,7 @@ export class Fx {
     this.updateDecals(f, ground);
     this.updateLoot(f, dt, t, ground);
     this.bolts(f, ground, camera);
+    if (skill) skill.update(f, dt, t, ground, camera, hero);
 
     this.halos.end();
     for (let i = 0; i < batches.length; i++) batches[i].end();
@@ -536,6 +542,7 @@ export class Fx {
     this.normal.end();
     this.additive.points.visible = this.additive.n > 0;
     this.normal.points.visible = this.normal.n > 0;
+    if (skill) skill.end();
   }
 
   /** Queues a dynamic light for the light pool. The records are reused, so read them the same frame. */
@@ -639,6 +646,9 @@ export class Fx {
           this.additive.add(x + Math.cos(ang) * d, gy + ph * 1.6, y + Math.sin(ang) * d, tmpColor.r, tmpColor.g, tmpColor.b, a * Math.sin(ph * Math.PI), 0.16, 1);
         }
         this.light(x, gy + 0.8, y, 0xffd060, r * 2.2, 1.6 * a);
+      } else if (kind >= 2 && kind <= 7) {
+        // Blizzard, black hole, death trap, holy light, bleed and sandstorm have their own looks.
+        if (this.skill) this.skill.zone(zn, ground, t);
       } else {
         // Burning ground: a molten glow with flames licking up.
         this.discs.add(x, gy, y, 0, r, r, r, tmpColor.setHex(0xff5a14).multiplyScalar(0.3 + 0.08 * Math.sin(t * 9 + x)), a);

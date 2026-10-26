@@ -6,6 +6,7 @@ import { World } from './world.js';
 import { Actors } from './actors.js';
 import { Fx } from './fx.js';
 import { Impact } from './impact.js';
+import { SkillFx } from './skillfx.js';
 import { Atmosphere } from './atmosphere.js';
 import { ChaseCamera } from './camera.js';
 import { Overlay, loadFonts } from './overlay.js';
@@ -117,6 +118,7 @@ export class Engine {
   async init() {
     await Promise.all([this.assets.load(), loadFonts()]);
     this.fx = new Fx(this.assets, this.scene);
+    this.fx.skill = new SkillFx(this.fx, () => this.quality);
     this.impact = new Impact(this.scene, this.assets);
     this.resize();
     this.ready = true;
@@ -181,7 +183,7 @@ export class Engine {
     this.level = level;
     this.scene.add(group);
     this.actors.reset();
-    this.fx.reset();
+    this.fx.reset(level);
     this.impact.reset();
     this.actors.placeMerchant(level, this.ground);
     this.atmosphere.setLevel(world);
@@ -216,7 +218,7 @@ export class Engine {
     OCCLUDE.uHero.value.set(hero.x, hero.y + 0.8, hero.z);
     OCCLUDE.uCam.value.copy(this.camera.position);
     this.world.update(f, f.t, dt);
-    this.fx.update(f, dt, f.t, ground, this.camera);
+    this.fx.update(f, dt, f.t, ground, this.camera, hero);
     this.impact.update(f, dt, this.ground, this.camera, this.actors);
     if (this.impact.punch > 0) {
       this.chase.punch(this.impact.punch);
