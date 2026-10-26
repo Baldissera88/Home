@@ -95,7 +95,7 @@ const out = {};
       [S.HARPOON, h[0], h[1], h[0] + sx * 4.2, h[1] + sy * 4.2, sx, sy, 0.2, 0],
       [S.REND, h[0], h[1], h[0], h[1] - 1.3, 0, -1, 0.17, 2.3],
       [S.SEISMIC_SLAM, h[0], h[1], h[0] + ex * 4.6, h[1] + ey * 4.6, ex, ey, 0.38, 1.25],
-      [S.AVALANCHE, h[0], h[1], 43.4, 59.6, 0, -1, 0.3, 1.25],
+      [S.AVALANCHE, h[0], h[1], 43.4, 59.6, 0, -1, 0.4, 1.25],
       [S.AVALANCHE, h[0], h[1], 46.8, 59.4, 0, -1, 0.62, 1.25],
     ],
     zo: [[44.6, 64.3, 1.6, Z.BLEED, 0.3]],
@@ -168,13 +168,13 @@ const out = {};
 // Every new zone kind in the desert, around the Pharaoh's sandstorm.
 {
   out['54_fx_zones'] = scene('23_sand_pharaoh', {
-    face: [0, -1], cls: 'knight', keepZones: true,
+    hero: [44.5, 62.2], face: [0, -1], cls: 'knight', keepZones: true,
     zo: [
-      [40.6, 52.6, 1.1, Z.HOLY_LIGHT, 0.2],
-      [44.6, 51.4, 1.6, Z.BLEED, 0.35],
-      [48.6, 52.4, 2.6, Z.BLIZZARD, 0.5],
-      [41.4, 56.2, 1.3, Z.TRAP, 0.5],
-      [47.6, 56.4, 1.3, Z.TRAP, 0.02],
+      [40.8, 59.4, 1.1, Z.HOLY_LIGHT, 0.2],
+      [47.6, 59.6, 1.6, Z.BLEED, 0.35],
+      [49.6, 55.2, 2.6, Z.BLIZZARD, 0.5],
+      [41.4, 62.0, 1.3, Z.TRAP, 0.5],
+      [47.4, 62.6, 1.3, Z.TRAP, 0.02],
     ],
   });
 }

@@ -33,7 +33,7 @@ const lin = (hex) => new THREE.Color().setHex(hex);
 const GOLD = lin(0xffc548), GOLD_W = lin(0xffe7a8), WHITE = lin(0xffffff), STEEL = lin(0x9cc8ff);
 const RED = lin(0xff1f2a), BLOOD = lin(0x7a0008), EMBER = lin(0xff6a1a), DUST_C = lin(0xb5a48c);
 const VIOLET = lin(0xa24dff), PINK = lin(0xff4fb4), ICE = lin(0x8fdcff), ICE_W = lin(0xdaf4ff);
-const HOLE_V = lin(0x8a3dff), HOLE_M = lin(0xff5ad8), SAND = lin(0xd9b47c), SAND_D = lin(0xa98454), BLACK = lin(0x000000);
+const HOLE_V = lin(0x8a3dff), HOLE_M = lin(0xff5ad8), SAND = lin(0xc9a26a), SAND_D = lin(0x7a5a36), SAND_B = lin(0x9a7748), BLACK = lin(0x000000);
 const ROCK = { CRYPT: lin(0x6e6a66), CAVE: lin(0x6a625a), HELL: lin(0x5a3a32), OVERWORLD: lin(0x7c6c5a), DESERT: lin(0xb38c5c) };
 
 const tmpC = new THREE.Color(), tmpC2 = new THREE.Color();
@@ -364,22 +364,25 @@ varying float vCell;
 void main() {
   float m;
   float white = 0.0;
-  if (vCell < -3.5) {
+  // Cells sent 64 higher are only lightly fogged (a sandstorm must stand out of the sand haze around it).
+  float cell = vCell, fogK = 1.0;
+  if (cell > 47.5) { cell -= 64.0; fogK = 0.3; }
+  if (cell < -3.5) {
     // slash: a crescent body from the inner edge (y 0) to a white-hot outer rim (y 0.9)
     float y = vUv.y;
     float body = smoothstep(0.0, 0.85, y) * (1.0 - smoothstep(0.93, 1.0, y));
     float rim = exp(-(y - 0.88) * (y - 0.88) * 260.0);
     m = body * 0.5 + rim * 1.2;
     white = rim * 0.9;
-  } else if (vCell < -0.5) {
+  } else if (cell < -0.5) {
     float y = vUv.y * 2.0 - 1.0;
     m = exp(-y * y * 4.5) * (1.0 - y * y);
     float core = exp(-y * y * 40.0);
     white = core * 0.35;
-    if (vCell < -1.5 && vCell > -2.5) m *= smoothstep(0.0, 0.1, vUv.x) * smoothstep(1.0, 0.9, vUv.x);
-    if (vCell < -2.5) m *= vUv.x * vUv.x * smoothstep(1.0, 0.94, vUv.x);
+    if (cell < -1.5 && cell > -2.5) m *= smoothstep(0.0, 0.1, vUv.x) * smoothstep(1.0, 0.9, vUv.x);
+    if (cell < -2.5) m *= vUv.x * vUv.x * smoothstep(1.0, 0.94, vUv.x);
   } else {
-    vec2 c = vec2(mod(vCell, 4.0), floor(vCell * 0.25 + 0.01));
+    vec2 c = vec2(mod(cell, 4.0), floor(cell * 0.25 + 0.01));
     m = texture2D(uAtlas, (c + clamp(vUv, 0.004, 0.996)) * 0.25).a;
   }
   float e = max(vCol.r, max(vCol.g, vCol.b));
@@ -390,7 +393,7 @@ void main() {
     #else
       float fogFactor = smoothstep(fogNear, fogFar, vFogDepth);
     #endif
-    o.rgb = mix(o.rgb, fogColor * o.a, fogFactor);
+    o.rgb = mix(o.rgb, fogColor * o.a, fogFactor * fogK);
   #endif
   gl_FragColor = o;
 }`;
@@ -442,6 +445,8 @@ class Flat {
     /** Camera right and up, for camera-facing quads. */
     this.rx = 1; this.ry = 0; this.rz = 0; this.ux = 0; this.uy = 1; this.uz = 0;
     this.cam = null;
+    /** While set, quads are only lightly fogged. */
+    this.clear = false;
   }
 
   begin(camera) {
@@ -457,7 +462,7 @@ class Flat {
     p[i * 3] = x; p[i * 3 + 1] = y; p[i * 3 + 2] = z;
     this.uv[i * 2] = u; this.uv[i * 2 + 1] = v;
     c[i * 4] = r; c[i * 4 + 1] = g; c[i * 4 + 2] = b; c[i * 4 + 3] = a;
-    this.cell[i] = cell;
+    this.cell[i] = this.clear ? cell + 64 : cell;
   }
 
   /** A quad centred on c spanning ±u, ±v; color k-scaled light plus `ab` coverage. */
@@ -554,9 +559,12 @@ varying vec3 vC;
 varying float vO;
 varying vec3 vP;
 void main() {
-  float f = 1.0 - abs(dot(normalize(vN), normalize(vV)));
+  vec3 n = normalize(vN);
+  float f = 1.0 - abs(dot(n, normalize(vV)));
   float rim = f * f;
-  vec3 col = vC * (uBase + uRim * rim) + vec3(rim * rim * 0.5);
+  // Faces lit from above so a solid shape of light still reads as a shape.
+  float lam = 0.4 + 0.6 * max(dot(n, vec3(0.32, 0.85, 0.42)), 0.0);
+  vec3 col = vC * (uBase * lam + uRim * rim) + vec3(rim * rim * 0.4);
   #ifdef HEX
     // A honeycomb of light panels with a band of light sweeping up the dome.
     vec2 uv = vec2(atan(vP.z, vP.x) * (16.0 / 6.2831853), vP.y * 4.2);
@@ -670,10 +678,11 @@ function merge(parts) {
 /** The hammer of light: head along z centred on the origin, handle up +y. */
 function hammerGeometry() {
   const parts = [
-    [new THREE.BoxGeometry(0.78, 0.78, 1.3), 0xffffff],
-    [new THREE.BoxGeometry(0.96, 0.96, 0.2).translate(0, 0, 0.66), 0xffffff],
-    [new THREE.BoxGeometry(0.96, 0.96, 0.2).translate(0, 0, -0.66), 0xffffff],
-    [new THREE.BoxGeometry(0.9, 0.22, 0.9).translate(0, 0.4, 0), 0xffffff],
+    [new THREE.BoxGeometry(0.64, 0.64, 1.56), 0xffffff],
+    [new THREE.BoxGeometry(0.92, 0.92, 0.24).translate(0, 0, 0.74), 0xffffff],
+    [new THREE.BoxGeometry(0.92, 0.92, 0.24).translate(0, 0, -0.74), 0xffffff],
+    [new THREE.BoxGeometry(0.76, 0.76, 0.16), 0xffffff],
+    [new THREE.BoxGeometry(0.4, 0.2, 0.4).translate(0, 0.4, 0), 0xffffff],
     [new THREE.CylinderGeometry(0.1, 0.12, 2.5, 8).translate(0, 1.7, 0), 0xffffff],
     [new THREE.CylinderGeometry(0.16, 0.16, 0.18, 8).translate(0, 2.2, 0), 0xffffff],
     [new THREE.OctahedronGeometry(0.22, 0).translate(0, 3.05, 0), 0xffffff],
@@ -777,9 +786,9 @@ export class SkillFx {
     this.flat = new Flat(this.group, this.atlas);
 
     const lit = (rough, metal, extra = {}) => new THREE.MeshStandardMaterial({ vertexColors: true, roughness: rough, metalness: metal, ...extra });
-    this.hammer = new Solid(this.group, hammerGeometry(), energyMaterial(0.75, 2.6, 0.35, {}, this.time), 4, 5);
+    this.hammer = new Solid(this.group, hammerGeometry(), energyMaterial(0.55, 1.7, 0.55, {}, this.time), 4, 5);
     this.dome = new Solid(this.group, new THREE.SphereGeometry(1, 40, 18, 0, TAU, 0, Math.PI * 0.56), energyMaterial(0.05, 1.5, 0, { HEX: 1 }, this.time), 4, 5);
-    this.orb = new Solid(this.group, new THREE.IcosahedronGeometry(1, 1), energyMaterial(0.6, 2.2, 0.6, {}, this.time), 6, 5);
+    this.orb = new Solid(this.group, new THREE.IcosahedronGeometry(1, 1), energyMaterial(0.5, 1.8, 0.6, {}, this.time), 6, 5);
     this.ice = new Solid(this.group, new THREE.OctahedronGeometry(1, 0).scale(0.32, 1, 0.32), energyMaterial(0.45, 2.0, 0.6, {}, this.time), 96, 5);
     const rockMat = new THREE.MeshStandardMaterial({ roughness: 0.95, metalness: 0, flatShading: true });
     this.rock = new Solid(this.group, rockGeometry(), rockMat, 48);
@@ -925,8 +934,8 @@ export class SkillFx {
       // It appears out of a burst of light, then hangs a moment before the blow.
       const s = 1.25 * easeOut(k / 0.2);
       if (k < 0.3) F.sprite(hx, hy + 0.4, hz, 6 * (1 - k / 0.3), k * 4, C_STAR, GOLD_W, 1.5 * (1 - k / 0.3));
-      this.hammer.add(hx, hy, hz, tmpQ, s, s, s, tmpC.copy(GOLD).multiplyScalar(1.6), 0.9);
-      fx.halo(hx, hy + 0.3, hz, 4.2, GOLD, 0.55, 0.5, 1.4);
+      this.hammer.add(hx, hy, hz, tmpQ, s, s, s, GOLD, 1);
+      fx.halo(hx, hy + 0.3, hz, 4.2, GOLD, 0.4);
       // Its wake: a shaft of light back up to the heavens, and motes shed along it.
       F.beam(hx - dx * 2.4, hy + 9, hz - dy * 2.4, hx, hy + 0.6, hz, 1.6, STREAK, GOLD, 0.7);
       const n = this.count(18);
@@ -944,20 +953,20 @@ export class SkillFx {
         const s = 1.25 * (1 + 0.15 * k);
         tmpE.set(0, yaw, 0);
         tmpQ.setFromEuler(tmpE);
-        this.hammer.add(tx, gy + 0.6 - k * 0.3, ty, tmpQ, s, s, s, tmpC.copy(GOLD).multiplyScalar(1.6 + 2 * (1 - k * 2)), 1 - k * 2);
+        this.hammer.add(tx, gy + 0.6 - k * 0.3, ty, tmpQ, s, s, s, tmpC.copy(GOLD).multiplyScalar(1 + 1.2 * (1 - k * 2)), 1 - k * 2);
       }
       // Flash and shock waves.
-      fx.halo(tx, gy + 1, ty, R * 3.6 * (0.6 + 0.4 * eo), GOLD, fade * fade, fade * fade * fade * 1.4, R * 1.4);
-      F.sprite(tx, gy + 0.8, ty, R * 5 * (0.5 + eo), 0, C_STAR, GOLD_W, 1.4 * fade * fade * fade);
+      fx.halo(tx, gy + 1, ty, R * 2.4 * (0.6 + 0.4 * eo), GOLD, fade * fade, 0.8 * fade * fade * fade, R * 0.7);
+      F.sprite(tx, gy + 0.8, ty, R * 2.8 * (0.5 + eo), 0, C_STAR, GOLD_W, fade * fade * fade);
       F.ground(tx, gy + 0.02, ty, R * (0.25 + 1.45 * eo), 0, C_RING, GOLD, 2.2 * fade);
       F.ground(tx, gy + 0.03, ty, R * (0.1 + 1.0 * easeOut(k * 1.4)), 0, C_RING, WHITE, 1.4 * fade * fade);
-      F.ground(tx, gy, ty, R * 1.5, 0, C_GLOW, GOLD, 1.3 * fade * fade);
+      F.ground(tx, gy, ty, R * 1.5, 0, C_GLOW, GOLD, 0.9 * fade * fade);
       F.ground(tx, gy + 0.01, ty, R * 0.95, t * 0.5, C_RUNES, GOLD_W, 1.2 * fade);
       for (let j = 0; j < 3; j++) F.ground(tx, gy + 0.005, ty, R * 0.75, j * 1.05 + 0.3, C_CRACK, BLACK, 0, 0.55 * (1 - k * k));
       // Rays of light bursting up from the blow.
       for (let j = 0; j < 8; j++) {
         const a = j / 8 * TAU + hash(j, 9) * 0.6, s = (0.5 + hash(j, 11) * 0.7) * (0.35 + 0.65 * eo);
-        F.beam(tx, gy + 0.1, ty, tx + Math.cos(a) * 1.8 * s, gy + 4.2 * s, ty + Math.sin(a) * 1.8 * s, 0.45, STREAK, GOLD_W, 1.6 * fade * fade);
+        F.beam(tx, gy + 0.1, ty, tx + Math.cos(a) * 1.8 * s, gy + 4.2 * s, ty + Math.sin(a) * 1.8 * s, 0.32, STREAK, GOLD, 1.1 * fade * fade);
       }
       // Sparks thrown out and up.
       const n = this.count(36);
@@ -971,7 +980,7 @@ export class SkillFx {
         const a = j / nd * TAU + hash(j, 17), d = R * (0.4 + 0.9 * eo);
         fx.normal.add(tx + Math.cos(a) * d, gy + 0.3 + 0.4 * k, ty + Math.sin(a) * d, DUST_C.r, DUST_C.g, DUST_C.b, 0.45 * fade, 1.2 + 1.2 * k, 2);
       }
-      fx.light(tx, gy + 1.4, ty, 0xffd27a, 10, 8 * fade * fade);
+      fx.light(tx, gy + 1.4, ty, 0xffd27a, 10, 6 * fade * fade);
     }
   }
 
@@ -1073,11 +1082,11 @@ export class SkillFx {
       fx.light(x, front, z, 0xffe08a, 5, 1.5 + 2 * k);
     } else {
       const k = (p - 0.5) / 0.5, fade = 1 - k, eo = easeOut(k);
-      F.beam(x, top, z, x, gy, z, r * 2.2 * (1 - 0.55 * k), BEAM, GOLD, 1.5 * Math.pow(fade, 1.5));
-      F.beam(x, top, z, x, gy, z, r * 0.7 * (1 - 0.6 * k), BEAM, WHITE, 2.6 * fade * fade);
-      fx.halo(x, gy + 0.4, z, r * 3.4, GOLD, fade * fade, 1.2 * fade * fade * fade, r);
+      F.beam(x, top, z, x, gy, z, r * 1.6 * (1 - 0.55 * k), BEAM, GOLD, 1.1 * Math.pow(fade, 1.5));
+      F.beam(x, top, z, x, gy, z, r * 0.45 * (1 - 0.6 * k), BEAM, WHITE, 1.6 * fade * fade);
+      fx.halo(x, gy + 0.4, z, r * 2.6, GOLD, 0.8 * fade * fade, 0.6 * fade * fade * fade, r * 0.6);
       F.ground(x, gy + 0.02, z, r * (0.4 + 1.4 * eo), 0, C_RING, GOLD_W, 2 * fade);
-      F.ground(x, gy, z, r * 1.6, 0, C_GLOW, GOLD, 1.2 * fade);
+      F.ground(x, gy, z, r * 1.6, 0, C_GLOW, GOLD, 0.8 * fade);
       const n = this.count(16);
       for (let j = 0; j < n; j++) {
         const a = hash(j, 41) * TAU, sp = 0.4 + hash(j, 43);
@@ -1334,7 +1343,7 @@ export class SkillFx {
     const seed = Math.floor(x * 17 + z * 31);
     tmpE.set(0, hash(seed, 1) * TAU, 0);
     tmpQ.setFromEuler(tmpE);
-    const s = 0.5 * (0.6 + 0.4 * easeOut(deploy));
+    const s = 0.38 * (0.6 + 0.4 * easeOut(deploy));
     this.trap.add(x, gy - 0.04, z, tmpQ, s, s * (0.3 + 0.7 * easeOut(deploy)), s, tmpC.setScalar(this.light < 0.6 ? 1.3 : 1));
     const blink = armed ? ((t * 2.2 + hash(seed, 3)) % 1 < 0.45 ? 1 : 0.18) : 0.5 * deploy;
     const lampY = gy + 0.2;
@@ -1435,7 +1444,7 @@ export class SkillFx {
     tmpQ.setFromEuler(tmpE);
     const cs = r * 0.62 * a;
     this.orb.add(x, h, z, tmpQ, cs, cs, cs, ICE, 1);
-    fx.halo(x, h, z, r * 4.5, ICE, 0.7 * a, 0.35 * a, r * 0.9);
+    fx.halo(x, h, z, r * 4.2, ICE, 0.55 * a, 0.25 * a, r * 0.6);
     // Crystals turning about it.
     for (let j = 0; j < 6; j++) {
       const th = t * 4 + j * TAU / 6, tilt = Math.sin(t * 3 + j) * 0.5;
@@ -1565,8 +1574,8 @@ export class SkillFx {
     F.ground(x, h + 0.01, z, 1.6 * grow, -ang, C_DISC, HOLE_M, 1.4 * a);
     F.ground(x, h + 0.02, z, 1.05 * grow, -ang * 1.6, C_DISC, WHITE, 1.5 * a);
     fx.halo(x, h, z, 4 * grow, HOLE_V, 0.45 * a);
-    F.sprite(x, h, z, 1.2 * grow, 0, C_RING, WHITE, 1.4 * a);
-    F.sprite(x, h, z, 1.0 * grow, 0, C_HOLE, BLACK, 0, 1);
+    F.sprite(x, h, z, 1.45 * grow, 0, C_RING, WHITE, 1.4 * a);
+    F.sprite(x, h, z, 1.2 * grow, 0, C_HOLE, BLACK, 0, 1);
     // Light and dust drawn in on spirals.
     const n = this.count(48);
     for (let j = 0; j < n; j++) {
@@ -1592,8 +1601,8 @@ export class SkillFx {
       F.sprite(x, h, z, 0.95 * k, 0, C_HOLE, BLACK, 0, 1);
     }
     const fl = easeOut((p - 0.1) / 0.3);
-    fx.halo(x, h, z, R * 3 * (0.3 + 0.7 * fl), HOLE_V, fade * fade, 1.6 * fade * fade * fade, R);
-    F.sprite(x, h, z, R * 4 * fl, 0, C_STAR, HOLE_M, 1.5 * fade * fade);
+    fx.halo(x, h, z, R * 2.2 * (0.3 + 0.7 * fl), HOLE_V, fade * fade, fade * fade * fade, R * 0.5);
+    F.sprite(x, h, z, R * 2.2 * fl, 0, C_STAR, HOLE_M, 1.2 * fade * fade);
     const eo = easeOut(p);
     F.ground(x, gy + 0.05, z, R * (0.2 + 1.15 * eo), 0, C_RING, HOLE_M, 2.4 * fade);
     F.ground(x, gy + 0.06, z, R * (0.1 + 0.9 * easeOut(p * 1.3)), 0, C_RING, WHITE, 1.2 * fade * fade);
@@ -1622,11 +1631,11 @@ export class SkillFx {
   holyLight(x, z, r, k, gy, t) {
     const F = this.flat, fx = this.fx;
     const a = envelope(k, 0.06, 0.4);
-    F.ground(x, gy, z, r * 1.5, 0, C_GLOW, GOLD_W, 1.3 * a);
+    F.ground(x, gy, z, r * 1.5, 0, C_GLOW, GOLD_W, 0.75 * a);
     F.ground(x, gy + 0.01, z, r * 1.05, t * 2, C_RUNES, GOLD, 1.0 * a);
     F.ground(x, gy + 0.01, z, r * (1 + 0.08 * Math.sin(t * 9 + x)), 0, C_RING, GOLD_W, 0.8 * a);
-    F.beam(x, gy, z, x, gy + 3.2, z, r * 1.2, BEAM_ENDS, GOLD, 0.45 * a);
-    fx.halo(x, gy + 0.3, z, r * 2.4, GOLD, 0.45 * a);
+    F.beam(x, gy, z, x, gy + 3.2, z, r * 1.2, BEAM_ENDS, GOLD, 0.3 * a);
+    fx.halo(x, gy + 0.3, z, r * 2.2, GOLD, 0.3 * a);
     const n = this.count(10);
     for (let j = 0; j < n; j++) {
       const u = (t * 1.3 + hash(j, 181)) % 1;
@@ -1664,10 +1673,16 @@ export class SkillFx {
     const a = envelope(k, 0.1, 0.2);
     const build = 0.35 + 0.65 * smooth(k / 0.14);
     const L = Math.max(0.35, this.light);
-    tmpC.copy(SAND).multiplyScalar(L);
+    F.clear = true;
+    tmpC.copy(SAND_B).multiplyScalar(L);
     tmpC2.copy(SAND_D).multiplyScalar(L);
-    F.ground(x, gy, z, r * 1.25, -t * 1.8, C_SAND, tmpC2, 0.5 * a, 0.5 * a);
-    F.ground(x, gy + 0.01, z, r * 0.95, -t * 2.6, C_SPIRAL, tmpC, 0.45 * a, 0.45 * a);
+    F.ground(x, gy, z, r * 1.3, -t * 1.8, C_SAND, tmpC2, 0.7 * a, 0.7 * a);
+    F.ground(x, gy + 0.01, z, r * 0.95, -t * 2.6, C_SPIRAL, tmpC2, 0.6 * a, 0.6 * a);
+    // Clouds of sand billowing round the foot of the funnel.
+    for (let j = 0; j < 6; j++) {
+      const th = j / 6 * TAU - t * 1.4, d = r * 0.7;
+      F.sprite(x + Math.cos(th) * d, gy + 0.7, z + Math.sin(th) * d, r * 1.1, t * 0.7 + j, C_PUFF, j & 1 ? tmpC : tmpC2, 0.75 * a * build, 0.75 * a * build);
+    }
     // The funnel: rings of blown sand, wider and fainter going up.
     const layers = 10;
     for (let i = 0; i < layers; i++) {
@@ -1676,24 +1691,26 @@ export class SkillFx {
       const rr = r * (0.32 + 0.75 * Math.pow(u, 0.85)) * (0.9 + 0.1 * Math.sin(t * 3 + i));
       const wob = 0.25 * u;
       const cx = x + Math.cos(t * 1.7 + i * 0.6) * wob, cz = z + Math.sin(t * 1.7 + i * 0.6) * wob;
-      const k2 = (0.5 - 0.22 * u) * a * build;
+      const k2 = (0.85 - 0.4 * u) * a * build;
       F.ground(cx, hy, cz, rr, -t * (4 - u * 1.5) + i * 1.3, C_SAND, i & 1 ? tmpC : tmpC2, k2, k2);
+      F.ground(cx, hy + 0.12, cz, rr * 0.8, -t * (5 - u * 1.5) + i * 2.1, C_SPIRAL, tmpC2, k2 * 0.6, k2 * 0.6);
     }
     // A haze of sand through the column.
-    F.beam(x, gy, z, x, gy + 5 * build, z, r * 1.7, BEAM_ENDS, tmpC, 0.22 * a, 0.22 * a);
+    F.beam(x, gy, z, x, gy + 5 * build, z, r * 1.5, BEAM_ENDS, tmpC2, 0.45 * a, 0.45 * a);
+    F.clear = false;
     const n = this.count(80);
     for (let j = 0; j < n; j++) {
       const u = (t * 0.32 + hash(j, 201)) % 1;
       const hgt = u * 4.8 * build;
       const rr = r * (0.3 + 0.8 * Math.pow(u, 0.85)) * (0.75 + 0.4 * hash(j, 203));
       const th = hash(j, 205) * TAU - t * 3.6 - u * 3;
-      const col = j & 3 ? SAND : SAND_D;
+      const col = j & 1 ? SAND : SAND_D;
       fx.normal.add(x + Math.cos(th) * rr, gy + 0.1 + hgt, z + Math.sin(th) * rr, col.r, col.g, col.b, a * Math.min(1, (1 - u) * 3), 0.05 + 0.05 * hash(j, 207), 0);
     }
     const nd = this.count(9);
     for (let j = 0; j < nd; j++) {
       const th = j / nd * TAU - t * 2.2, d = r * (0.75 + 0.2 * Math.sin(t + j));
-      fx.normal.add(x + Math.cos(th) * d, gy + 0.4, z + Math.sin(th) * d, SAND.r, SAND.g, SAND.b, 0.55 * a, 1.8, 2);
+      fx.normal.add(x + Math.cos(th) * d, gy + 0.4, z + Math.sin(th) * d, SAND_B.r, SAND_B.g, SAND_B.b, 0.7 * a, 1.8, 2);
     }
   }
 }
