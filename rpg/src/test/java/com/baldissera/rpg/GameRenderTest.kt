@@ -424,7 +424,7 @@ class GameRenderTest {
         val item = g.makeItem(5, Rarity.RARE, false)
         g.player.inventory += item
         val reforged = g.reforge(item)!!
-        check(reforged.rarity == Rarity.RARE && reforged.slot == item.slot)
+        check(reforged.rarity == item.rarity && reforged.slot == item.slot)
         var up = reforged
         repeat(4) { up = g.upgrade(up) ?: up }
         check(up.level > item.level)
