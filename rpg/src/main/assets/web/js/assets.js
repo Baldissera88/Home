@@ -170,7 +170,7 @@ export class Assets {
           o.receiveShadow = true;
           o.geometry.userData.shared = true;
           for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
-            if (m && m.map && !done.has(m)) { done.add(m); kitSurface(m, kit); }
+            if (m && m.map && !done.has(m)) { done.add(m); kitSurface(m, kit, true); }
           }
         }
       });

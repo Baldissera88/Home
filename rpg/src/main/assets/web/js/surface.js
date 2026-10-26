@@ -143,16 +143,17 @@ function cellTexture(kit) {
  * Kit props (a material on one of the colour-gradient atlases): per atlas cell roughness and metalness,
  * and fine relief from world space: grain running along wood, a fine tooth on stone, faint brushing on
  * metal, a soft weave on cloth. At the low preset (setKitDetail) the roughness and metal stay, the relief
- * goes. One program for every kit (the table is a uniform).
+ * goes. One program for every kit (the table is a uniform). `shared`: a material that outlives the level
+ * (the kits' own), recompiled when the preset changes; per-level ones are made after setKitDetail.
  */
-export function kitSurface(mat, kit) {
+export function kitSurface(mat, kit, shared = false) {
   if (!KIT_CELLS[kit]) return mat;
   const cells = cellTexture(kit);
   const base = mat.onBeforeCompile, baseKey = mat.customProgramCacheKey;
   const custom = base !== THREE.Material.prototype.onBeforeCompile;
   // Without a colour map the whole material is the table's one cell.
   const key = (custom ? baseKey.call(mat) : '') + (mat.map ? '' : '-nomap');
-  kitMaterials.add(mat);
+  if (shared) kitMaterials.add(mat);
   mat.onBeforeCompile = (shader, renderer) => {
     const detail = kitDetail;
     const uv = mat.map ? 'vMapUv' : 'vec2(0.5)';
