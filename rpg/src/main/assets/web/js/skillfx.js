@@ -576,7 +576,7 @@ void main() {
     float line = smoothstep(0.42, 0.49, d);
     float band = vP.y - fract(uTime * 0.45) * 1.25 + 0.1;
     float scan = exp(-band * band * 60.0);
-    col += vC * (line * (0.55 + 1.6 * scan) + scan * 0.25);
+    col += vC * (line * (0.4 + 1.4 * scan) + scan * 0.2);
     col *= 0.55 + 0.45 * smoothstep(0.0, 0.35, vP.y) + 0.6 * (1.0 - smoothstep(0.0, 0.08, vP.y));
   #endif
   // Premultiplied: pure light adds (uCover 0); ice and the hammer also hide a little of what is behind.
@@ -787,7 +787,7 @@ export class SkillFx {
 
     const lit = (rough, metal, extra = {}) => new THREE.MeshStandardMaterial({ vertexColors: true, roughness: rough, metalness: metal, ...extra });
     this.hammer = new Solid(this.group, hammerGeometry(), energyMaterial(0.55, 1.7, 0.55, {}, this.time), 4, 5);
-    this.dome = new Solid(this.group, new THREE.SphereGeometry(1, 40, 18, 0, TAU, 0, Math.PI * 0.56), energyMaterial(0.05, 1.5, 0, { HEX: 1 }, this.time), 4, 5);
+    this.dome = new Solid(this.group, new THREE.SphereGeometry(1, 40, 18, 0, TAU, 0, Math.PI * 0.56), energyMaterial(0.03, 1.2, 0, { HEX: 1 }, this.time), 4, 5);
     this.orb = new Solid(this.group, new THREE.IcosahedronGeometry(1, 1), energyMaterial(0.5, 1.8, 0.6, {}, this.time), 6, 5);
     this.ice = new Solid(this.group, new THREE.OctahedronGeometry(1, 0).scale(0.32, 1, 0.32), energyMaterial(0.45, 2.0, 0.6, {}, this.time), 96, 5);
     const rockMat = new THREE.MeshStandardMaterial({ roughness: 0.95, metalness: 0, flatShading: true });
@@ -928,11 +928,11 @@ export class SkillFx {
       F.ground(tx, gy + 0.01, ty, R * (1.15 - 0.15 * k), -t * 0.8, C_RING, GOLD_W, 0.3 + 0.6 * k);
       // The hammer swings down out of the sky, head first.
       const fall = 1 - e;
-      const hx = tx - dx * 0.8 * fall, hz = ty - dy * 0.8 * fall, hy = gy + 0.55 * 1.25 + 5.5 * fall;
+      const hx = tx - dx * 0.8 * fall, hz = ty - dy * 0.8 * fall, hy = gy + 0.55 * 1.1 + 5 * fall;
       tmpE.set(-0.7 * fall, yaw, 0);
       tmpQ.setFromEuler(tmpE);
       // It appears out of a burst of light, then hangs a moment before the blow.
-      const s = 1.25 * easeOut(k / 0.2);
+      const s = 1.1 * easeOut(k / 0.2);
       if (k < 0.3) F.sprite(hx, hy + 0.4, hz, 6 * (1 - k / 0.3), k * 4, C_STAR, GOLD_W, 1.5 * (1 - k / 0.3));
       this.hammer.add(hx, hy, hz, tmpQ, s, s, s, GOLD, 1);
       fx.halo(hx, hy + 0.3, hz, 4.2, GOLD, 0.4);
@@ -950,7 +950,7 @@ export class SkillFx {
       const k = (p - 0.5) / 0.5, eo = easeOut(k), fade = 1 - k;
       // The hammer stays a moment in the ground, then breaks into light.
       if (k < 0.5) {
-        const s = 1.25 * (1 + 0.15 * k);
+        const s = 1.1 * (1 + 0.15 * k);
         tmpE.set(0, yaw, 0);
         tmpQ.setFromEuler(tmpE);
         this.hammer.add(tx, gy + 0.6 - k * 0.3, ty, tmpQ, s, s, s, tmpC.copy(GOLD).multiplyScalar(1 + 1.2 * (1 - k * 2)), 1 - k * 2);
@@ -994,7 +994,7 @@ export class SkillFx {
     const h0 = ground(sx, sy) + 0.95, h1 = ground(ex, ey) + 0.95;
     const bx = sx + (ex - sx) * reach, by = sy + (ey - sy) * reach, bh = h0 + (h1 - h0) * reach;
     const narrow = 0.6 + 0.4 * (1 - p);
-    F.beam(sx, h0, sy, bx, bh, by, w * 3.4 * narrow, BEAM_ENDS, GOLD, 0.9 * fade);
+    F.beam(sx, h0, sy, bx, bh, by, w * 2.6 * narrow, BEAM_ENDS, GOLD, 0.75 * fade);
     F.beam(sx, h0, sy, bx, bh, by, w * 1.5 * narrow, BEAM_ENDS, GOLD_W, 1.8 * fade);
     F.beam(sx, h0, sy, bx, bh, by, w * 0.45, BEAM_ENDS, WHITE, 3.2 * fade);
     // Light spilled on the ground under it.
@@ -1002,7 +1002,7 @@ export class SkillFx {
     F.strip(mx, ground(mx, my) + 0.04, my, dx, dy, ml, w * 2.2, BEAM_ENDS, GOLD, 0.7 * fade);
     // Muzzle and end flares.
     fx.halo(sx, h0, sy, 2.2, GOLD, fade, fade, 0.8);
-    F.sprite(sx, h0, sy, 2.6, t * 3, C_STAR, GOLD_W, 1.4 * fade);
+    F.sprite(sx, h0, sy, 1.8, t * 3, C_STAR, GOLD_W, 1.2 * fade);
     if (reach >= 1) {
       fx.halo(ex, h1, ey, 3, GOLD, fade, fade * 0.8, 1);
       F.sprite(ex, h1, ey, 3.2, -t * 2, C_STAR, GOLD_W, 1.2 * fade);
@@ -1030,7 +1030,7 @@ export class SkillFx {
     const pop = 1 + 0.35 * Math.pow(1 - Math.min(1, p * 14), 2);
     const s = 1.2 * pop;
     tmpQ.identity();
-    this.dome.add(x, gy - 0.05, z, tmpQ, s, s * 1.15, s, tmpC.copy(STEEL).lerp(GOLD, 0.2), 0.65 * a);
+    this.dome.add(x, gy - 0.05, z, tmpQ, s, s * 1.15, s, tmpC.copy(STEEL).lerp(GOLD, 0.15), 0.5 * a);
     F.ground(x, gy, z, 1.5 * pop, t * 0.7, C_RUNES, GOLD, 1.2 * a);
     F.ground(x, gy + 0.01, z, 1.38 * pop, -t * 1.1, C_RING, STEEL, 0.9 * a);
     F.ground(x, gy, z, 1.6, 0, C_GLOW, STEEL, 0.35 * a);
@@ -1055,8 +1055,8 @@ export class SkillFx {
     F.ground(x, gy + 0.01, z, range, t * 0.15, C_DASH, GOLD, 0.35 * a);
     F.ground(x, gy, z, range * 1.02, 0, C_RING, GOLD, 0.3 * a);
     // A wide soft shaft of light down from the sky onto the hero.
-    F.beam(x, gy + 9, z, x, gy, z, 2.4, BEAM_ENDS, GOLD, 0.35 * a);
-    fx.halo(x, gy + 2.1, z, 1.6, GOLD, 0.55 * a, 0.25 * a, 0.5);
+    F.beam(x, gy + 9, z, x, gy, z, 2.0, BEAM_ENDS, GOLD, 0.18 * a);
+    fx.halo(x, gy + 2.1, z, 1.4, GOLD, 0.35 * a, 0.15 * a, 0.4);
     const n = this.count(26);
     for (let j = 0; j < n; j++) {
       const u = (t * 0.55 + hash(j, 31)) % 1;
