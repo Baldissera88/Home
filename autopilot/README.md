@@ -9,6 +9,38 @@ ingen PowerShell-moduler, så det virker også i OOBE.
 | `Set-AutopilotGroupTag.ps1` | Selve scriptet: GUI, login og Graph-kald |
 | `GroupTags.json` | Liste over afdelinger og deres GroupTags. Ret den, så den passer til jeres afdelinger |
 
+## Sådan ser det ud – trin for trin
+
+> Billederne er mockups lavet ud fra scriptets layout (samme tekster, størrelser og placeringer).
+> Det rigtige vindue bruger Windows' egen stil og kan se en anelse anderledes ud.
+
+**1. Vælg afdeling.** Vinduet viser computernavn og serienummer. Vælg en afdeling (eller dobbeltklik
+på den), og tryk **OK**. OK-knappen er grå, indtil der er valgt en afdeling. Under listen vises
+beskrivelsen fra `GroupTags.json`. **Annuller** stopper scriptet med returkode `1602`.
+
+![Vælg afdeling](docs/1-vaelg-afdeling.png)
+
+**2. Log ind** (kun ved device code-login). En tekniker går til adressen på sin telefon eller PC,
+indtaster koden og logger ind med en Intune-administratorkonto. Vinduet venter, indtil login er
+gennemført. Koden udløber efter ca. 15 minutter. Med app-only-login (`-ClientSecret`) springes trinnet over.
+
+![Log ind med kode](docs/2-login-device-code.png)
+
+**3. GroupTag sættes.** Scriptet finder enheden i Autopilot via serienummeret og skriver den nye
+GroupTag. I `Register`-tilstand ser du i stedet "Uploader hardware hash..." og "Import status: ...".
+Det kan tage 5–15 minutter.
+
+![Sætter GroupTag](docs/3-saetter-grouptag.png)
+
+**4. Færdig.** Tryk OK. Værdien gemmes i `HKLM\SOFTWARE\AutopilotGroupTag`, og scriptet afslutter med `0`.
+
+![Færdig](docs/4-faerdig.png)
+
+**Ved fejl** viser vinduet fejlbeskeden og stien til loggen, og scriptet afslutter med `1`. Den
+hyppigste fejl er, at enheden ikke er registreret i Autopilot. Kør i så fald med `-Mode Register` i OOBE.
+
+![Fejl](docs/5-fejl.png)
+
 ## Tilstande
 
 * **`-Mode Update`** (standard): enheden er allerede registreret i Autopilot. Scriptet finder den
