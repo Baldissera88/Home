@@ -1,0 +1,13 @@
+{
+  "Title": "Vælg afdeling",
+  "DefaultGroupTag": "",
+  "Departments": [
+    { "Name": "IT",           "GroupTag": "IT",       "Description": "IT-afdelingen" },
+    { "Name": "Økonomi",      "GroupTag": "FIN",      "Description": "Økonomi og regnskab" },
+    { "Name": "HR",           "GroupTag": "HR",       "Description": "Personaleafdelingen" },
+    { "Name": "Salg",         "GroupTag": "SALES",    "Description": "Salg og marketing" },
+    { "Name": "Produktion",   "GroupTag": "PROD",     "Description": "Produktion og lager" },
+    { "Name": "Ledelse",      "GroupTag": "MGMT",     "Description": "Direktion og ledelse" },
+    { "Name": "Kiosk / Delt", "GroupTag": "SHARED",   "Description": "Delte maskiner og kiosker" }
+  ]
+}
