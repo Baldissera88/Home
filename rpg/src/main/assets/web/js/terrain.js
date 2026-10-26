@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { TILE } from './defs.js';
+import { SURF, SURF_GLSL, surfUniforms } from './surface.js';
 
 /** GLSL value noise shared by the ground and water shaders. */
 export const NOISE_GLSL = /* glsl */`
@@ -133,7 +134,7 @@ export class Ground {
    * that use it (layers 0-3 in the first texture, 4-6 in the second), so the shader no longer warps and
    * looks up the tile corners itself. The second texture's alpha holds the macro brightness variation.
    */
-  splatTextures(count, waterLayer, k) {
+  splatTextures(count, waterLayer, k, nearWall = false) {
     const { w, h } = this;
     const mat = this.level.mat;
     const layer = new Uint8Array(w * h);
@@ -196,6 +197,22 @@ export class Ground {
           put(o, layer[y1 + x0], (1 - fx) * fy);
           put(o, layer[y1 + x1], fx * fy);
         }
+        if (nearWall) {
+          // Underground (four layers, so the second texture's colour channels are free): how close the
+          // nearest wall face is, wobbled by the fine noise, for the dust and grime gathered at the walls.
+          fineAt(x * 1.7, y * 1.7);
+          let d = 9;
+          const tx = x | 0, ty = y | 0;
+          for (let yy = ty - 1; yy <= ty + 1; yy++) {
+            for (let xx = tx - 1; xx <= tx + 1; xx++) {
+              if (this.tile(xx, yy) !== TILE.WALL) continue;
+              const dx = Math.max(xx - x, 0, x - xx - 1), dy = Math.max(yy - y, 0, y - yy - 1);
+              d = Math.min(d, Math.hypot(dx, dy));
+            }
+          }
+          const t = Math.min(1, Math.max(0, d / (0.16 + 0.3 * fine[0])));
+          data[half + o] = (1 - t * t * (3 - 2 * t)) * 255 + 0.5;
+        }
         const mx = x * 2, my = y * 2, mi = (my | 0) * mw + (mx | 0), fx = mx - (mx | 0), fy = my - (my | 0);
         const ma = mg[mi] + (mg[mi + 1] - mg[mi]) * fx, mb = mg[mi + mw] + (mg[mi + mw + 1] - mg[mi + mw]) * fx;
         data[half + o + 3] = (ma + (mb - ma) * fy) * 255 + 0.5;
@@ -222,7 +239,11 @@ export class Ground {
     // extra.desert: the sand's uniforms (see desert.js SAND): wind-blown drift, wet sand on the shore,
     // caustics on the pool bed and, at the high preset, heat shimmer over the far sand.
     const desert = extra.desert || null;
-    const [splat0, splat1] = this.splatTextures(extra.count || 7, extra.waterLayer ?? 4, SPLAT_RES[quality] || SPLAT_RES.high);
+    // extra.surface (not with desert): the stone underground ({ wet, dust, lava }) or the open world
+    // ({ open: true }): fine relief, cavities, roughness, damp, puddles, grime, rain and glowing lava.
+    const surf = desert ? null : extra.surface || null;
+    const dungeon = !!(surf && !surf.open);
+    const [splat0, splat1] = this.splatTextures(extra.count || 7, extra.waterLayer ?? 4, SPLAT_RES[quality] || SPLAT_RES.high, dungeon);
     const mat = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0.0 });
     const uniforms = {
       uSplat0: { value: splat0 },
@@ -240,11 +261,27 @@ export class Ground {
       mat.defines = { DESERT: '' };
       if (quality === 'high') mat.defines.SHIMMER = '';
     }
+    let surfKey = '';
+    if (surf) {
+      mat.defines = { SURF: '' };
+      if (bump) mat.defines.SURF_DETAIL = '';
+      if (dungeon) {
+        mat.defines.DUNGEON = '';
+        if (surf.lava) mat.defines.LAVA = '';
+        uniforms.uWet = { value: surf.wet || 0 };
+        uniforms.uDust = { value: new THREE.Color(surf.dust ?? 0x3a342c) };
+        uniforms.uDustAmt = { value: surf.dustAmt ?? 0.4 };
+      } else {
+        mat.defines.OPEN = '';
+      }
+      surfKey = '-' + Object.keys(mat.defines).join('-').toLowerCase();
+    }
     mat.userData.uniforms = uniforms;
-    const key = (bump ? 'ground-bump' : 'ground') + (desert ? '-desert-' + quality : '');
+    const key = (bump ? 'ground-bump' : 'ground') + (desert ? '-desert-' + quality : '') + surfKey;
     mat.customProgramCacheKey = () => key;
     mat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);
+      if (surf) surfUniforms(shader);
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vGroundPos;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGroundPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
@@ -256,7 +293,20 @@ uniform highp sampler2DArray uLayers;
 uniform vec2 uSize;
 uniform float uTexScale, uHeightBlend, uBump, uMacro;
 uniform vec3 uTint;
-float splatH = 0.0, groundWet = 0.0;
+float splatH = 0.0, groundWet = 0.0, groundBumpK = 1.0;
+#ifdef SURF
+${SURF_GLSL}
+// Set with the colour, used by the roughness, the normal and the glow.
+float groundRough = 0.9, groundPuddle = 0.0, groundRelief = 1.0;
+vec4 groundFine = vec4(0.0);
+vec3 groundGlow = vec3(0.0);
+#endif
+#ifdef DUNGEON
+uniform float uWet, uDustAmt;
+uniform vec3 uDust;
+// The hot orange of the lava seams painted in the hell floor (linear colour).
+float lavaMask(vec3 c) { return smoothstep(0.1, 0.42, c.r) * smoothstep(0.02, 0.1, c.g) * (1.0 - smoothstep(0.25, 0.5, c.b)); }
+#endif
 #ifdef DESERT
 uniform sampler2D uNoise;
 uniform vec2 uWind;
@@ -276,9 +326,11 @@ void splatPick(inout vec4 best, float w, float layer) {
   splatPick(best, w0.y, 1.0);
   splatPick(best, w0.z, 2.0);
   splatPick(best, w0.w, 3.0);
+#ifndef DUNGEON
   splatPick(best, w1.x, 4.0);
   splatPick(best, w1.y, 5.0);
   splatPick(best, w1.z, 6.0);
+#endif
   vec2 uv = tp / uTexScale;
 #ifdef SHIMMER
   // Heat shimmer: the far sand wavers in the rising air.
@@ -321,11 +373,97 @@ void splatPick(inout vec4 best, float w, float layer) {
 #else
   // Darker where wet: lake shores just above the water line and the beds below it.
   float wet = 1.0 - smoothstep(-0.2, -0.09, vGroundPos.y);
+#ifdef SURF
+  // Cavities: how far below its blurred surroundings the winning texture's height lies (mortar joints,
+  // cracks, the gaps between cobbles), for occlusion, grime and where water gathers.
+  float hBlur = texture(uLayers, vec3(uv, best.y), 4.0).a;
+  float cav = clamp((hBlur - splatH) * 3.2, 0.0, 1.0);
+  float luma = dot(col.rgb, vec3(0.3, 0.59, 0.11));
+#ifdef SURF_DETAIL
+  groundFine = surfFine(tp * 0.5);
+#else
+  groundFine = vec4(0.0, 0.0, texture(uDetail, tp * 0.5).a, 0.5);
+#endif
+  float broad = texture(uDetail, tp * 0.085 + 0.37).b;
+#endif
+#ifdef DUNGEON
+  // Damp: the damp floor layer (3), the joints and the feet of the walls (seeping water) are wetter, and
+  // shallow puddles lie in broad hollows. Along the walls dust and grime gather: wet silt in damp
+  // biomes, dry dust and ash in the others.
+  float nearWall = w1.r;
+  float dampL = ((best.y > 2.5 ? b1 : 0.0) + (best.w > 2.5 ? b2 : 0.0)) / (b1 + b2);
+  float pudT = 0.7 - 0.14 * uWet;
+  float pud = step(0.01, uWet) * smoothstep(pudT, pudT + 0.07, broad + cav * 0.12 + dampL * 0.12 - nearWall * 0.2 + (0.5 - groundFine.z) * 0.06);
+  float damp = clamp(uWet * (0.12 + 0.5 * dampL + 0.45 * cav + 0.3 * smoothstep(0.45, 0.66, broad) + 0.5 * nearWall) + pud, 0.0, 1.0);
+  col.rgb *= 1.0 - 0.42 * cav;
+  // Wet stone: darker and a touch more saturated; under a puddle's film a little darker still.
+  col.rgb = mix(vec3(luma), col.rgb, 1.0 + 0.3 * damp) * (1.0 - 0.26 * damp - 0.06 * pud);
+  float grime = nearWall * uDustAmt * (0.6 + 0.8 * groundFine.w);
+  col.rgb = mix(col.rgb, uDust * (0.75 + 0.5 * groundFine.z), clamp(grime, 0.0, 0.85));
+  groundRough = 0.74 + (groundFine.z - 0.5) * 0.3 + cav * 0.14;
+  groundRough = mix(groundRough, 0.4, damp);
+  groundRough = mix(groundRough, 0.2, pud);
+  groundRough = mix(groundRough, mix(0.95, 0.42, uWet), clamp(grime * 1.4, 0.0, 1.0));
+  groundPuddle = pud;
+  // Water fills the pores, dust buries the grain: both smooth the fine relief.
+  groundRelief = (1.0 - 0.7 * grime) * (1.0 - 0.45 * damp);
+  groundBumpK = (1.0 - 0.7 * grime) * (1.0 - 0.8 * pud);
+#ifdef LAVA
+  // Hell: the seams of lava painted in the floor burn and pulse, slowly flowing; the stone beside them is
+  // scorched dark and glows dull red with the heat (from a blurred look at the same texture).
+  vec3 cBlur = texture(uLayers, vec3(uv, best.y), 3.5).rgb;
+  float lavaC = lavaMask(col.rgb / max(1.0 - 0.42 * cav, 0.2));
+  float lavaB = lavaMask(cBlur * 1.6);
+  float flow = texture(uDetail, tp * 0.11 + vec2(uSurfTime * 0.013, -uSurfTime * 0.009)).b;
+  float pulse = 0.72 + 0.28 * sin(uSurfTime * 1.9 + flow * 10.0 + broad * 6.0);
+  vec3 lavaCol = col.rgb / max(1.0 - 0.42 * cav, 0.2);
+  groundGlow = lavaCol * vec3(1.0, 0.62, 0.5) * lavaC * (0.9 * pulse + 0.8 * flow) + vec3(0.8, 0.13, 0.02) * lavaB * lavaB * (1.0 - lavaC) * 0.5 * pulse;
+  col.rgb = mix(col.rgb, lavaCol, lavaC);
+  col.rgb *= 1.0 - 0.45 * lavaB * (1.0 - lavaC);
+  groundRough = mix(mix(0.8 + (groundFine.z - 0.5) * 0.25, 0.4, smoothstep(0.012, 0.004, luma) * (1.0 - lavaB)), 0.95, lavaC);
+  groundRelief *= 1.0 - lavaC;
+  groundBumpK *= 1.0 - lavaC;
+#endif
+#endif
+#ifdef OPEN
+  // What the two winning layers are: plants (grass, dry grass, forest floor), earth (dirt, mud), cobbles.
+  float k1 = b1 / (b1 + b2), k2 = 1.0 - k1;
+  float plant = (best.y < 2.5 ? k1 : 0.0) + (best.w < 2.5 ? k2 : 0.0);
+  float cobble = (best.y == 5.0 ? k1 : 0.0) + (best.w == 5.0 ? k2 : 0.0);
+  float mud = (best.y == 6.0 ? k1 : 0.0) + (best.w == 6.0 ? k2 : 0.0);
+  float earth = (best.y == 3.0 ? k1 : 0.0) + (best.w == 3.0 ? k2 : 0.0) + mud;
+  col.rgb *= 1.0 - (0.22 + 0.2 * cobble) * cav;
+  // Worn edges: where a path meets the grass, the grass is trampled thin, dry and dusty.
+  float worn = clamp(plant * (1.0 - plant) * 4.0, 0.0, 1.0) * (0.6 + 0.8 * groundFine.w);
+  col.rgb = mix(col.rgb, vec3(luma) * vec3(1.12, 1.0, 0.72), worn * 0.35);
+  // Dry roughness: plants and dust matte, cobble tops polished by feet, mud always a little damp.
+  groundRough = 0.94 - 0.2 * cobble * smoothstep(0.45, 0.85, splatH) - 0.3 * mud + (groundFine.z - 0.5) * 0.14;
+  groundRelief = mix(0.35, 1.0, 1.0 - plant) * (1.0 - 0.4 * mud);
+  // Rain: everything darkens and turns glossy (paving and earth most), and water stands in the hollows of
+  // the paths: between cobbles, in ruts and low mud, never on the grass.
+  float soak = uRain * (0.55 + 0.45 * (1.0 - plant));
+  float pud = smoothstep(0.6, 0.68, broad * 0.75 + cav * (0.3 * cobble + 0.2 * earth) + mud * 0.25 + (0.5 - groundFine.z) * 0.1 - plant * 0.6 + 0.16)
+    * smoothstep(0.2, 0.7, uRain);
+  col.rgb = mix(vec3(luma), col.rgb, 1.0 + 0.25 * soak) * (1.0 - 0.38 * soak * (1.0 - 0.4 * plant) - 0.1 * pud);
+  groundRough = mix(groundRough, mix(0.38, 0.6, plant), soak);
+  groundRough = mix(groundRough, 0.04, pud);
+  groundRough = mix(groundRough, 0.3, wet);
+  groundPuddle = pud;
+  groundBumpK = 1.0 - 0.85 * pud;
+#endif
   diffuseColor.rgb *= col.rgb * (1.0 + (w1.w * 1.5 - 0.75) * uMacro) * (1.0 - 0.3 * wet) * uTint;
 #endif
 }
 `)
-        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, 0.32, groundWet);');
+        .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+  roughnessFactor = mix(roughnessFactor, 0.32, groundWet);
+#if defined(DUNGEON) || defined(OPEN)
+  roughnessFactor = groundRough;
+#endif`)
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+#ifdef SURF
+  totalEmissiveRadiance += groundGlow;
+#endif`);
       if (bump) {
         shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_maps>', `
 #include <normal_fragment_maps>
@@ -335,7 +473,12 @@ void splatPick(inout vec4 best, float w, float layer) {
   vec3 r1 = cross(dpdy, normal), r2 = cross(normal, dpdx);
   float det = dot(dpdx, r1);
   vec3 grad = sign(det) * (dhdx * r1 + dhdy * r2);
-  normal = normalize(abs(det) * normal - grad * uBump * 0.02);
+  normal = normalize(abs(det) * normal - grad * uBump * 0.02 * groundBumpK);
+#ifdef SURF_DETAIL
+  // Fine relief over the textures (world space, so it never repeats with them); puddles lie flat.
+  normal = surfTilt(normal, groundFine.xy * 0.55 * groundRelief * (1.0 - groundPuddle), vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0));
+  normal = normalize(mix(normal, normalize(vNormal), groundPuddle));
+#endif
 }
 `);
       }
@@ -548,6 +691,7 @@ export function makeWater(w, h, assets, ground = lastGround, clear = false) {
     },
   ]);
   uniforms.uWaves.value = waves();
+  uniforms.uRain = SURF.uRain;
   const mat = new THREE.ShaderMaterial({
     uniforms,
     transparent: true,
@@ -567,7 +711,7 @@ export function makeWater(w, h, assets, ground = lastGround, clear = false) {
         #include <fog_vertex>
       }`,
     fragmentShader: /* glsl */`
-      uniform float uTime, uLight, uClear;
+      uniform float uTime, uLight, uClear, uRain;
       uniform vec3 uSun, uSunColor, uSky, uHorizon, uDeep, uShallow;
       uniform sampler2D uWaves;
       varying vec3 vPos;
@@ -580,6 +724,8 @@ export function makeWater(w, h, assets, ground = lastGround, clear = false) {
         vec4 a = texture2D(uWaves, p * 0.17 + uTime * vec2(0.013, 0.008));
         vec4 b = texture2D(uWaves, p * 0.43 - uTime * vec2(0.019, -0.023));
         vec2 slope = (a.rg - 0.5) * 0.5 + (b.rg - 0.5) * 0.3;
+        // Rain roughens the surface with fine, fast ripples.
+        if (uRain > 0.01) slope += (texture2D(uWaves, p * 1.37 + uTime * vec2(0.13, -0.09)).rg - 0.5) * 0.45 * uRain;
         vec3 n = normalize(vec3(slope.x, 1.0, slope.y));
         vec3 v = normalize(cameraPosition - vPos);
         vec3 l = normalize(uSun);
@@ -595,7 +741,7 @@ export function makeWater(w, h, assets, ground = lastGround, clear = false) {
         float s1 = pow(nh, 160.0), s8 = s1 * s1;
         s8 *= s8;
         s8 *= s8;
-        float glint = (s1 * 0.6 + s8 * 9.0) * uLight;
+        float glint = (s1 * 0.6 + s8 * 9.0) * uLight * (1.0 - 0.75 * uRain);
         // Shore: the depth is roughened with noise so the waterline wanders off the mesh's straight edges.
         // There the water fades out, with a soft ragged foam line just off it and a fainter one lapping in.
         float nz = a.b * 0.55 + b.b * 0.45;

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { TILE, hash } from './defs.js';
 import { applyOcclusion } from './occlude.js';
+import { kitSurface } from './surface.js';
 
 /**
  * Dungeon dressing: turns the wall boxes into built (or grown) architecture and litters their feet.
@@ -807,8 +808,9 @@ class Dresser {
     const stoneTex = this.world.assets.texture(`tex_${this.style.tex}_top.png`);
     const atlas = this.tpl.candle ? this.tpl.candle.map : null;
     const parts = [
-      this.stone.mesh(material({ map: stoneTex, roughness: 0.9 }, 'dressing-stone', false), 'dressing-stone'),
-      this.kit.mesh(material({ map: atlas, roughness: 0.75 }, 'dressing-kit', true), 'dressing-kit'),
+      // Fine relief, roughness and metal like the kit props (surface.js): carved stone, the kit's own cells.
+      this.stone.mesh(kitSurface(material({ map: stoneTex, roughness: 0.9 }, 'dressing-stone', false), 'stone'), 'dressing-stone'),
+      this.kit.mesh(atlas ? kitSurface(material({ map: atlas, roughness: 0.75 }, 'dressing-kit', true), 'dungeon') : material({ roughness: 0.75 }, 'dressing-kit', true), 'dressing-kit'),
       this.decal.mesh(material({
         map: decals(), roughness: 1, transparent: true, depthWrite: false, side: THREE.DoubleSide,
         polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,

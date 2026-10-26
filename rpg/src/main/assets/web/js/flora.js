@@ -3,6 +3,7 @@ import { applyOcclusion, OCCLUDE } from './occlude.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { SimplexNoise } from 'three/addons/math/SimplexNoise.js';
 import { TILE, hash } from './defs.js';
+import { kitSurface, surfUniforms } from './surface.js';
 
 const simplex = new SimplexNoise({ random: mulberry(7) });
 
@@ -414,24 +415,88 @@ const KINDS = [
 const RIGID = new Set([10, 11, 12, 14]);
 const THIN = new Set([8, 9, 15]);
 
-/** Wind: tree tops and grass tips sway; anchored at the ground. */
+/**
+ * Shared plant shading (vertex): gusts rolling across the land (a broad noise drifting downwind scales the
+ * sway of each plant in turn) and, from the same noise, patches of lusher and drier colour; each plant
+ * also gets its own slight hue. Leaves are told from bark and stems by their green.
+ */
+const PLANT_VERTEX = /* glsl */`
+uniform float uTime;
+uniform float uWind;
+uniform sampler2D uDetail;
+float plantGust(vec3 ip) {
+  return 0.7 + 0.6 * texture(uDetail, ip.xz * 0.021 - uTime * vec2(0.045, 0.028)).b;
+}
+void plantTint(inout vec3 c, vec3 ip) {
+  float patchN = texture(uDetail, ip.xz * 0.013 + 0.5).b;
+  float own = fract(sin(dot(ip.xz, vec2(12.9898, 78.233))) * 43758.5453);
+  float leafy = smoothstep(0.0, 0.03, c.g - c.r);
+  // Lush blue-green to dry yellow-olive, by patch and by plant; bark keeps its colour.
+  vec3 tint = mix(vec3(0.88, 1.02, 0.92), vec3(1.1, 1.03, 0.8), smoothstep(0.25, 0.8, patchN * 0.75 + own * 0.25));
+  c *= mix(vec3(1.0), tint * (0.9 + 0.2 * own), leafy);
+}
+`;
+
+/**
+ * Light through leaves and blades (fragment, after the lights): the sun shines through foliage seen
+ * against it and lights the far side of thin leaves, so shaded canopies and grass glow instead of going
+ * flat and dark. `thru` and `back` weigh the two; only green parts let light through. Rain darkens and
+ * wets the plants a little.
+ */
+function plantLight(thru, back) {
+  return /* glsl */`
+#if NUM_DIR_LIGHTS > 0
+  {
+    vec3 tl = directionalLights[0].direction;
+    float against = pow(clamp(dot(-normalize(vViewPosition), tl), 0.0, 1.0), 4.0);
+    float through = clamp(dot(-normal, tl), 0.0, 1.0);
+    float leafy = smoothstep(0.0, 0.03, vColor.g - vColor.r);
+    reflectedLight.directDiffuse += diffuseColor.rgb * directionalLights[0].color * (${thru.toFixed(2)} * through + ${back.toFixed(2)} * against) * leafy;
+  }
+#endif`;
+}
+
+/** Hooks the plant uniforms and shading into a shader; `tip` names the vertex factor that flutters. */
+function plantShader(shader, uniforms, thru, back) {
+  surfUniforms(shader);
+  shader.uniforms.uTime = uniforms.uTime;
+  shader.uniforms.uWind = uniforms.uWind;
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\n' + PLANT_VERTEX)
+    .replace('#include <color_vertex>', `#include <color_vertex>
+  #if defined(USE_COLOR) && defined(USE_INSTANCING)
+    plantTint(vColor.rgb, instanceMatrix[3].xyz);
+  #endif`);
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', '#include <common>\nuniform float uRain;')
+    .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+  roughnessFactor = mix(roughnessFactor, 0.45, uRain * 0.8);
+  diffuseColor.rgb *= 1.0 - 0.18 * uRain;`)
+    .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n' + plantLight(thru, back));
+}
+
+/** Wind: tree tops and grass tips sway with the gusts and leaves flutter; anchored at the ground. */
 function windMaterial(base, strength, uniforms, occlude = false) {
   base.onBeforeCompile = (shader) => {
     if (occlude) applyOcclusion(shader, 1.3);
-    shader.uniforms.uTime = uniforms.uTime;
-    shader.uniforms.uWind = uniforms.uWind;
+    plantShader(shader, uniforms, 0.3, 0.45);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform float uWind;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         {
           vec3 ip = vec3(0.0);
           #ifdef USE_INSTANCING
             ip = instanceMatrix[3].xyz;
           #endif
-          float k = max(0.0, transformed.y) * ${strength.toFixed(3)} * uWind;
+          float k = max(0.0, transformed.y) * ${strength.toFixed(3)} * uWind * plantGust(ip);
           float ph = uTime * 1.7 + ip.x * 0.37 + ip.z * 0.29;
           transformed.x += (sin(ph) + 0.4 * sin(ph * 2.3 + 1.0)) * k * k;
           transformed.z += (cos(ph * 0.8) * 0.6) * k * k;
+          #ifdef USE_COLOR
+            // Leaves flutter, each a little out of step with its neighbours.
+            float leafy = smoothstep(0.0, 0.03, color.g - color.r);
+            float fl = sin(uTime * 7.3 + dot(position, vec3(9.1, 7.3, 5.7)) + ip.x * 1.3);
+            transformed += objectNormal * fl * 0.012 * leafy * min(uWind, 2.0) * min(1.0, transformed.y);
+          #endif
         }`);
   };
   return base;
@@ -444,18 +509,17 @@ function windMaterial(base, strength, uniforms, occlude = false) {
 function grassMaterial(uniforms) {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, side: THREE.DoubleSide });
   mat.onBeforeCompile = (shader) => {
-    shader.uniforms.uTime = uniforms.uTime;
-    shader.uniforms.uWind = uniforms.uWind;
+    plantShader(shader, uniforms, 0.15, 0.7);
     shader.uniforms.uFade = uniforms.uFade;
     shader.uniforms.uHero = OCCLUDE.uHero;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform float uWind;\nuniform vec2 uFade;\nuniform vec3 uHero;')
+      .replace('#include <common>', '#include <common>\nuniform vec2 uFade;\nuniform vec3 uHero;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         {
           vec3 ip = instanceMatrix[3].xyz;
           vec2 ax = instanceMatrix[0].xz, az = instanceMatrix[2].xz;
           float h = max(0.0, transformed.y);
-          float k = h * 1.6 * uWind;
+          float k = h * 1.6 * uWind * plantGust(ip);
           float ph = uTime * 1.7 + ip.x * 0.37 + ip.z * 0.29;
           vec2 bend = vec2(sin(ph) + 0.4 * sin(ph * 2.3 + 1.0), cos(ph * 0.8) * 0.6) * k * k;
           // The hero's push, from world to tuft space (columns of the matrix: rotation times scale).
@@ -874,7 +938,8 @@ export class Flora {
       }
     }
     if (!list.length) return;
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
+    // Weathered logs: wood grain and roughness from surface.js.
+    const mat = kitSurface(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), 'wood');
     const mesh = new THREE.InstancedMesh(geo, mat, list.length);
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
     list.forEach(([x, z, r], j) => {
