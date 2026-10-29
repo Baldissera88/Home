@@ -244,3 +244,27 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-w
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Sleeping in their own bed */
+.sleep { padding: 16px; border-radius: 26px; color: #fff; background: linear-gradient(180deg, #151A45, #332A78); }
+.sleep-title { font-size: 20px; font-weight: 900; }
+.sleep small { opacity: .8; }
+.sleep .strong-w { font-weight: 600; opacity: .9; }
+.sleep-count { color: var(--gold); font-size: 22px; font-weight: 900; }
+.bar.dark { height: 14px; margin: 0; background: rgba(255,255,255,.15); }
+.sleep-btn { width: 100%; padding: 16px; border-radius: 20px; background: linear-gradient(90deg, #FFE57F, var(--gold)); color: var(--ink); font-size: 17px; font-weight: 900; }
+.sleep-note { padding: 14px; border-radius: 20px; background: rgba(255,255,255,.12); text-align: center; font-weight: 800; }
+.cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.cal-h { text-align: center; font-size: 12px; opacity: .5; }
+.day {
+  aspect-ratio: 1; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800;
+  border: 1px solid rgba(43,33,64,.25); color: rgba(43,33,64,.7);
+}
+.cal.dark .day { border-color: rgba(255,255,255,.25); color: rgba(255,255,255,.7); }
+.day.future { opacity: .35; }
+.day.today { border: 2px solid var(--gold); }
+.day.good { border: 0; background: radial-gradient(circle, rgba(255,214,64,.55) 0%, rgba(255,193,7,.22) 60%, rgba(255,193,7,.08) 100%); font-size: 19px; box-shadow: 0 0 10px rgba(255,200,40,.35); }
+.day.wait { border: 0; background: rgba(255,193,7,.35); font-size: 13px; }
+.day.cloud { border: 0; background: rgba(43,33,64,.1); font-size: 14px; }
+.cal.dark .day.cloud { background: rgba(255,255,255,.1); }
+.center-t { text-align: center; }

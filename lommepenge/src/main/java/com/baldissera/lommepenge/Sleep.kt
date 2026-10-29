@@ -76,9 +76,9 @@ private fun DayCell(d: LocalDate, n: Night?, today: LocalDate, fg: Color, onDay:
     val mod = if (onDay != null && !future) base.bouncy { onDay(d) } else base
     when {
         n != null && n.ok && n.approved -> Box(
-            mod.background(Brush.radialGradient(listOf(Color(0xFFFFF3B0), Gold, Color(0xFFF2A900)))),
+            mod.background(Brush.radialGradient(listOf(Color(0x8CFFD640), Color(0x38FFC107), Color(0x14FFC107)))),
             contentAlignment = Alignment.Center,
-        ) { Text("⭐", fontSize = 15.sp) }
+        ) { Text("⭐", fontSize = 18.sp) }
         n != null && n.ok -> Box(mod.background(Gold.copy(alpha = 0.35f)), contentAlignment = Alignment.Center) {
             Text("⏳", fontSize = 13.sp)
         }

@@ -44,7 +44,7 @@ function addDays(d, n) {
   return r;
 }
 
-function parseDate(s) {
+export function parseDate(s) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || '');
   return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
 }
@@ -66,6 +66,8 @@ export function periodOf(repeat, d) {
 }
 
 export const markKey = (chore, kid, period) => `${chore}_${kid}_${period}`;
+export const nightKey = (kid, date) => `${kid}_${date}`;
+export const monthKey = (d) => isoDate(d).slice(0, 7);
 
 /** A long random code: anyone who has it can see and change the family's data, so it must not be guessable. */
 export function familyCode() {
@@ -114,7 +116,7 @@ export function familyOf(t) {
     .map(([id, k]) => ({
       id, name: k.name || '', avatar: k.avatar || '🙂', color: k.color | 0, balance: sums[id] || 0,
       weekly: k.weekly | 0, goalName: k.goalName || '', goalEmoji: k.goalEmoji || '🎁', goalAmount: k.goalAmount | 0,
-      since: k.since || '', order: k.order || 0,
+      since: k.since || '', order: k.order || 0, sleep: k.sleep !== false,
     }))
     .sort(byOrder);
   const chores = entries(t.chores)
@@ -127,15 +129,20 @@ export function familyOf(t) {
   const marks = entries(t.marks).map(([key, m]) => ({
     key, chore: m.chore || '', kid: m.kid || '', period: m.period || '', approved: !!m.approved, time: m.time || 0,
   }));
+  const nights = entries(t.nights).map(([key, n]) => ({
+    key, kid: n.kid || '', date: n.date || '', ok: !!n.ok, approved: !!n.approved, time: n.time || 0,
+  }));
+  const sl = s.sleep || {};
+  const sleep = { nightly: sl.nightly ?? 100, goal: sl.goal ?? 20, bonus: sl.bonus ?? 5000 };
   return {
-    kids, chores, marks, txns,
+    kids, chores, marks, txns, nights, sleep,
     pin: s.pin || '1234', pinChanged: !!s.pinChanged, approval: s.approval !== false,
   };
 }
 
 const kidJson = (k) => ({
   name: k.name, avatar: k.avatar, color: k.color, weekly: k.weekly, goalName: k.goalName, goalEmoji: k.goalEmoji,
-  goalAmount: k.goalAmount, since: k.since, order: k.order,
+  goalAmount: k.goalAmount, since: k.since, order: k.order, sleep: k.sleep !== false,
 });
 const choreJson = (c) => ({
   title: c.title, emoji: c.emoji, reward: c.reward, repeat: c.repeat,
@@ -186,7 +193,7 @@ export class Store {
   createOnline() {
     const tree = this.display();
     const all = {};
-    for (const k of ['settings', 'kids', 'chores', 'marks', 'txns']) all[k] = tree[k] ?? null;
+    for (const k of ['settings', 'kids', 'chores', 'marks', 'txns', 'nights']) all[k] = tree[k] ?? null;
     this.base = tree;
     this.pending = [all];
     this.setCode(familyCode());
@@ -380,6 +387,7 @@ export class Store {
     for (const m of this.family.marks) if (m.kid === id) u[`marks/${m.key}`] = null;
     for (const t of this.family.txns) if (t.kid === id) u[`txns/${t.id}`] = null;
     for (const c of this.family.chores) if (c.kids.includes(id)) u[`chores/${c.id}/kids/${id}`] = null;
+    for (const n of this.family.nights) if (n.kid === id) u[`nights/${n.key}`] = null;
     this.write(u);
   }
 
@@ -397,6 +405,57 @@ export class Store {
 
   setPin(pin) { this.write({ 'settings/pin': pin, 'settings/pinChanged': true }); }
   setApproval(on) { this.write({ 'settings/approval': on }); }
+
+  // ----- Sleeping in their own bed. A night's date is the morning after, when it gets told. -----
+
+  todayDate() { return this.today(); }
+  pendingNights() { return this.family.nights.filter((n) => !n.approved && this.kid(n.kid)); }
+  waitingCount() { return this.pendingMarks().length + this.pendingNights().length; }
+  night(kid, d) { return this.family.nights.find((n) => n.key === nightKey(kid, isoDate(d))); }
+  nightsIn(kid, month) { return this.family.nights.filter((n) => n.kid === kid && n.date.startsWith(month)); }
+  goodNights(kid, month) { return this.nightsIn(kid, month).filter((n) => n.ok && n.approved).length; }
+
+  /** Nights in a row in their own bed, counting back from last night (or the night before, if not told yet). */
+  streak(kid) {
+    let d = this.today();
+    if (!this.night(kid, d)) d = addDays(d, -1);
+    let n = 0;
+    for (let x = this.night(kid, d); x && x.ok && x.approved; x = this.night(kid, d)) { n++; d = addDays(d, -1); }
+    return n;
+  }
+
+  /** The kid says they slept in their own bed last night; with approval on, a parent confirms it. */
+  sleptInOwnBed(kid) {
+    const d = this.today();
+    if (this.night(kid, d)) return;
+    if (this.family.approval) {
+      const date = isoDate(d);
+      this.write({ [`nights/${nightKey(kid, date)}`]: { kid, date, ok: true, approved: false, time: this.now() } });
+    } else this.setNight(kid, d, true);
+  }
+
+  approveNight(n) { this.setNight(n.kid, parseDate(n.date), true); }
+  rejectNight(n) { this.setNight(n.kid, parseDate(n.date), false); }
+
+  /** A parent's say on one night (true, false, or null for not told); keeps night money and the month's bonus in step. */
+  setNight(kid, d, ok) {
+    const date = isoDate(d);
+    const key = nightKey(kid, date);
+    const rules = this.family.sleep;
+    const has = (id) => this.family.txns.some((t) => t.id === id);
+    const u = { [`nights/${key}`]: ok === null ? null : { kid, date, ok, approved: true, time: this.now() } };
+    if (ok === true && !has(`n_${key}`) && rules.nightly > 0) u[`txns/n_${key}`] = this.txn(kid, rules.nightly, 'Sov i egen seng', '🌙');
+    else if (ok !== true && has(`n_${key}`)) u[`txns/n_${key}`] = null;
+    const month = monthKey(d);
+    const good = this.nightsIn(kid, month).filter((n) => n.date !== date && n.ok && n.approved).length + (ok === true ? 1 : 0);
+    const bonusId = `s_${kid}_${month}`;
+    if (good >= rules.goal && rules.bonus > 0 && !has(bonusId)) {
+      u[`txns/${bonusId}`] = this.txn(kid, rules.bonus, `Månedsbonus: ${good} nætter i egen seng`, '🏆');
+    } else if (good < rules.goal && has(bonusId)) u[`txns/${bonusId}`] = null;
+    this.write(u);
+  }
+
+  setSleepRules(r) { this.write({ 'settings/sleep': { nightly: r.nightly, goal: r.goal, bonus: r.bonus } }); }
 }
 
 function starterTree(today, t) {

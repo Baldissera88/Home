@@ -1,7 +1,7 @@
 import { html, render, useState, useEffect, useRef, useReducer } from './vendor/htm-preact-standalone.js';
 import { DATABASE_URL } from './config.js';
 import { VERSION } from './version.js';
-import { Store, FirebaseRemote, kr, parseKr, krText, REPEAT, prettyCode, normalizeCode } from './store.js';
+import { Store, FirebaseRemote, kr, parseKr, krText, REPEAT, prettyCode, normalizeCode, isoDate, monthKey } from './store.js';
 
 const PALETTES = [
   ['#36B9FF', '#3A6FF7'], ['#FF7EB3', '#B548F0'], ['#3EDC8A', '#0FA3B1'],
@@ -262,7 +262,7 @@ function Home({ go }) {
       ${loading && html`<div class="glass card-pad">${store.sync === 'ERROR' ? '⚠️ Kunne ikke hente familien. Tjek familiekoden under Forældre.' : '⏳ Henter familiens data…'}</div>`}
       ${fam.kids.map((k) => {
         const [done, total] = store.progress(k.id);
-        const waiting = fam.marks.some((m) => m.kid === k.id && !m.approved);
+        const waiting = fam.marks.some((m) => m.kid === k.id && !m.approved) || fam.nights.some((n) => n.kid === k.id && !n.approved);
         return html`<button class="kid-card" key=${k.id} style=${{ background: grad(palette(k.color)), '--glow': palette(k.color)[1] }}
           onClick=${() => { fx.tap(); go(`kid:${k.id}`); }}>
           <${Avatar} kid=${k} size=${80} />
@@ -320,6 +320,7 @@ function KidPage({ id, go }) {
         <${Avatar} kid=${kid} size=${52} />
       </div>
       <${BankCard} kid=${kid} wiggle=${party} />
+      ${kid.sleep && html`<${SleepCard} kid=${kid} onParty=${() => { setParty((x) => x + 1); confetti(); }} />`}
       ${kid.goalAmount > 0 && html`<${GoalCard} kid=${kid} color=${p[1]} />`}
       <div class="section"><span>I dag</span>${total > 0 && html`<small>${done} af ${total}</small>`}</div>
       ${daily.length === 0 && html`<div class="glass card-pad">Ingen daglige pligter – nyd dagen! ☀️</div>`}
@@ -379,6 +380,129 @@ function ChoreCard({ chore, status, onTick }) {
   </button>`;
 }
 
+// ---------- Sleeping in their own bed ----------
+
+const MONTHS = ['Januar', 'Februar', 'Marts', 'April', 'Maj', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'December'];
+const monthName = (m) => MONTHS[+m.slice(5, 7) - 1];
+function shiftMonth(m, by) {
+  const d = new Date(+m.slice(0, 4), +m.slice(5, 7) - 1 + by, 1);
+  return monthKey(d);
+}
+
+/** The month as a grid of nights: a star for their own bed, a cloud for a night in the big bed. */
+function NightCalendar({ month, kid, dark, onDay }) {
+  const today = store.todayDate();
+  const todayIso = isoDate(today);
+  const y = +month.slice(0, 4);
+  const mo = +month.slice(5, 7) - 1;
+  const days = new Date(y, mo + 1, 0).getDate();
+  const lead = (new Date(y, mo, 1).getDay() + 6) % 7;
+  const byDate = Object.fromEntries(store.nightsIn(kid.id, month).map((n) => [n.date, n]));
+  const cells = [...Array(lead).fill(null), ...Array.from({ length: days }, (_, i) => new Date(y, mo, i + 1))];
+  return html`<div class=${`cal ${dark ? 'dark' : ''}`}>
+    ${['M', 'T', 'O', 'T', 'F', 'L', 'S'].map((d) => html`<b class="cal-h">${d}</b>`)}
+    ${cells.map((d) => {
+      if (!d) return html`<span></span>`;
+      const iso = isoDate(d);
+      const n = byDate[iso];
+      const future = iso > todayIso;
+      const cls = n ? (n.ok && n.approved ? 'good' : n.ok ? 'wait' : 'cloud') : `empty ${iso === todayIso ? 'today' : ''} ${future ? 'future' : ''}`;
+      const label = n ? (n.ok && n.approved ? '⭐' : n.ok ? '⏳' : '☁️') : d.getDate();
+      return onDay && !future
+        ? html`<button class=${`day ${cls}`} onClick=${() => onDay(d)}>${label}</button>`
+        : html`<span class=${`day ${cls}`}>${label}</span>`;
+    })}
+  </div>`;
+}
+
+/** The kid's own-bed month: stars so far, how close the bonus is, and the morning button. */
+function SleepCard({ kid, onParty }) {
+  const today = store.todayDate();
+  const month = monthKey(today);
+  const rules = store.family.sleep;
+  const good = store.goodNights(kid.id, month);
+  const streak = store.streak(kid.id);
+  const tonight = store.night(kid.id, today);
+  const tell = () => {
+    store.sleptInOwnBed(kid.id);
+    onParty();
+    const now = store.goodNights(kid.id, month);
+    if (good < rules.goal && now >= rules.goal) {
+      fx.fanfare();
+      fx.say(`Hurra ${kid.name}! Du har sovet i din egen seng ${now} nætter og får månedens bonus!`);
+    } else {
+      fx.coin();
+      fx.say(`Hvor er du sej, ${kid.name}! Du sov i din egen seng.`);
+    }
+  };
+  const note = !tonight ? null : !tonight.approved ? '⏳ Mor eller far skal lige se det'
+    : tonight.ok ? '⭐ Flot! Du sov i din egen seng i nat' : '☁️ I nat gik det ikke – i aften prøver vi igen!';
+  return html`<div class="sleep stack">
+    <div class="row gap12">
+      <span class="big-emoji">🌙</span>
+      <div class="grow"><div class="sleep-title">Min egen seng</div>
+        <small>${monthName(month)}${streak > 1 ? ` · ${streak} nætter i træk 🔥` : ''}</small></div>
+      <b class="sleep-count">${good}/${rules.goal}</b>
+    </div>
+    <div class="bar dark"><div class="bar-fill" style=${{ width: `${Math.max(3, Math.min(100, (good / rules.goal) * 100))}%` }}></div></div>
+    <small class="strong-w">${good >= rules.goal ? `🏆 Månedens bonus på ${kr(rules.bonus)} er i grisen!`
+      : `${rules.goal - good} nætter mere giver ${kr(rules.bonus)} i bonus${rules.nightly > 0 ? ` · +${kr(rules.nightly)} pr. nat` : ''}`}</small>
+    <${NightCalendar} month=${month} kid=${kid} dark=${true} />
+    ${note ? html`<div class="sleep-note">${note}</div>`
+      : html`<button class="sleep-btn" onClick=${tell}>Jeg sov i min egen seng i nat! 🌟</button>`}
+  </div>`;
+}
+
+function NightsDialog({ kid, close }) {
+  useStore();
+  const now = monthKey(store.todayDate());
+  const [month, setMonth] = useState(now);
+  const rules = store.family.sleep;
+  const good = store.goodNights(kid.id, month);
+  const cycle = (d) => {
+    fx.tap();
+    const n = store.night(kid.id, d);
+    store.setNight(kid.id, d, !n ? true : n.ok && n.approved ? false : n.ok ? true : null);
+  };
+  return html`<${Modal} title=${`${kid.name}s nætter`} close=${close}>
+    <div class="row gap8">
+      <button class="btn purple outline" onClick=${() => { fx.tap(); setMonth(shiftMonth(month, -1)); }}>‹</button>
+      <b class="grow center-t">${monthName(month)} ${month.slice(0, 4)}</b>
+      <button class="btn purple outline" disabled=${month >= now} onClick=${() => { fx.tap(); setMonth(shiftMonth(month, 1)); }}>›</button>
+    </div>
+    <${NightCalendar} month=${month} kid=${kid} dark=${false} onDay=${cycle} />
+    <b>${good} af ${rules.goal} nætter i egen seng${good >= rules.goal ? ' – bonus givet 🏆' : ''}</b>
+    <div class="muted">Tryk på en nat for at skifte: ⭐ egen seng → ☁️ kom ind → ikke registreret.</div>
+    <div class="row"><span class="grow"></span><button class="btn purple" onClick=${close}>Luk</button></div>
+  <//>`;
+}
+
+function SleepRulesCard() {
+  const r = store.family.sleep;
+  const [nightly, setNightly] = useState(krText(r.nightly));
+  const [goal, setGoal] = useState(String(r.goal));
+  const [bonus, setBonus] = useState(krText(r.bonus));
+  const [saved, setSaved] = useState(false);
+  const n = parseKr(nightly);
+  const g = /^\d+$/.test(goal) ? +goal : null;
+  const b = parseKr(bonus);
+  const ok = n !== null && n >= 0 && g !== null && g >= 1 && g <= 31 && b !== null && b >= 0;
+  const edit = (set) => (e) => { set(e.target.value); setSaved(false); };
+  return html`<div class="card card-pad stack">
+    <div class="row gap12"><span class="big-emoji">🌙</span><div><b>Sove i egen seng</b>
+      <div class="muted">Lidt for hver nat og en bonus, når månedens mål er nået.</div></div></div>
+    <div class="row gap8">
+      <label class="grow">Pr. nat (kr)<input class=${`field ${n === null ? 'bad' : ''}`} inputmode="decimal" value=${nightly} onInput=${edit(setNightly)} /></label>
+      <label class="grow">Nætter<input class=${`field ${g === null || g < 1 || g > 31 ? 'bad' : ''}`} inputmode="numeric" value=${goal} onInput=${edit(setGoal)} /></label>
+      <label class="grow">Bonus (kr)<input class=${`field ${b === null ? 'bad' : ''}`} inputmode="decimal" value=${bonus} onInput=${edit(setBonus)} /></label>
+    </div>
+    <div class="row gap8">
+      <span class=${`grow ${saved ? 'plus' : 'muted'}`}>${saved ? '✓ Gemt' : 'Bonus gives ved det antal nætter på en måned.'}</span>
+      <button class="btn purple" disabled=${!ok} onClick=${() => { fx.coin(); store.setSleepRules({ nightly: n, goal: g, bonus: b }); setSaved(true); }}>Gem</button>
+    </div>
+  </div>`;
+}
+
 // ---------- Parents ----------
 
 function Pin({ go }) {
@@ -413,20 +537,23 @@ function Pin({ go }) {
 
 function Parent({ go }) {
   const pending = store.pendingMarks();
-  const [tab, setTab] = useState(pending.length ? 0 : 1);
+  const nights = store.pendingNights();
+  const waiting = pending.length + nights.length;
+  const [tab, setTab] = useState(waiting ? 0 : 1);
   const [modal, setModal] = useState(null);
   const close = () => setModal(null);
-  const names = [pending.length ? `Godkend (${pending.length})` : 'Godkend', 'Pligter', 'Børn', 'Indstillinger'];
+  const names = [waiting ? `Godkend (${waiting})` : 'Godkend', 'Pligter', 'Børn', 'Indstillinger'];
   return html`<div class="page parent">
     <header class="p-head">
       <div class="row"><h2 class="grow">Forældre</h2><button class="pill glass sm" onClick=${() => { fx.tap(); go('home'); }}>Luk ✕</button></div>
       <nav class="tabs">${names.map((n, i) => html`<button class=${tab === i ? 'on' : ''} onClick=${() => { fx.tap(); setTab(i); }}>${n}</button>`)}</nav>
     </header>
     <main class="p-body stack">
-      ${tab === 0 && html`<${ApproveTab} pending=${pending} />`}
+      ${tab === 0 && html`<${ApproveTab} pending=${pending} nights=${nights} />`}
       ${tab === 1 && html`<${ChoresTab} edit=${(c) => setModal(html`<${ChoreEditor} start=${c} close=${close} />`)} />`}
       ${tab === 2 && html`<${KidsTab} edit=${(k) => setModal(html`<${KidEditor} start=${k} close=${close} />`)}
-        money=${(k, plus) => setModal(html`<${MoneyDialog} kid=${k} plus=${plus} close=${close} />`)} />`}
+        money=${(k, plus) => setModal(html`<${MoneyDialog} kid=${k} plus=${plus} close=${close} />`)}
+        nights=${(k) => setModal(html`<${NightsDialog} kid=${k} close=${close} />`)} />`}
       ${tab === 3 && html`<${SettingsTab} />`}
     </main>
     ${modal}
@@ -437,10 +564,24 @@ const Note = ({ emoji, title, children }) => html`<div class="card card-pad row 
   <span class="big-emoji">${emoji}</span><div><b>${title}</b><div class="muted">${children}</div></div>
 </div>`;
 
-function ApproveTab({ pending }) {
-  if (!pending.length) return html`<${Note} emoji="🎉" title="Intet at godkende lige nu">Når børnene krydser en pligt af, dukker den op her.<//>`;
+function ApproveTab({ pending, nights }) {
+  if (!pending.length && !nights.length) return html`<${Note} emoji="🎉" title="Intet at godkende lige nu">Når børnene krydser en pligt af, dukker den op her.<//>`;
   return html`
-    <button class="btn green wide" onClick=${() => { fx.coin(); store.approveAll(); }}>✓ Godkend alle (${pending.length})</button>
+    <button class="btn green wide" onClick=${() => { fx.coin(); store.approveAll(); nights.forEach((n) => store.approveNight(n)); }}>✓ Godkend alle (${pending.length + nights.length})</button>
+    ${nights.map((n) => {
+      const kid = store.kid(n.kid);
+      return html`<div class="card card-pad stack" key=${n.key}>
+        <div class="row gap12">
+          <div class="avatar sm" style=${{ background: grad(palette(kid.color)) }}>${kid.avatar}</div>
+          <div class="grow"><small class="muted">${kid.name} · ${dayLabel(n.time)}</small><div class="strong ellipsis">🌙 Sov i egen seng i nat</div></div>
+          ${store.family.sleep.nightly > 0 && html`<b class="gold">+${kr(store.family.sleep.nightly)}</b>`}
+        </div>
+        <div class="row gap8">
+          <button class="btn green grow" onClick=${() => { fx.coin(); store.approveNight(n); }}>✓ Godkend</button>
+          <button class="btn red outline grow" onClick=${() => { fx.tap(); store.rejectNight(n); }}>☁️ Kom ind</button>
+        </div>
+      </div>`;
+    })}
     ${pending.map((m) => {
       const kid = store.kid(m.kid);
       const c = store.chore(m.chore);
@@ -478,13 +619,13 @@ function ChoresTab({ edit }) {
     })}`;
 }
 
-function KidsTab({ edit, money }) {
+function KidsTab({ edit, money, nights }) {
   const fam = store.family;
   const addKid = () => {
     fx.tap();
     const used = new Set(fam.kids.map((k) => k.color));
     edit({ id: '', name: '', avatar: AVATAR_EMOJIS.find((a) => !fam.kids.some((k) => k.avatar === a)) || '🙂',
-      color: [0, 1, 2, 3, 4, 5].find((i) => !used.has(i)) ?? 0, weekly: 2000, goalName: '', goalEmoji: '🎁', goalAmount: 0 });
+      color: [0, 1, 2, 3, 4, 5].find((i) => !used.has(i)) ?? 0, weekly: 2000, goalName: '', goalEmoji: '🎁', goalAmount: 0, sleep: true });
   };
   return html`
     ${fam.kids.map((k) => html`<div class="card kid-admin" key=${k.id}>
@@ -496,6 +637,7 @@ function KidsTab({ edit, money }) {
       <div class="row gap8 card-pad">
         <button class="btn green grow" onClick=${() => { fx.tap(); money(k, true); }}>＋ Bonus</button>
         <button class="btn red grow" onClick=${() => { fx.tap(); money(k, false); }}>− Udbetal</button>
+        ${k.sleep && html`<button class="btn purple outline" onClick=${() => { fx.tap(); nights(k); }} aria-label="Nætter">🌙</button>`}
         <button class="btn purple outline" onClick=${() => { fx.tap(); edit(k); }}>Ret</button>
       </div>
       ${store.history(k.id).slice(0, 3).map((t) => html`<div class="row mini-h" key=${t.id}>
@@ -515,6 +657,7 @@ function SettingsTab() {
   const fam = store.family;
   return html`
     <${OnlineCard} />
+    <${SleepRulesCard} />
     <div class="card card-pad row gap12">
       <div class="grow"><b>Forældre godkender pligter</b>
         <div class="muted">${fam.approval ? 'Pengene kommer først i grisen, når I har godkendt.' : 'Pengene kommer i grisen, så snart barnet krydser af.'}</div></div>
@@ -631,6 +774,7 @@ function KidEditor({ start, close }) {
   const [goalName, setGoalName] = useState(start.goalName);
   const [goalEmoji, setGoalEmoji] = useState(start.goalEmoji);
   const [goal, setGoal] = useState(start.goalAmount ? krText(start.goalAmount) : '');
+  const [sleep, setSleep] = useState(start.sleep !== false);
   const [sure, setSure] = useState(false);
   const w = parseKr(weekly);
   const g = parseKr(goal);
@@ -645,12 +789,14 @@ function KidEditor({ start, close }) {
     <label>Sparemål</label><${EmojiGrid} options=${GOAL_EMOJIS} value=${goalEmoji} pick=${setGoalEmoji} />
     <label>Hvad sparer ${name.trim() || 'barnet'} op til?<input class="field" value=${goalName} maxlength="30" onInput=${(e) => setGoalName(e.target.value)} /></label>
     <label>Koster (kr) – tom = intet mål<input class=${`field ${g === null ? 'bad' : ''}`} inputmode="decimal" value=${goal} onInput=${(e) => setGoal(e.target.value)} /></label>
+    <div class="row gap12"><div class="grow"><b>🌙 Sove i egen seng</b><div class="muted">Stjerner og månedsbonus for nætter i egen seng</div></div>
+      <${Toggle} on=${sleep} onChange=${setSleep} /></div>
     <div class="row gap8">
       ${start.id && html`<button class=${`btn red ${sure ? '' : 'outline'}`} onClick=${() => { if (sure) { store.removeKid(start.id); close(); } else setSure(true); }}>${sure ? 'Slet alt?' : 'Slet'}</button>`}
       <span class="grow"></span>
       <button class="btn grey outline" onClick=${close}>Annuller</button>
       <button class="btn purple" disabled=${!ok} onClick=${() => {
-        store.saveKid({ ...start, name: name.trim(), avatar, color, weekly: w, goalName: goalName.trim(), goalEmoji, goalAmount: g });
+        store.saveKid({ ...start, name: name.trim(), avatar, color, weekly: w, goalName: goalName.trim(), goalEmoji, goalAmount: g, sleep });
         close();
       }}>Gem</button>
     </div>

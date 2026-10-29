@@ -40,15 +40,17 @@ Everything for one family lives under `families/<code>`. Money is in øre. Both 
 
 | Path | Value |
 | --- | --- |
-| `settings` | `{ pin, pinChanged, approval }` |
-| `kids/<id>` | `{ name, avatar, color, weekly, goalName, goalEmoji, goalAmount, since, order }` – weekly allowance is paid for each Monday after `since` (`YYYY-MM-DD`) |
+| `settings` | `{ pin, pinChanged, approval, sleep: { nightly, goal, bonus } }` |
+| `kids/<id>` | `{ name, avatar, color, weekly, goalName, goalEmoji, goalAmount, since, order, sleep }` – `sleep` (default true) means the kid collects own-bed stars; weekly allowance is paid for each Monday after `since` (`YYYY-MM-DD`) |
 | `chores/<id>` | `{ title, emoji, reward, repeat: DAILY \| WEEKLY \| ONCE, kids: { <kidId>: true }, order }` |
 | `marks/<chore>_<kid>_<period>` | `{ chore, kid, period, approved, time }` – period is `YYYY-MM-DD`, ISO week `YYYY-Www`, or `once` |
+| `nights/<kid>_<YYYY-MM-DD>` | `{ kid, date, ok, approved, time }` – a night, dated the morning after; `ok` = slept in their own bed |
 | `txns/<id>` | `{ kid, amount, text, emoji, time }` |
 
 - A kid's balance is the sum of their `txns`; it is never stored, so simultaneous changes can't lose money.
 - Writes are multi-path PATCHes. Ids that two phones might write at the same time are fixed, so the second write
-  changes nothing: chore payments are `txns/m_<mark key>`, weekly allowance is `txns/a_<kid>_<monday>`.
+  changes nothing: chore payments are `txns/m_<mark key>`, weekly allowance is `txns/a_<kid>_<monday>`, a good night is `txns/n_<night key>` and the monthly
+  own-bed bonus is `txns/s_<kid>_<YYYY-MM>`. Correcting a night adds or removes those so they always match the nights.
 - Each app applies its writes locally at once and queues them while offline; the server's event stream brings in
   everyone else's changes.
 

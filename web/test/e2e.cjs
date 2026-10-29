@@ -75,6 +75,26 @@ fs.mkdirSync(out, { recursive: true });
   await b.getByText('14,50 kr').first().waitFor();
   await shot(a, '6-parent-kids');
 
+  // Filucca slept in her own bed: she says so on B, A approves, and her star shows on both.
+  await b.getByRole('button', { name: 'Tilbage' }).click();
+  await b.getByRole('button', { name: /Filucca/ }).click();
+  await b.getByRole('button', { name: /Jeg sov i min egen seng/ }).click();
+  await b.getByText('Mor eller far skal lige se det').waitFor();
+  await a.getByRole('button', { name: /Godkend \(/ }).click();
+  await a.getByRole('button', { name: '☁️ Kom ind' }).waitFor();
+  await a.locator('.card', { hasText: 'Sov i egen seng' }).getByRole('button', { name: '✓ Godkend' }).click();
+  await b.getByText('Flot! Du sov i din egen seng i nat').waitFor();
+  await shot(b, '2b-kid-sleep');
+
+  // Parents fill in earlier nights in the calendar.
+  await a.getByRole('button', { name: 'Børn' }).click();
+  await a.getByRole('button', { name: 'Nætter' }).nth(1).click();
+  const days = a.locator('.sheet .day.empty:not(.future)');
+  const n = Math.min(await days.count(), 6);
+  for (let i = 0; i < n; i++) await a.locator('.sheet .day.empty:not(.future)').first().click();
+  await shot(a, '10-nights');
+  await a.getByRole('button', { name: 'Luk', exact: true }).click();
+
   // Chore editor and PIN pad.
   await a.getByRole('button', { name: 'Pligter' }).click();
   await shot(a, '5-parent-chores');
