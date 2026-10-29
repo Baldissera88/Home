@@ -1,0 +1,16 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Pink piggy bank with a gold coin dropping into the slot -->
+    <path android:fillColor="#D9578F" android:pathData="M38,62 h7 v12 h-7 z M62,62 h7 v12 h-7 z" />
+    <path android:fillColor="#F7A1C4" android:pathData="M30,58 a24,17 0 1,0 48,0 a24,17 0 1,0 -48,0 z" />
+    <path android:fillColor="#F7A1C4" android:pathData="M56,44 l6,-10 l6,12 z" />
+    <path android:fillColor="#E7779F" android:pathData="M72,52 h7 a4,4 0 0,1 4,4 v5 a4,4 0 0,1 -4,4 h-7 z" />
+    <path android:fillColor="#B84374" android:pathData="M76,57 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0 z" />
+    <path android:fillColor="#3B2A4A" android:pathData="M64,53 a2.2,2.2 0 1,0 4.4,0 a2.2,2.2 0 1,0 -4.4,0 z" />
+    <path android:fillColor="#B84374" android:pathData="M46,43 h14 a1.5,1.5 0 0,1 0,3 h-14 a1.5,1.5 0 0,1 0,-3 z" />
+    <path android:fillColor="#FFB300" android:pathData="M44,32 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0 z" />
+    <path android:fillColor="#FFE082" android:pathData="M47,32 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0 z" />
+</vector>

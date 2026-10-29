@@ -28,3 +28,13 @@ A third app in the `rpg/` module: a dark-fantasy action RPG in the spirit of Dia
 - Synthesised sound effects and ambience; the hero is saved automatically.
 
 Download `skyggernes-dyb-apk` from the CI run.
+
+## Pligter & Lommepenge
+
+A fourth app in the `lommepenge/` module: a colourful chores and pocket-money app for the kids (Danish UI).
+
+- **For the kids.** Each child taps their own card and sees today's and this week's chores as big cards with an emoji and a reward. Ticking one off sets off confetti and coins, a coin sound and a spoken cheer; finishing every chore for the day plays a fanfare. A drawn piggy bank shows the balance, a progress bar tracks the savings goal (e.g. LEGO for 300 kr), and the piggy-bank diary lists what came in and went out.
+- **For parents** (behind a 4-digit code, default `1234`): approve or reject ticked-off chores, create and edit chores (daily, weekly or one-off, reward, icon, which kids), add or edit kids (name, figure, colour, weekly allowance, savings goal), give a bonus or pay money out, change the code and turn approval off.
+- Weekly allowance is added automatically every Monday. Everything is stored on the device only.
+
+Download `lommepenge-apk` from the CI run. Screens are rendered by `./gradlew :lommepenge:testDebugUnitTest` and published to `lommepenge/screens/`.

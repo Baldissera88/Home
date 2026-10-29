@@ -39,6 +39,15 @@ jobs:
         with:
           name: skyggernes-dyb-apk
           path: rpg/build/outputs/apk/debug/*.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lommepenge-apk
+          path: lommepenge/build/outputs/apk/debug/*.apk
+      - name: Lommepenge tests (logic + screenshots)
+        id: lommetests
+        continue-on-error: true
+        timeout-minutes: 8
+        run: ./gradlew :lommepenge:testDebugUnitTest
       - name: RPG UI screenshots
         id: uitests
         continue-on-error: true
@@ -75,6 +84,30 @@ jobs:
             echo "world tests: ${{ steps.rpgtests.outcome }}, ui: ${{ steps.uitests.outcome }} @ ${GITHUB_SHA::7}" > rpg/screens/STATUS.txt
             git add -A rpg/screens rpg/screens3d
             git commit -q -m "[ci] RPG screenshots for ${GITHUB_SHA::7}" || exit 0
+            if git push -q origin "HEAD:${GITHUB_REF_NAME}"; then exit 0; fi
+            sleep $((attempt * 3))
+          done
+          echo "screenshot push failed"
+      - name: Publish Lommepenge screenshots to the branch
+        if: always() && github.event_name == 'push'
+        run: |
+          if ! ls lommepenge/build/screens/*.jpg >/dev/null 2>&1; then
+            echo "no screenshots (tests: ${{ steps.lommetests.outcome }})"
+            exit 0
+          fi
+          shots=$(mktemp -d)
+          cp lommepenge/build/screens/*.jpg "$shots/"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for attempt in 1 2 3 4; do
+            git fetch -q origin "${GITHUB_REF_NAME}"
+            git checkout -q -B publish-lommepenge "origin/${GITHUB_REF_NAME}"
+            mkdir -p lommepenge/screens
+            rm -f lommepenge/screens/*.jpg
+            cp "$shots"/*.jpg lommepenge/screens/
+            echo "tests: ${{ steps.lommetests.outcome }} @ ${GITHUB_SHA::7}" > lommepenge/screens/STATUS.txt
+            git add -A lommepenge/screens
+            git commit -q -m "[ci] Lommepenge screenshots for ${GITHUB_SHA::7}" || exit 0
             if git push -q origin "HEAD:${GITHUB_REF_NAME}"; then exit 0; fi
             sleep $((attempt * 3))
           done

@@ -17,3 +17,4 @@ rootProject.name = "Home"
 include(":app")
 include(":filucca")
 include(":rpg")
+include(":lommepenge")
