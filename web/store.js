@@ -168,7 +168,7 @@ export class Store {
   connect() {
     if (!this.remote || !this.code) return;
     this.remote.start(this.code, (path, data) => this.onServer(path, data), (s) => { this.sync = s; this.emit(); });
-    for (const u of this.pending) this.remote.send(this.code, u, (x) => this.onAck(x));
+    for (const u of [...this.pending]) this.remote.send(this.code, u, (x) => this.onAck(x));
   }
 
   disconnect() {

@@ -146,7 +146,7 @@ class Store(
         val r = remote ?: return
         if (code.isEmpty()) return
         r.start(code, ::onServer, { sync = it })
-        for (u in pending) r.send(code, u, ::onAck)
+        for (u in pending.toList()) r.send(code, u, ::onAck)
     }
 
     fun disconnect() {
