@@ -128,7 +128,7 @@ fun SleepCard(store: Store, kid: Kid, fx: Feedback, onParty: () -> Unit) {
         Text(
             when {
                 good >= rules.goal -> "🏆 Månedens bonus på ${kr(rules.bonus)} er i grisen!"
-                else -> "${rules.goal - good} nætter mere giver ${kr(rules.bonus)} i bonus" +
+                else -> "${rules.goal - good} ${if (rules.goal - good == 1) "nat" else "nætter"} mere giver ${kr(rules.bonus)} i bonus" +
                     if (rules.nightly > 0) " · +${kr(rules.nightly)} pr. nat" else ""
             },
             color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,

@@ -446,7 +446,7 @@ function SleepCard({ kid, onParty }) {
     </div>
     <div class="bar dark"><div class="bar-fill" style=${{ width: `${Math.max(3, Math.min(100, (good / rules.goal) * 100))}%` }}></div></div>
     <small class="strong-w">${good >= rules.goal ? `🏆 Månedens bonus på ${kr(rules.bonus)} er i grisen!`
-      : `${rules.goal - good} nætter mere giver ${kr(rules.bonus)} i bonus${rules.nightly > 0 ? ` · +${kr(rules.nightly)} pr. nat` : ''}`}</small>
+      : `${rules.goal - good} ${rules.goal - good === 1 ? 'nat' : 'nætter'} mere giver ${kr(rules.bonus)} i bonus${rules.nightly > 0 ? ` · +${kr(rules.nightly)} pr. nat` : ''}`}</small>
     <${NightCalendar} month=${month} kid=${kid} dark=${true} />
     ${note ? html`<div class="sleep-note">${note}</div>`
       : html`<button class="sleep-btn" onClick=${tell}>Jeg sov i min egen seng i nat! 🌟</button>`}
