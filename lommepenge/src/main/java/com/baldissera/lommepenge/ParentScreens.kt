@@ -44,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -319,6 +320,7 @@ private fun SettingsTab(store: Store, fx: Feedback) {
     var newPin by remember { mutableStateOf("") }
     var saved by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        OnlineCard(store, fx)
         Row(Modifier.fillMaxWidth().card().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Forældre godkender pligter", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
@@ -351,7 +353,94 @@ private fun SettingsTab(store: Store, fx: Feedback) {
         }
         Note("💡", "Sådan virker det",
             "Ugepenge lægges automatisk i grisen hver mandag. Daglige pligter nulstilles hver morgen, ugentlige hver mandag. " +
-                "Alt gemmes kun på denne enhed.")
+                if (store.online) "Alt deles online med jeres andre telefoner." else "Alt gemmes kun på denne telefon.")
+    }
+}
+
+/** Sharing the family online, so Android phones and iPhones (through the web version) see the same chores and money. */
+@Composable
+private fun OnlineCard(store: Store, fx: Feedback) {
+    val context = LocalContext.current
+    var joining by remember { mutableStateOf(false) }
+    var typed by remember { mutableStateOf("") }
+    var bad by remember { mutableStateOf(false) }
+    var confirmLeave by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().card().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("☁️", fontSize = 26.sp)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Online deling", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    when {
+                        DATABASE_URL.isBlank() -> "Ikke sat op endnu"
+                        store.code.isEmpty() -> "Kun på denne telefon"
+                        else -> when (store.sync) {
+                            SyncState.ONLINE -> "Forbundet – alt er delt"
+                            SyncState.CONNECTING -> "Forbinder…"
+                            SyncState.ERROR -> "Serveren afviste forbindelsen"
+                            else -> "Offline – ændringer sendes senere"
+                        }
+                    },
+                    color = Ink.copy(alpha = 0.6f), fontSize = 13.sp,
+                )
+            }
+            if (store.code.isNotEmpty()) {
+                Box(Modifier.size(12.dp).background(
+                    when (store.sync) {
+                        SyncState.ONLINE -> Green
+                        SyncState.ERROR -> Red
+                        else -> Gold
+                    }, CircleShape))
+            }
+        }
+        when {
+            DATABASE_URL.isBlank() -> Text(
+                "Når den online database er sat op, kan I bruge appen på flere telefoner – også iPhone via web-versionen.",
+                color = Ink.copy(alpha = 0.7f), fontSize = 14.sp,
+            )
+            store.code.isEmpty() && !joining -> {
+                Text("Del familien, så I kan bruge den på flere telefoner – også iPhone via web-versionen.",
+                    color = Ink.copy(alpha = 0.7f), fontSize = 14.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SmallButton("Del online", Purple, Modifier.weight(1f)) { fx.coin(); store.createOnline() }
+                    SmallButton("Har en kode", Purple, Modifier.weight(1f), outline = true) { fx.tap(); joining = true }
+                }
+            }
+            store.code.isEmpty() -> {
+                Text("Skriv koden fra den anden telefon. Data på denne telefon bliver erstattet af familiens.",
+                    color = Ink.copy(alpha = 0.7f), fontSize = 14.sp)
+                OutlinedTextField(typed, { typed = it.take(80); bad = false }, label = { Text("Familiekode") },
+                    singleLine = true, isError = bad, modifier = Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Spacer(Modifier.weight(1f))
+                    SmallButton("Annuller", Ink.copy(alpha = 0.6f), outline = true) { joining = false }
+                    SmallButton("Forbind", Purple) {
+                        if (store.join(typed)) { fx.coin(); joining = false; typed = "" } else bad = true
+                    }
+                }
+            }
+            else -> {
+                Text("Familiekode", color = Ink.copy(alpha = 0.6f), fontSize = 13.sp)
+                Text(prettyCode(store.code), color = Purple, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                Text("Åbn linket på iPhonen og vælg Del → Føj til hjemmeskærm. På en anden Android: skriv koden under Indstillinger.",
+                    color = Ink.copy(alpha = 0.7f), fontSize = 13.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SmallButton("Del link", Purple, Modifier.weight(1f)) {
+                        fx.tap()
+                        val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(android.content.Intent.EXTRA_TEXT,
+                                "Pligter & Lommepenge: $WEB_URL#familie=${store.code}")
+                        }
+                        context.startActivity(android.content.Intent.createChooser(send, "Del familien"))
+                    }
+                    SmallButton(if (confirmLeave) "Sikker?" else "Stop deling", Red, Modifier.weight(1f), outline = !confirmLeave) {
+                        if (confirmLeave) { store.leave(); confirmLeave = false } else confirmLeave = true
+                    }
+                }
+            }
+        }
     }
 }
 

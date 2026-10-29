@@ -8,7 +8,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.time.DayOfWeek
 import java.time.LocalDate
-import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 import java.time.temporal.WeekFields
 import java.util.UUID
@@ -18,7 +17,10 @@ enum class Repeat(val label: String) { DAILY("Hver dag"), WEEKLY("Hver uge"), ON
 
 enum class Status { TODO, PENDING, DONE }
 
-/** All money is in øre so 2,50 kr rewards work without rounding. */
+/**
+ * All money is in øre so 2,50 kr rewards work without rounding. The balance is never stored: it is the sum of the
+ * kid's transactions, so two phones changing it at the same time can't lose money.
+ */
 data class Kid(
     val id: String,
     val name: String,
@@ -29,8 +31,9 @@ data class Kid(
     val goalName: String = "",
     val goalEmoji: String = "🎁",
     val goalAmount: Int = 0,
-    /** Monday of the last week whose weekly allowance was paid. */
-    val allowanceFrom: String = "",
+    /** Weekly allowance is paid for every Monday after this one. */
+    val since: String = "",
+    val order: Long = 0,
 )
 
 data class Chore(
@@ -40,6 +43,7 @@ data class Chore(
     val reward: Int,
     val repeat: Repeat,
     val kids: Set<String>,
+    val order: Long = 0,
 )
 
 /** A chore a kid has ticked off for one period (a day, a week, or for good). */
@@ -49,9 +53,11 @@ data class Mark(
     val period: String,
     val approved: Boolean,
     val time: Long,
-)
+) {
+    val key get() = markKey(chore, kid, period)
+}
 
-data class Txn(val kid: String, val amount: Int, val text: String, val emoji: String, val time: Long)
+data class Txn(val id: String, val kid: String, val amount: Int, val text: String, val emoji: String, val time: Long)
 
 data class Family(
     val kids: List<Kid> = emptyList(),
@@ -90,22 +96,145 @@ fun periodOf(r: Repeat, d: LocalDate): String = when (r) {
 
 fun mondayOf(d: LocalDate): LocalDate = d.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
 
+fun markKey(chore: String, kid: String, period: String) = "${chore}_${kid}_$period"
+
+enum class SyncState { OFF, CONNECTING, ONLINE, OFFLINE, ERROR }
+
+/**
+ * The family's data, kept as one JSON tree in the same shape as the online database (see web/README.md):
+ * settings, kids, chores, marks and txns. Every change is a set of path → value writes; they apply locally at once
+ * and, when the family is shared online, are queued and sent to the server, which streams everyone's changes back.
+ */
 class Store(
     private val prefs: SharedPreferences,
     private val today: () -> LocalDate = { LocalDate.now() },
     private val clock: () -> Long = { System.currentTimeMillis() },
+    private val remote: Remote? = null,
 ) {
-    var family by mutableStateOf(load())
+    /** The server's copy (or the only copy while not shared online). */
+    private var base: JSONObject = JSONObject()
+    /** Writes not yet confirmed by the server, oldest first. */
+    private val pending = ArrayList<JSONObject>()
+
+    var family by mutableStateOf(Family())
+        private set
+    var sync by mutableStateOf(SyncState.OFF)
+        private set
+    var code by mutableStateOf(prefs.getString(CODE, "") ?: "")
         private set
 
-    private fun load(): Family {
-        val raw = prefs.getString(KEY, null) ?: return starter(today())
-        return runCatching { familyFromJson(JSONObject(raw)) }.getOrElse { starter(today()) }
+    init {
+        val saved = prefs.getString(TREE, null)
+        val old = prefs.getString(OLD_KEY, null)
+        base = when {
+            saved != null -> runCatching { JSONObject(saved) }.getOrElse { starterTree() }
+            old != null -> runCatching { migrate(JSONObject(old)) }.getOrElse { starterTree() }
+            else -> starterTree()
+        }
+        prefs.getString(PENDING, null)?.let { s ->
+            runCatching { JSONArray(s) }.getOrNull()?.let { a -> for (i in 0 until a.length()) pending += a.getJSONObject(i) }
+        }
+        refresh()
+        save()
+        if (old != null) prefs.edit().remove(OLD_KEY).apply()
     }
 
-    private fun update(f: (Family) -> Family) {
-        family = f(family)
-        prefs.edit().putString(KEY, family.toJson().toString()).apply()
+    val online get() = code.isNotEmpty() && remote != null
+
+    /** Starts streaming from the server and resends anything written while offline. */
+    fun connect() {
+        val r = remote ?: return
+        if (code.isEmpty()) return
+        r.start(code, ::onServer, { sync = it })
+        for (u in pending) r.send(code, u, ::onAck)
+    }
+
+    fun disconnect() {
+        remote?.stop()
+        sync = SyncState.OFF
+    }
+
+    /** Shares this phone's family online under a new code. */
+    fun createOnline(): String {
+        val newCode = familyCode()
+        val all = JSONObject()
+        val tree = display()
+        for (k in listOf("settings", "kids", "chores", "marks", "txns")) all.put(k, tree.opt(k) ?: JSONObject.NULL)
+        base = tree
+        pending.clear()
+        pending += all
+        setCode(newCode)
+        save()
+        connect()
+        return newCode
+    }
+
+    /** Joins a family another phone already shares; this phone's own data is replaced by theirs. */
+    fun join(raw: String): Boolean {
+        val c = normalizeCode(raw) ?: return false
+        disconnect()
+        base = JSONObject()
+        pending.clear()
+        setCode(c)
+        refresh()
+        save()
+        connect()
+        return true
+    }
+
+    /** Stops sharing; the phone keeps its current copy and works on its own again. */
+    fun leave() {
+        disconnect()
+        base = display()
+        pending.clear()
+        setCode("")
+        refresh()
+        save()
+    }
+
+    private fun setCode(c: String) {
+        code = c
+        prefs.edit().putString(CODE, c).apply()
+    }
+
+    private fun onServer(path: String, data: Any?) {
+        base = applyAt(base, path, data)
+        refresh()
+        save()
+    }
+
+    private fun onAck(u: JSONObject) {
+        pending.remove(u)
+        save()
+    }
+
+    private fun write(u: JSONObject) {
+        if (u.length() == 0) return
+        if (online) {
+            pending += u
+            remote?.send(code, u, ::onAck)
+        } else {
+            for (k in u.keys()) base = applyAt(base, k, u.get(k))
+        }
+        refresh()
+        save()
+    }
+
+    private fun display(): JSONObject {
+        var t = JSONObject(base.toString())
+        for (u in pending) for (k in u.keys()) t = applyAt(t, k, u.get(k))
+        return t
+    }
+
+    private fun refresh() {
+        family = familyOf(display())
+    }
+
+    private fun save() {
+        prefs.edit()
+            .putString(TREE, base.toString())
+            .putString(PENDING, JSONArray(pending).toString())
+            .apply()
     }
 
     fun kid(id: String): Kid? = family.kids.firstOrNull { it.id == id }
@@ -113,8 +242,8 @@ class Store(
     fun chore(id: String): Chore? = family.chores.firstOrNull { it.id == id }
 
     private fun markOf(chore: Chore, kid: String): Mark? {
-        val p = periodOf(chore.repeat, today())
-        return family.marks.firstOrNull { it.chore == chore.id && it.kid == kid && it.period == p }
+        val key = markKey(chore.id, kid, periodOf(chore.repeat, today()))
+        return family.marks.firstOrNull { it.key == key }
     }
 
     fun status(chore: Chore, kid: String): Status {
@@ -136,173 +265,275 @@ class Store(
     fun tick(chore: Chore, kid: String) {
         if (markOf(chore, kid) != null) return
         val m = Mark(chore.id, kid, periodOf(chore.repeat, today()), approved = !family.approval, time = clock())
-        update { it.copy(marks = it.marks + m) }
-        if (m.approved) credit(kid, chore.reward, chore.title, chore.emoji)
+        val u = upd("marks/${m.key}" to m.json())
+        if (m.approved) u.put("txns/m_${m.key}", txnJson(kid, chore.reward, chore.title, chore.emoji))
+        write(u)
     }
 
     fun pending(): List<Mark> = family.marks.filter { !it.approved && chore(it.chore) != null && kid(it.kid) != null }
 
-    fun approve(m: Mark) {
-        val c = chore(m.chore) ?: return
-        update { f -> f.copy(marks = f.marks.map { if (it == m) it.copy(approved = true) else it }) }
-        credit(m.kid, c.reward, c.title, c.emoji)
+    fun approve(m: Mark) = approveAll(listOf(m))
+
+    fun approveAll(list: List<Mark> = pending()) {
+        val u = JSONObject()
+        for (m in list) {
+            val c = chore(m.chore) ?: continue
+            u.put("marks/${m.key}/approved", true)
+            u.put("txns/m_${m.key}", txnJson(m.kid, c.reward, c.title, c.emoji))
+        }
+        write(u)
     }
 
-    fun approveAll() = pending().forEach { approve(it) }
-
-    fun reject(m: Mark) = update { f -> f.copy(marks = f.marks - m) }
+    fun reject(m: Mark) = write(upd("marks/${m.key}" to null))
 
     /** Adds (or with a negative amount, takes out) money and writes it in the kid's piggy-bank diary. */
     fun credit(kid: String, amount: Int, text: String, emoji: String) {
         if (amount == 0) return
-        update { f ->
-            f.copy(
-                kids = f.kids.map { if (it.id == kid) it.copy(balance = it.balance + amount) else it },
-                txns = (f.txns + Txn(kid, amount, text, emoji, clock())).takeLast(MAX_TXNS),
-            )
-        }
+        write(upd("txns/${newId()}" to txnJson(kid, amount, text, emoji)))
     }
 
     fun history(kid: String): List<Txn> = family.txns.filter { it.kid == kid }.asReversed()
 
-    /** Pays each kid's weekly allowance for every Monday since the last payment. */
+    /**
+     * Pays each kid's weekly allowance for every Monday since they were added (at most 12 weeks back). Each payment
+     * has a fixed id per kid and Monday, so two phones paying at once still pay only once.
+     */
     fun payAllowances() {
         val monday = mondayOf(today())
+        val have = family.txns.map { it.id }.toSet()
+        val u = JSONObject()
         for (k in family.kids) {
-            val last = runCatching { LocalDate.parse(k.allowanceFrom) }.getOrNull()
-            if (last == null) {
-                saveKid(k.copy(allowanceFrom = monday.toString()))
-                continue
-            }
-            val weeks = ChronoUnit.WEEKS.between(last, monday).toInt().coerceIn(0, 12)
-            if (weeks == 0) continue
-            update { f -> f.copy(kids = f.kids.map { if (it.id == k.id) it.copy(allowanceFrom = monday.toString()) else it }) }
-            if (k.weekly > 0) {
-                credit(k.id, k.weekly * weeks, if (weeks == 1) "Ugepenge" else "Ugepenge ($weeks uger)", "📅")
-            }
-        }
-    }
-
-    /** Forgets ticks from long ago so the saved data stays small. */
-    fun tidy() {
-        val cutoff = today().minusDays(45).toString()
-        update { f ->
-            f.copy(marks = f.marks.filter { m ->
-                val c = f.chores.firstOrNull { it.id == m.chore } ?: return@filter false
-                when (c.repeat) {
-                    Repeat.DAILY -> m.period >= cutoff
-                    Repeat.WEEKLY -> m.period >= weekKey(today().minusDays(45))
-                    Repeat.ONCE -> true
+            if (k.weekly <= 0) continue
+            val since = runCatching { LocalDate.parse(k.since) }.getOrNull() ?: continue
+            var m = maxOf(since.plusWeeks(1), monday.minusWeeks(11))
+            while (!m.isAfter(monday)) {
+                val id = "a_${k.id}_$m"
+                if (id !in have) {
+                    u.put("txns/$id", txnJson(k.id, k.weekly, "Ugepenge", "📅", m.atTime(7, 0)
+                        .atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()))
                 }
-            })
+                m = m.plusWeeks(1)
+            }
+        }
+        write(u)
+    }
+
+    /** Forgets old daily and weekly ticks (and ticks of deleted chores) so the data stays small. */
+    fun tidy() {
+        val day = today().minusDays(45).toString()
+        val week = weekKey(today().minusDays(45))
+        val u = JSONObject()
+        for (m in family.marks) {
+            val c = chore(m.chore)
+            val old = when (c?.repeat) {
+                null -> true
+                Repeat.DAILY -> m.period < day
+                Repeat.WEEKLY -> m.period < week
+                Repeat.ONCE -> false
+            }
+            if (old || kid(m.kid) == null) u.put("marks/${m.key}", JSONObject.NULL)
+        }
+        write(u)
+    }
+
+    fun saveKid(k: Kid) {
+        val old = kid(k.id)
+        val monday = mondayOf(today()).toString()
+        if (old == null) {
+            val id = k.id.ifEmpty { newId() }
+            val u = upd("kids/$id" to k.copy(id = id, since = monday, order = clock()).json())
+            for (c in family.chores) if (c.repeat != Repeat.ONCE) u.put("chores/${c.id}/kids/$id", true)
+            write(u)
+        } else {
+            // A changed allowance starts next Monday rather than being paid for weeks gone by.
+            val since = if (old.weekly != k.weekly) monday else old.since
+            write(upd("kids/${k.id}" to k.copy(since = since, order = old.order).json()))
         }
     }
 
-    fun saveKid(k: Kid) = update { f ->
-        if (f.kids.any { it.id == k.id }) f.copy(kids = f.kids.map { if (it.id == k.id) k else it })
-        else f.copy(
-            kids = f.kids + k.copy(allowanceFrom = mondayOf(today()).toString()),
-            chores = f.chores.map { if (it.repeat != Repeat.ONCE) it.copy(kids = it.kids + k.id) else it },
+    fun removeKid(id: String) {
+        val u = upd("kids/$id" to null)
+        for (m in family.marks) if (m.kid == id) u.put("marks/${m.key}", JSONObject.NULL)
+        for (t in family.txns) if (t.kid == id) u.put("txns/${t.id}", JSONObject.NULL)
+        for (c in family.chores) if (id in c.kids) u.put("chores/${c.id}/kids/$id", JSONObject.NULL)
+        write(u)
+    }
+
+    fun saveChore(c: Chore) {
+        val old = chore(c.id)
+        val id = c.id.ifEmpty { newId() }
+        write(upd("chores/$id" to c.copy(id = id, order = old?.order ?: clock()).json()))
+    }
+
+    fun removeChore(id: String) {
+        val u = upd("chores/$id" to null)
+        for (m in family.marks) if (m.chore == id) u.put("marks/${m.key}", JSONObject.NULL)
+        write(u)
+    }
+
+    fun setPin(pin: String) = write(upd("settings/pin" to pin, "settings/pinChanged" to true))
+
+    fun setApproval(on: Boolean) = write(upd("settings/approval" to on))
+
+    private fun txnJson(kid: String, amount: Int, text: String, emoji: String, time: Long = clock()) =
+        JSONObject().put("kid", kid).put("amount", amount).put("text", text).put("emoji", emoji).put("time", time)
+
+    private fun starterTree(): JSONObject {
+        val monday = mondayOf(today()).toString()
+        val t = clock()
+        val kids = listOf(
+            Kid("victor", "Victor", "🦁", 0, weekly = 2000, goalName = "LEGO", goalEmoji = "🧱", goalAmount = 30000, since = monday, order = t),
+            Kid("filucca", "Filucca", "🦄", 1, weekly = 2000, goalName = "Nyt spil", goalEmoji = "🎮", goalAmount = 25000, since = monday, order = t + 1),
         )
-    }
-
-    fun removeKid(id: String) = update { f ->
-        f.copy(
-            kids = f.kids.filter { it.id != id },
-            chores = f.chores.map { it.copy(kids = it.kids - id) },
-            marks = f.marks.filter { it.kid != id },
-            txns = f.txns.filter { it.kid != id },
+        val all = kids.map { it.id }.toSet()
+        val chores = listOf(
+            Chore(newId(), "Red sengen", "🛏️", 200, Repeat.DAILY, all, t),
+            Chore(newId(), "Børst tænder", "🦷", 100, Repeat.DAILY, all, t + 1),
+            Chore(newId(), "Dæk bord", "🍽️", 300, Repeat.DAILY, all, t + 2),
+            Chore(newId(), "Ryd op på værelset", "🧸", 1000, Repeat.WEEKLY, all, t + 3),
+            Chore(newId(), "Gå ud med skraldet", "🗑️", 500, Repeat.WEEKLY, all, t + 4),
+            Chore(newId(), "Hjælp med at støvsuge", "🧹", 1500, Repeat.WEEKLY, all, t + 5),
         )
+        return JSONObject()
+            .put("settings", JSONObject().put("pin", "1234").put("pinChanged", false).put("approval", true))
+            .put("kids", JSONObject().apply { kids.forEach { put(it.id, it.json()) } })
+            .put("chores", JSONObject().apply { chores.forEach { put(it.id, it.json()) } })
     }
 
-    fun saveChore(c: Chore) = update { f ->
-        if (f.chores.any { it.id == c.id }) f.copy(chores = f.chores.map { if (it.id == c.id) c else it })
-        else f.copy(chores = f.chores + c)
+    /** Converts data saved by the first version of the app (balances stored on each kid). */
+    private fun migrate(o: JSONObject): JSONObject {
+        val tree = JSONObject()
+        tree.put("settings", JSONObject().put("pin", o.optString("pin", "1234"))
+            .put("pinChanged", o.optBoolean("pinChanged")).put("approval", o.optBoolean("approval", true)))
+        val txns = JSONObject()
+        val sums = HashMap<String, Int>()
+        o.optJSONArray("txns").objects().forEach { t ->
+            val kid = t.getString("kid")
+            sums[kid] = (sums[kid] ?: 0) + t.getInt("amount")
+            txns.put(newId(), JSONObject().put("kid", kid).put("amount", t.getInt("amount")).put("text", t.optString("text"))
+                .put("emoji", t.optString("emoji", "💰")).put("time", t.optLong("time")))
+        }
+        val kids = JSONObject()
+        o.optJSONArray("kids").objects().forEachIndexed { i, k ->
+            val id = k.getString("id")
+            val diff = k.optInt("balance") - (sums[id] ?: 0)
+            if (diff != 0) {
+                txns.put(newId(), JSONObject().put("kid", id).put("amount", diff).put("text", "Startsaldo")
+                    .put("emoji", "🐷").put("time", 0))
+            }
+            kids.put(id, Kid(id, k.getString("name"), k.optString("avatar", "🙂"), k.optInt("color"),
+                weekly = k.optInt("weekly"), goalName = k.optString("goalName"), goalEmoji = k.optString("goalEmoji", "🎁"),
+                goalAmount = k.optInt("goalAmount"),
+                since = k.optString("allowanceFrom").ifEmpty { mondayOf(today()).toString() }, order = i.toLong()).json())
+        }
+        val chores = JSONObject()
+        o.optJSONArray("chores").objects().forEachIndexed { i, c ->
+            val ids = c.optJSONArray("kids")
+            val map = JSONObject()
+            if (ids != null) for (j in 0 until ids.length()) map.put(ids.getString(j), true)
+            chores.put(c.getString("id"), JSONObject().put("title", c.getString("title")).put("emoji", c.optString("emoji", "⭐"))
+                .put("reward", c.optInt("reward")).put("repeat", c.optString("repeat", "DAILY")).put("kids", map).put("order", i))
+        }
+        val marks = JSONObject()
+        o.optJSONArray("marks").objects().forEach { m ->
+            val mk = Mark(m.getString("chore"), m.getString("kid"), m.getString("period"), m.optBoolean("approved"), m.optLong("time"))
+            marks.put(mk.key, mk.json())
+        }
+        return tree.put("kids", kids).put("chores", chores).put("marks", marks).put("txns", txns)
     }
-
-    fun removeChore(id: String) = update { f ->
-        f.copy(chores = f.chores.filter { it.id != id }, marks = f.marks.filter { it.chore != id })
-    }
-
-    fun setPin(pin: String) = update { it.copy(pin = pin, pinChanged = true) }
-
-    fun setApproval(on: Boolean) = update { it.copy(approval = on) }
 
     companion object {
-        const val KEY = "family"
-        private const val MAX_TXNS = 400
+        private const val TREE = "tree"
+        private const val PENDING = "pending"
+        private const val CODE = "familyCode"
+        private const val OLD_KEY = "family"
     }
 }
 
-/** What a fresh install starts with; every bit of it can be edited in the parent area. */
-fun starter(today: LocalDate): Family {
-    val monday = mondayOf(today).toString()
-    val kids = listOf(
-        Kid("victor", "Victor", "🦁", 0, weekly = 2000, goalName = "LEGO", goalEmoji = "🧱", goalAmount = 30000, allowanceFrom = monday),
-        Kid("filucca", "Filucca", "🦄", 1, weekly = 2000, goalName = "Nyt spil", goalEmoji = "🎮", goalAmount = 25000, allowanceFrom = monday),
-    )
-    val all = kids.map { it.id }.toSet()
-    val chores = listOf(
-        Chore(newId(), "Red sengen", "🛏️", 200, Repeat.DAILY, all),
-        Chore(newId(), "Børst tænder", "🦷", 100, Repeat.DAILY, all),
-        Chore(newId(), "Dæk bord", "🍽️", 300, Repeat.DAILY, all),
-        Chore(newId(), "Ryd op på værelset", "🧸", 1000, Repeat.WEEKLY, all),
-        Chore(newId(), "Gå ud med skraldet", "🗑️", 500, Repeat.WEEKLY, all),
-        Chore(newId(), "Hjælp med at støvsuge", "🧹", 1500, Repeat.WEEKLY, all),
-    )
-    return Family(kids = kids, chores = chores)
+private const val CODE_CHARS = "abcdefghjkmnpqrstuvwxyz23456789"
+
+/** A long random code: anyone who has it can see and change the family's data, so it must not be guessable. */
+fun familyCode(): String {
+    val r = java.security.SecureRandom()
+    return (1..20).map { CODE_CHARS[r.nextInt(CODE_CHARS.length)] }.joinToString("")
 }
 
-private fun Family.toJson() = JSONObject().apply {
-    put("pin", pin)
-    put("pinChanged", pinChanged)
-    put("approval", approval)
-    put("kids", JSONArray(kids.map { k ->
-        JSONObject().put("id", k.id).put("name", k.name).put("avatar", k.avatar).put("color", k.color)
-            .put("balance", k.balance).put("weekly", k.weekly).put("goalName", k.goalName)
-            .put("goalEmoji", k.goalEmoji).put("goalAmount", k.goalAmount).put("allowanceFrom", k.allowanceFrom)
-    }))
-    put("chores", JSONArray(chores.map { c ->
-        JSONObject().put("id", c.id).put("title", c.title).put("emoji", c.emoji).put("reward", c.reward)
-            .put("repeat", c.repeat.name).put("kids", JSONArray(c.kids.toList()))
-    }))
-    put("marks", JSONArray(marks.map { m ->
-        JSONObject().put("chore", m.chore).put("kid", m.kid).put("period", m.period)
-            .put("approved", m.approved).put("time", m.time)
-    }))
-    put("txns", JSONArray(txns.map { t ->
-        JSONObject().put("kid", t.kid).put("amount", t.amount).put("text", t.text).put("emoji", t.emoji).put("time", t.time)
-    }))
+/** Accepts a typed code ("abcd-efgh-…") or a shared link ("…#familie=abcd…"). */
+fun normalizeCode(raw: String): String? {
+    val c = raw.substringAfter("familie=").lowercase().filter { it in CODE_CHARS }
+    return if (c.length >= 16) c else null
 }
+
+fun prettyCode(c: String) = c.chunked(4).joinToString("-")
+
+fun upd(vararg pairs: Pair<String, Any?>): JSONObject {
+    val o = JSONObject()
+    for ((k, v) in pairs) o.put(k, v ?: JSONObject.NULL)
+    return o
+}
+
+/** Writes [value] at a slash-separated [path] of the tree (null deletes), like the online database does. */
+fun applyAt(root: JSONObject, path: String, value: Any?): JSONObject {
+    val parts = path.split('/').filter { it.isNotEmpty() }
+    val isNull = value == null || value == JSONObject.NULL
+    if (parts.isEmpty()) return if (value is JSONObject) JSONObject(value.toString()) else JSONObject()
+    var node = root
+    for (p in parts.dropLast(1)) {
+        node = node.optJSONObject(p) ?: JSONObject().also { node.put(p, it) }
+    }
+    val last = parts.last()
+    if (isNull) node.remove(last)
+    else node.put(last, if (value is JSONObject) JSONObject(value.toString()) else value)
+    return root
+}
+
+private fun Kid.json() = JSONObject().put("name", name).put("avatar", avatar).put("color", color).put("weekly", weekly)
+    .put("goalName", goalName).put("goalEmoji", goalEmoji).put("goalAmount", goalAmount).put("since", since).put("order", order)
+
+private fun Chore.json() = JSONObject().put("title", title).put("emoji", emoji).put("reward", reward)
+    .put("repeat", repeat.name).put("kids", JSONObject().apply { kids.forEach { put(it, true) } }).put("order", order)
+
+private fun Mark.json() = JSONObject().put("chore", chore).put("kid", kid).put("period", period)
+    .put("approved", approved).put("time", time)
 
 private fun JSONArray?.objects(): List<JSONObject> =
     if (this == null) emptyList() else (0 until length()).map { getJSONObject(it) }
 
-private fun familyFromJson(o: JSONObject) = Family(
-    pin = o.optString("pin", "1234"),
-    pinChanged = o.optBoolean("pinChanged", false),
-    approval = o.optBoolean("approval", true),
-    kids = o.optJSONArray("kids").objects().map { k ->
+private fun JSONObject?.entries(): List<Pair<String, JSONObject>> {
+    if (this == null) return emptyList()
+    return keys().asSequence().mapNotNull { k -> optJSONObject(k)?.let { k to it } }.toList()
+}
+
+fun familyOf(t: JSONObject): Family {
+    val s = t.optJSONObject("settings")
+    val txns = t.optJSONObject("txns").entries().map { (id, o) ->
+        Txn(id, o.optString("kid"), o.optInt("amount"), o.optString("text"), o.optString("emoji", "💰"), o.optLong("time"))
+    }.sortedWith(compareBy({ it.time }, { it.id }))
+    val sums = txns.groupBy { it.kid }.mapValues { (_, l) -> l.sumOf { it.amount } }
+    val kids = t.optJSONObject("kids").entries().map { (id, k) ->
         Kid(
-            id = k.getString("id"), name = k.getString("name"), avatar = k.optString("avatar", "🙂"),
-            color = k.optInt("color"), balance = k.optInt("balance"), weekly = k.optInt("weekly"),
-            goalName = k.optString("goalName"), goalEmoji = k.optString("goalEmoji", "🎁"),
-            goalAmount = k.optInt("goalAmount"), allowanceFrom = k.optString("allowanceFrom"),
+            id = id, name = k.optString("name"), avatar = k.optString("avatar", "🙂"), color = k.optInt("color"),
+            balance = sums[id] ?: 0, weekly = k.optInt("weekly"), goalName = k.optString("goalName"),
+            goalEmoji = k.optString("goalEmoji", "🎁"), goalAmount = k.optInt("goalAmount"),
+            since = k.optString("since"), order = k.optLong("order"),
         )
-    },
-    chores = o.optJSONArray("chores").objects().map { c ->
-        val ids = c.optJSONArray("kids")
+    }.sortedWith(compareBy({ it.order }, { it.id }))
+    val chores = t.optJSONObject("chores").entries().map { (id, c) ->
         Chore(
-            id = c.getString("id"), title = c.getString("title"), emoji = c.optString("emoji", "⭐"),
-            reward = c.optInt("reward"),
-            repeat = runCatching { Repeat.valueOf(c.getString("repeat")) }.getOrDefault(Repeat.DAILY),
-            kids = if (ids == null) emptySet() else (0 until ids.length()).map { ids.getString(it) }.toSet(),
+            id = id, title = c.optString("title"), emoji = c.optString("emoji", "⭐"), reward = c.optInt("reward"),
+            repeat = runCatching { Repeat.valueOf(c.optString("repeat")) }.getOrDefault(Repeat.DAILY),
+            kids = c.optJSONObject("kids")?.keys()?.asSequence()?.filter { c.optJSONObject("kids")!!.optBoolean(it) }?.toSet()
+                ?: emptySet(),
+            order = c.optLong("order"),
         )
-    },
-    marks = o.optJSONArray("marks").objects().map { m ->
-        Mark(m.getString("chore"), m.getString("kid"), m.getString("period"), m.optBoolean("approved"), m.optLong("time"))
-    },
-    txns = o.optJSONArray("txns").objects().map { t ->
-        Txn(t.getString("kid"), t.getInt("amount"), t.optString("text"), t.optString("emoji", "💰"), t.optLong("time"))
-    },
-)
+    }.sortedWith(compareBy({ it.order }, { it.id }))
+    val marks = t.optJSONObject("marks").entries().map { (_, m) ->
+        Mark(m.optString("chore"), m.optString("kid"), m.optString("period"), m.optBoolean("approved"), m.optLong("time"))
+    }
+    return Family(
+        kids = kids, chores = chores, marks = marks, txns = txns,
+        pin = s?.optString("pin", "1234") ?: "1234",
+        pinChanged = s?.optBoolean("pinChanged") ?: false,
+        approval = s?.optBoolean("approval", true) ?: true,
+    )
+}

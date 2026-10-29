@@ -28,7 +28,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        store = Store(getSharedPreferences("lommepenge", Context.MODE_PRIVATE))
+        val remote = if (DATABASE_URL.isNotBlank()) FirebaseRemote(DATABASE_URL) else null
+        store = Store(getSharedPreferences("lommepenge", Context.MODE_PRIVATE), remote = remote)
+        store.connect()
         store.tidy()
         sounds = Sounds(this)
         setContent { LommepengeTheme { LommepengeApp(store, sounds) } }
@@ -40,6 +42,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        store.disconnect()
         sounds.release()
         super.onDestroy()
     }
