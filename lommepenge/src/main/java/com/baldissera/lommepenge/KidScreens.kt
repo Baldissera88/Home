@@ -71,7 +71,7 @@ fun HomeScreen(store: Store, fx: Feedback, onKid: (String) -> Unit, onParent: ()
             Spacer(Modifier.height(24.dp))
             for (kid in fam.kids) {
                 val (done, total) = store.progress(kid.id)
-                val waiting = fam.marks.count { it.kid == kid.id && !it.approved }
+                val waiting = fam.marks.count { it.kid == kid.id && !it.approved } + fam.nights.count { it.kid == kid.id && !it.approved }
                 KidCard(kid, done, total, waiting) { fx.tap(); onKid(kid.id) }
                 Spacer(Modifier.height(16.dp))
             }
@@ -202,6 +202,7 @@ fun KidScreen(store: Store, kidId: String, fx: Feedback, onBack: () -> Unit) {
                 }
             }
             item { BankCard(kid, party) }
+            if (kid.sleep) item { SleepCard(store, kid, fx) { party++ } }
             if (kid.goalAmount > 0) item { GoalCard(kid, colors) }
             item {
                 SectionTitle("I dag", if (total > 0) "$done af $total" else null)

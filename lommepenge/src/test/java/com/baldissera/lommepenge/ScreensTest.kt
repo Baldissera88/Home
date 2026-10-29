@@ -44,6 +44,11 @@ class ScreensTest {
         s.tick(daily[1], "victor")
         s.tick(s.choresFor("filucca", Repeat.DAILY)[2], "filucca")
         s.saveChore(Chore("car", "Vask bilen med far", "🚗", 2500, Repeat.ONCE, setOf("victor")))
+        val day = LocalDate.of(2026, 10, 28)
+        for (d in listOf(1, 2, 3, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 19, 20, 22, 23, 24, 25, 26)) {
+            s.setNight("victor", day.withDayOfMonth(d), d != 9 && d != 16)
+        }
+        s.sleptInOwnBed("filucca")
         return s
     }
 
@@ -67,6 +72,12 @@ class ScreensTest {
     fun kid() {
         val s = demo()
         shoot("2-kid") { KidScreen(s, "victor", Feedback.Silent) {} }
+    }
+
+    @Test
+    fun kidSleep() {
+        val s = demo()
+        shoot("2b-kid-sleep") { KidScreen(s, "filucca", Feedback.Silent) {} }
     }
 
     @Test

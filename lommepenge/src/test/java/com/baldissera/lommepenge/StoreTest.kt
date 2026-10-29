@@ -90,6 +90,30 @@ class StoreTest {
     }
 
     @Test
+    fun ownBedNightsPayAndEarnTheMonthlyBonus() {
+        val s = store()
+        s.setSleepRules(SleepRules(nightly = 100, goal = 3, bonus = 5000))
+        // Victor says so in the morning; a parent confirms.
+        s.sleptInOwnBed("victor")
+        assertEquals(1, s.pendingNights().size)
+        assertEquals(0, s.kid("victor")!!.balance)
+        s.approveNight(s.pendingNights().single())
+        assertEquals(100, s.kid("victor")!!.balance)
+        // Parents fill in the two nights before; the third good night brings the bonus.
+        s.setNight("victor", day.minusDays(1), true)
+        s.setNight("victor", day.minusDays(2), true)
+        assertEquals(3, s.goodNights("victor", java.time.YearMonth.from(day)))
+        assertEquals(3, s.streak("victor"))
+        assertEquals(300 + 5000, s.kid("victor")!!.balance)
+        // Correcting a night takes its money and the bonus back again.
+        s.setNight("victor", day.minusDays(1), false)
+        assertEquals(200, s.kid("victor")!!.balance)
+        assertEquals(1, s.streak("victor"))
+        s.setNight("victor", day.minusDays(1), null)
+        assertNull(s.night("victor", day.minusDays(1)))
+    }
+
+    @Test
     fun moneyFormatting() {
         assertEquals("12 kr", kr(1200))
         assertEquals("2,50 kr", kr(250))

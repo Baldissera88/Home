@@ -153,10 +153,13 @@ fun PinScreen(store: Store, fx: Feedback, onOk: () -> Unit, onBack: () -> Unit) 
 @Composable
 fun ParentScreen(store: Store, fx: Feedback, onClose: () -> Unit, startTab: Int = -1) {
     val pending = store.pending()
-    var tab by rememberSaveable { mutableIntStateOf(if (startTab >= 0) startTab else if (pending.isNotEmpty()) 0 else 1) }
+    val nights = store.pendingNights()
+    val waiting = pending.size + nights.size
+    var tab by rememberSaveable { mutableIntStateOf(if (startTab >= 0) startTab else if (waiting > 0) 0 else 1) }
     var editChore by remember { mutableStateOf<Chore?>(null) }
     var editKid by remember { mutableStateOf<Kid?>(null) }
     var money by remember { mutableStateOf<Pair<Kid, Boolean>?>(null) }
+    var nightsOf by remember { mutableStateOf<Kid?>(null) }
 
     Column(Modifier.fillMaxSize().background(Paper)) {
         Column(
@@ -171,7 +174,7 @@ fun ParentScreen(store: Store, fx: Feedback, onClose: () -> Unit, startTab: Int 
             Spacer(Modifier.height(14.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val names = listOf(
-                    if (pending.isEmpty()) "Godkend" else "Godkend (${pending.size})", "Pligter", "Børn", "Indstillinger",
+                    if (waiting == 0) "Godkend" else "Godkend ($waiting)", "Pligter", "Børn", "Indstillinger",
                 )
                 names.forEachIndexed { i, n ->
                     Text(
@@ -190,9 +193,9 @@ fun ParentScreen(store: Store, fx: Feedback, onClose: () -> Unit, startTab: Int 
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             when (tab) {
-                0 -> approveTab(store, fx, pending)
+                0 -> approveTab(store, fx, pending, nights)
                 1 -> choresTab(store, fx) { editChore = it }
-                2 -> kidsTab(store, fx, onEdit = { editKid = it }, onMoney = { k, plus -> money = k to plus })
+                2 -> kidsTab(store, fx, onEdit = { editKid = it }, onMoney = { k, plus -> money = k to plus }, onNights = { nightsOf = it })
                 else -> item { SettingsTab(store, fx) }
             }
             item { Spacer(Modifier.height(30.dp)) }
@@ -202,15 +205,45 @@ fun ParentScreen(store: Store, fx: Feedback, onClose: () -> Unit, startTab: Int 
     editChore?.let { c -> ChoreEditor(store, c) { editChore = null } }
     editKid?.let { k -> KidEditor(store, k) { editKid = null } }
     money?.let { (k, plus) -> MoneyDialog(store, fx, k, plus) { money = null } }
+    nightsOf?.let { k -> NightsDialog(store, fx, k) { nightsOf = null } }
 }
 
-private fun androidx.compose.foundation.lazy.LazyListScope.approveTab(store: Store, fx: Feedback, pending: List<Mark>) {
-    if (pending.isEmpty()) {
+private fun androidx.compose.foundation.lazy.LazyListScope.approveTab(
+    store: Store, fx: Feedback, pending: List<Mark>, nights: List<Night>,
+) {
+    if (pending.isEmpty() && nights.isEmpty()) {
         item { Note("🎉", "Intet at godkende lige nu", "Når børnene krydser en pligt af, dukker den op her.") }
         return
     }
     item {
-        WideButton("✓  Godkend alle (${pending.size})", Green) { fx.coin(); store.approveAll() }
+        WideButton("✓  Godkend alle (${pending.size + nights.size})", Green) {
+            fx.coin()
+            store.approveAll()
+            nights.forEach { store.approveNight(it) }
+        }
+    }
+    items(nights, key = { "night-" + it.key }) { n ->
+        val kid = store.kid(n.kid) ?: return@items
+        Column(Modifier.fillMaxWidth().card().padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(46.dp).background(Brush.linearGradient(palette(kid.color)), CircleShape),
+                    contentAlignment = Alignment.Center) { Text(kid.avatar, fontSize = 24.sp) }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("${kid.name} · ${dayLabel(n.time)}", color = Ink.copy(alpha = 0.6f), fontSize = 13.sp)
+                    Text("🌙 Sov i egen seng i nat", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (store.family.sleep.nightly > 0) {
+                    Text("+${kr(store.family.sleep.nightly)}", color = Color(0xFF9A6200), fontSize = 16.sp, fontWeight = FontWeight.Black)
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SmallButton("✓ Godkend", Green, Modifier.weight(1f)) { fx.coin(); store.approveNight(n) }
+                SmallButton("☁️ Kom ind", Red, Modifier.weight(1f), outline = true) { fx.tap(); store.rejectNight(n) }
+            }
+        }
     }
     items(pending, key = { "${it.chore}-${it.kid}-${it.period}" }) { m ->
         val kid = store.kid(m.kid) ?: return@items
@@ -270,7 +303,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.choresTab(store: Stor
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.kidsTab(
-    store: Store, fx: Feedback, onEdit: (Kid) -> Unit, onMoney: (Kid, Boolean) -> Unit,
+    store: Store, fx: Feedback, onEdit: (Kid) -> Unit, onMoney: (Kid, Boolean) -> Unit, onNights: (Kid) -> Unit,
 ) {
     items(store.family.kids, key = { it.id }) { kid ->
         Column(Modifier.fillMaxWidth().card()) {
@@ -291,7 +324,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.kidsTab(
             Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SmallButton("＋ Bonus", Green, Modifier.weight(1f)) { fx.tap(); onMoney(kid, true) }
                 SmallButton("− Udbetal", Red, Modifier.weight(1f)) { fx.tap(); onMoney(kid, false) }
-                SmallButton("Ret", Purple, Modifier.weight(0.7f), outline = true) { fx.tap(); onEdit(kid) }
+                if (kid.sleep) SmallButton("🌙", Purple, outline = true) { fx.tap(); onNights(kid) }
+                SmallButton("Ret", Purple, outline = true) { fx.tap(); onEdit(kid) }
             }
             val last = store.history(kid.id).take(3)
             for (t in last) {
@@ -321,6 +355,7 @@ private fun SettingsTab(store: Store, fx: Feedback) {
     var saved by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         OnlineCard(store, fx)
+        SleepRulesCard(store, fx)
         Row(Modifier.fillMaxWidth().card().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Forældre godkender pligter", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
@@ -445,6 +480,89 @@ private fun OnlineCard(store: Store, fx: Feedback) {
     }
 }
 
+/** The rewards for sleeping in their own bed, shared by all the kids. */
+@Composable
+private fun SleepRulesCard(store: Store, fx: Feedback) {
+    val r = store.family.sleep
+    var nightly by remember(r) { mutableStateOf(krText(r.nightly)) }
+    var goal by remember(r) { mutableStateOf(r.goal.toString()) }
+    var bonus by remember(r) { mutableStateOf(krText(r.bonus)) }
+    var saved by remember { mutableStateOf(false) }
+    val n = parseKr(nightly)
+    val g = goal.toIntOrNull()
+    val b = parseKr(bonus)
+    val ok = n != null && n >= 0 && g != null && g in 1..31 && b != null && b >= 0
+    Column(Modifier.fillMaxWidth().card().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("🌙", fontSize = 26.sp)
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Text("Sove i egen seng", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("Lidt for hver nat og en bonus, når månedens mål er nået.", color = Ink.copy(alpha = 0.6f), fontSize = 13.sp)
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(nightly, { nightly = it.take(6); saved = false }, label = { Text("Pr. nat") }, singleLine = true,
+                isError = n == null, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f))
+            OutlinedTextField(goal, { goal = it.filter { c -> c.isDigit() }.take(2); saved = false }, label = { Text("Nætter") },
+                singleLine = true, isError = g == null || g !in 1..31,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+            OutlinedTextField(bonus, { bonus = it.take(6); saved = false }, label = { Text("Bonus") }, singleLine = true,
+                isError = b == null, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(if (saved) "✓ Gemt" else "Beløb i kr. Bonus gives ved det antal nætter på en måned.",
+                color = if (saved) Green else Ink.copy(alpha = 0.6f), fontSize = 13.sp, fontWeight = if (saved) FontWeight.Bold else null,
+                modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
+            SmallButton("Gem", Purple, enabled = ok) {
+                fx.coin()
+                store.setSleepRules(SleepRules(n ?: 0, g ?: 20, b ?: 0))
+                saved = true
+            }
+        }
+    }
+}
+
+/** A kid's nights month by month; parents tap a night to set it: ⭐ own bed → ☁️ came in → not told. */
+@Composable
+private fun NightsDialog(store: Store, fx: Feedback, kid: Kid, onDone: () -> Unit) {
+    val today = store.todayDate()
+    var month by remember { mutableStateOf(java.time.YearMonth.from(today)) }
+    val rules = store.family.sleep
+    val good = store.goodNights(kid.id, month)
+    EditorDialog("${kid.name}s nætter", onDone) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SmallButton("‹", Purple, outline = true) { fx.tap(); month = month.minusMonths(1) }
+            Text("${monthName(month)} ${month.year}", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.Black,
+                textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
+            SmallButton("›", Purple, outline = true, enabled = month < java.time.YearMonth.from(today)) {
+                fx.tap(); month = month.plusMonths(1)
+            }
+        }
+        NightCalendar(month, store.nightsIn(kid.id, month).associateBy { it.date }, today, dark = false) { d ->
+            fx.tap()
+            val n = store.night(kid.id, d)
+            store.setNight(kid.id, d, when {
+                n == null -> true
+                n.ok && n.approved -> false
+                n.ok -> true
+                else -> null
+            })
+        }
+        Text(
+            "$good af ${rules.goal} nætter i egen seng" + if (good >= rules.goal) " – bonus givet 🏆" else "",
+            color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold,
+        )
+        Text("Tryk på en nat for at skifte: ⭐ egen seng → ☁️ kom ind → ikke registreret.",
+            color = Ink.copy(alpha = 0.6f), fontSize = 13.sp)
+        Row {
+            Spacer(Modifier.weight(1f))
+            SmallButton("Luk", Purple) { onDone() }
+        }
+    }
+}
+
 @Composable
 private fun EditorDialog(title: String, onDismiss: () -> Unit, content: @Composable () -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -515,6 +633,7 @@ private fun KidEditor(store: Store, start: Kid, onDone: () -> Unit) {
     var goalName by remember { mutableStateOf(start.goalName) }
     var goalEmoji by remember { mutableStateOf(start.goalEmoji) }
     var goal by remember { mutableStateOf(if (start.goalAmount == 0) "" else krText(start.goalAmount)) }
+    var sleep by remember { mutableStateOf(start.sleep) }
     var confirmDelete by remember { mutableStateOf(false) }
     val weeklyOre = parseKr(weekly)
     val goalOre = parseKr(goal)
@@ -548,6 +667,13 @@ private fun KidEditor(store: Store, start: Kid, onDone: () -> Unit) {
         OutlinedTextField(goal, { goal = it.take(8) }, label = { Text("Koster (kr) – tom = intet mål") }, singleLine = true,
             isError = goalOre == null, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             modifier = Modifier.fillMaxWidth())
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("🌙 Sove i egen seng", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("Stjerner og månedsbonus for nætter i egen seng", color = Ink.copy(alpha = 0.6f), fontSize = 13.sp)
+            }
+            Switch(sleep, onCheckedChange = { sleep = it })
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             if (start.id.isNotEmpty()) {
                 SmallButton(if (confirmDelete) "Slet alt?" else "Slet", Red, outline = !confirmDelete) {
@@ -559,7 +685,7 @@ private fun KidEditor(store: Store, start: Kid, onDone: () -> Unit) {
             SmallButton("Gem", Purple, enabled = ok) {
                 store.saveKid(start.copy(
                     id = start.id.ifEmpty { newId() }, name = name.trim(), avatar = avatar, color = color,
-                    weekly = weeklyOre ?: 0, goalName = goalName.trim(), goalEmoji = goalEmoji, goalAmount = goalOre ?: 0,
+                    weekly = weeklyOre ?: 0, goalName = goalName.trim(), goalEmoji = goalEmoji, goalAmount = goalOre ?: 0, sleep = sleep,
                 ))
                 onDone()
             }

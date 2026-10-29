@@ -8,6 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.temporal.TemporalAdjusters
 import java.time.temporal.WeekFields
 import java.util.UUID
@@ -34,6 +35,8 @@ data class Kid(
     /** Weekly allowance is paid for every Monday after this one. */
     val since: String = "",
     val order: Long = 0,
+    /** Whether the kid takes part in sleeping in their own bed. */
+    val sleep: Boolean = true,
 )
 
 data class Chore(
@@ -59,11 +62,21 @@ data class Mark(
 
 data class Txn(val id: String, val kid: String, val amount: Int, val text: String, val emoji: String, val time: Long)
 
+/** One night: did the kid sleep in their own bed? [date] is the morning after, when it gets told. */
+data class Night(val kid: String, val date: String, val ok: Boolean, val approved: Boolean, val time: Long) {
+    val key get() = nightKey(kid, date)
+}
+
+/** Pocket money for sleeping in their own bed: a little each night, and a bonus once [goal] nights in a month. */
+data class SleepRules(val nightly: Int = 100, val goal: Int = 20, val bonus: Int = 5000)
+
 data class Family(
     val kids: List<Kid> = emptyList(),
     val chores: List<Chore> = emptyList(),
     val marks: List<Mark> = emptyList(),
     val txns: List<Txn> = emptyList(),
+    val nights: List<Night> = emptyList(),
+    val sleep: SleepRules = SleepRules(),
     val pin: String = "1234",
     val pinChanged: Boolean = false,
     val approval: Boolean = true,
@@ -97,6 +110,8 @@ fun periodOf(r: Repeat, d: LocalDate): String = when (r) {
 fun mondayOf(d: LocalDate): LocalDate = d.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
 
 fun markKey(chore: String, kid: String, period: String) = "${chore}_${kid}_$period"
+
+fun nightKey(kid: String, date: String) = "${kid}_$date"
 
 enum class SyncState { OFF, CONNECTING, ONLINE, OFFLINE, ERROR }
 
@@ -159,7 +174,7 @@ class Store(
         val newCode = familyCode()
         val all = JSONObject()
         val tree = display()
-        for (k in listOf("settings", "kids", "chores", "marks", "txns")) all.put(k, tree.opt(k) ?: JSONObject.NULL)
+        for (k in listOf("settings", "kids", "chores", "marks", "txns", "nights")) all.put(k, tree.opt(k) ?: JSONObject.NULL)
         base = tree
         pending.clear()
         pending += all
@@ -237,6 +252,8 @@ class Store(
             .apply()
     }
 
+    fun todayDate(): LocalDate = today()
+
     fun kid(id: String): Kid? = family.kids.firstOrNull { it.id == id }
 
     fun chore(id: String): Chore? = family.chores.firstOrNull { it.id == id }
@@ -271,6 +288,74 @@ class Store(
     }
 
     fun pending(): List<Mark> = family.marks.filter { !it.approved && chore(it.chore) != null && kid(it.kid) != null }
+
+    fun pendingNights(): List<Night> = family.nights.filter { !it.approved && kid(it.kid) != null }
+
+    fun night(kid: String, date: LocalDate): Night? = family.nights.firstOrNull { it.key == nightKey(kid, date.toString()) }
+
+    fun nightsIn(kid: String, month: YearMonth): List<Night> {
+        val prefix = month.toString()
+        return family.nights.filter { it.kid == kid && it.date.startsWith(prefix) }
+    }
+
+    fun goodNights(kid: String, month: YearMonth) = nightsIn(kid, month).count { it.ok && it.approved }
+
+    /** Nights in a row in their own bed, counting back from last night (or the night before, if not told yet). */
+    fun streak(kid: String): Int {
+        var d = today()
+        if (night(kid, d) == null) d = d.minusDays(1)
+        var n = 0
+        while (night(kid, d)?.let { it.ok && it.approved } == true) {
+            n++
+            d = d.minusDays(1)
+        }
+        return n
+    }
+
+    /** The kid says they slept in their own bed last night; with approval on, a parent confirms it. */
+    fun sleptInOwnBed(kid: String) {
+        if (night(kid, today()) != null) return
+        if (family.approval) {
+            write(upd("nights/${nightKey(kid, today().toString())}" to
+                Night(kid, today().toString(), ok = true, approved = false, time = clock()).json()))
+        } else {
+            setNight(kid, today(), true)
+        }
+    }
+
+    fun approveNight(n: Night) = setNight(n.kid, LocalDate.parse(n.date), true)
+
+    fun rejectNight(n: Night) = setNight(n.kid, LocalDate.parse(n.date), false)
+
+    /**
+     * A parent's say on one night: true = own bed, false = came in, null = not told. Pays (or takes back) the nightly
+     * money and keeps the month's bonus in step with the number of good nights. Both use fixed ids, so phones agree.
+     */
+    fun setNight(kid: String, date: LocalDate, ok: Boolean?) {
+        val key = nightKey(kid, date.toString())
+        val rules = family.sleep
+        val u = JSONObject()
+        u.put("nights/$key", if (ok == null) JSONObject.NULL else Night(kid, date.toString(), ok, true, clock()).json())
+        val paid = family.txns.any { it.id == "n_$key" }
+        if (ok == true && !paid && rules.nightly > 0) {
+            u.put("txns/n_$key", txnJson(kid, rules.nightly, "Sov i egen seng", "🌙"))
+        } else if (ok != true && paid) {
+            u.put("txns/n_$key", JSONObject.NULL)
+        }
+        val month = YearMonth.from(date)
+        val good = nightsIn(kid, month).count { it.date != date.toString() && it.ok && it.approved } + if (ok == true) 1 else 0
+        val bonusId = "s_${kid}_$month"
+        val hasBonus = family.txns.any { it.id == bonusId }
+        if (good >= rules.goal && rules.bonus > 0 && !hasBonus) {
+            u.put("txns/$bonusId", txnJson(kid, rules.bonus, "Månedsbonus: $good nætter i egen seng", "🏆"))
+        } else if (good < rules.goal && hasBonus) {
+            u.put("txns/$bonusId", JSONObject.NULL)
+        }
+        write(u)
+    }
+
+    fun setSleepRules(r: SleepRules) = write(upd("settings/sleep" to
+        JSONObject().put("nightly", r.nightly).put("goal", r.goal).put("bonus", r.bonus)))
 
     fun approve(m: Mark) = approveAll(listOf(m))
 
@@ -356,6 +441,7 @@ class Store(
         for (m in family.marks) if (m.kid == id) u.put("marks/${m.key}", JSONObject.NULL)
         for (t in family.txns) if (t.kid == id) u.put("txns/${t.id}", JSONObject.NULL)
         for (c in family.chores) if (id in c.kids) u.put("chores/${c.id}/kids/$id", JSONObject.NULL)
+        for (n in family.nights) if (n.kid == id) u.put("nights/${n.key}", JSONObject.NULL)
         write(u)
     }
 
@@ -374,6 +460,9 @@ class Store(
     fun setPin(pin: String) = write(upd("settings/pin" to pin, "settings/pinChanged" to true))
 
     fun setApproval(on: Boolean) = write(upd("settings/approval" to on))
+
+    /** Everything waiting for a parent, chores and nights alike. */
+    fun waitingCount() = pending().size + pendingNights().size
 
     private fun txnJson(kid: String, amount: Int, text: String, emoji: String, time: Long = clock()) =
         JSONObject().put("kid", kid).put("amount", amount).put("text", text).put("emoji", emoji).put("time", time)
@@ -488,10 +577,13 @@ fun applyAt(root: JSONObject, path: String, value: Any?): JSONObject {
 }
 
 private fun Kid.json() = JSONObject().put("name", name).put("avatar", avatar).put("color", color).put("weekly", weekly)
-    .put("goalName", goalName).put("goalEmoji", goalEmoji).put("goalAmount", goalAmount).put("since", since).put("order", order)
+    .put("goalName", goalName).put("goalEmoji", goalEmoji).put("goalAmount", goalAmount).put("since", since).put("order", order).put("sleep", sleep)
 
 private fun Chore.json() = JSONObject().put("title", title).put("emoji", emoji).put("reward", reward)
     .put("repeat", repeat.name).put("kids", JSONObject().apply { kids.forEach { put(it, true) } }).put("order", order)
+
+private fun Night.json() = JSONObject().put("kid", kid).put("date", date).put("ok", ok).put("approved", approved)
+    .put("time", time)
 
 private fun Mark.json() = JSONObject().put("chore", chore).put("kid", kid).put("period", period)
     .put("approved", approved).put("time", time)
@@ -515,7 +607,7 @@ fun familyOf(t: JSONObject): Family {
             id = id, name = k.optString("name"), avatar = k.optString("avatar", "🙂"), color = k.optInt("color"),
             balance = sums[id] ?: 0, weekly = k.optInt("weekly"), goalName = k.optString("goalName"),
             goalEmoji = k.optString("goalEmoji", "🎁"), goalAmount = k.optInt("goalAmount"),
-            since = k.optString("since"), order = k.optLong("order"),
+            since = k.optString("since"), order = k.optLong("order"), sleep = k.optBoolean("sleep", true),
         )
     }.sortedWith(compareBy({ it.order }, { it.id }))
     val chores = t.optJSONObject("chores").entries().map { (id, c) ->
@@ -530,8 +622,15 @@ fun familyOf(t: JSONObject): Family {
     val marks = t.optJSONObject("marks").entries().map { (_, m) ->
         Mark(m.optString("chore"), m.optString("kid"), m.optString("period"), m.optBoolean("approved"), m.optLong("time"))
     }
+    val nights = t.optJSONObject("nights").entries().map { (_, n) ->
+        Night(n.optString("kid"), n.optString("date"), n.optBoolean("ok"), n.optBoolean("approved"), n.optLong("time"))
+    }
+    val sl = s?.optJSONObject("sleep")
+    val rules = SleepRules(
+        nightly = sl?.optInt("nightly", 100) ?: 100, goal = sl?.optInt("goal", 20) ?: 20, bonus = sl?.optInt("bonus", 5000) ?: 5000,
+    )
     return Family(
-        kids = kids, chores = chores, marks = marks, txns = txns,
+        kids = kids, chores = chores, marks = marks, txns = txns, nights = nights, sleep = rules,
         pin = s?.optString("pin", "1234") ?: "1234",
         pinChanged = s?.optBoolean("pinChanged") ?: false,
         approval = s?.optBoolean("approval", true) ?: true,
