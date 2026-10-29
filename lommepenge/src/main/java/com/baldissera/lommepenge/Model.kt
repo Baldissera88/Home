@@ -244,7 +244,7 @@ fun starter(today: LocalDate): Family {
     val all = kids.map { it.id }.toSet()
     val chores = listOf(
         Chore(newId(), "Red sengen", "🛏️", 200, Repeat.DAILY, all),
-        Chore(newId(), "Børst tænder", "🪥", 100, Repeat.DAILY, all),
+        Chore(newId(), "Børst tænder", "🦷", 100, Repeat.DAILY, all),
         Chore(newId(), "Dæk bord", "🍽️", 300, Repeat.DAILY, all),
         Chore(newId(), "Ryd op på værelset", "🧸", 1000, Repeat.WEEKLY, all),
         Chore(newId(), "Gå ud med skraldet", "🗑️", 500, Repeat.WEEKLY, all),

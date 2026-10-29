@@ -236,9 +236,10 @@ private fun BankCard(kid: Kid, wiggle: Int) {
         Spacer(Modifier.width(10.dp))
         Column {
             Text("I sparegrisen", color = Color.White.copy(alpha = 0.85f), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            Text(kr(shown), color = Color.White, fontSize = 40.sp, fontWeight = FontWeight.Black, lineHeight = 44.sp)
+            Text(kr(shown), color = Color.White, fontSize = if (shown % 100 == 0) 40.sp else 32.sp, fontWeight = FontWeight.Black,
+                lineHeight = 44.sp, maxLines = 1, softWrap = false)
             if (kid.weekly > 0) {
-                Text("+${kr(kid.weekly)} i ugepenge hver mandag", color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp)
+                Text("+${kr(kid.weekly)} hver mandag", color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp)
             }
         }
     }
