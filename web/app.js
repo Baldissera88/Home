@@ -1,5 +1,6 @@
 import { html, render, useState, useEffect, useRef, useReducer } from './vendor/htm-preact-standalone.js';
 import { DATABASE_URL } from './config.js';
+import { VERSION } from './version.js';
 import { Store, FirebaseRemote, kr, parseKr, krText, REPEAT, prettyCode, normalizeCode } from './store.js';
 
 const PALETTES = [
@@ -277,6 +278,7 @@ function Home({ go }) {
         </button>`;
       })}
       <button class="pill glass" onClick=${() => { fx.tap(); go('pin'); }}>🔒 Forældre</button>
+      <div class="version">Web-version ${VERSION}</div>
       ${store.code && html`<div class="sync-note">${{ ONLINE: '☁️ Delt online', CONNECTING: '☁️ Forbinder…', ERROR: '⚠️ Ingen forbindelse' }[store.sync] || '☁️ Offline – gemmer til senere'}</div>`}
     </div>
   </div>`;
@@ -530,6 +532,7 @@ function SettingsTab() {
     <${Note} emoji="💡" title="Sådan virker det">
       Ugepenge lægges automatisk i grisen hver mandag. Daglige pligter nulstilles hver morgen, ugentlige hver mandag.
       ${store.online ? ' Alt deles online med jeres andre telefoner.' : ' Alt gemmes kun i denne browser.'}
+      <br /><br />Web-version ${VERSION}
     <//>`;
 }
 

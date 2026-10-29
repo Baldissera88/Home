@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -89,7 +90,9 @@ fun HomeScreen(store: Store, fx: Feedback, onKid: (String) -> Unit, onParent: ()
                 Spacer(Modifier.width(8.dp))
                 Text("Forældre", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
             }
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(16.dp))
+            Text(appVersion(LocalContext.current), color = Color.White.copy(alpha = 0.45f), fontSize = 12.sp)
+            Spacer(Modifier.height(16.dp))
         }
     }
 }

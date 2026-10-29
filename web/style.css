@@ -86,6 +86,7 @@ button:not(:disabled):active { transform: scale(.93); transition-duration: .08s;
 .pill { padding: 12px 22px; border-radius: 30px; font-weight: 800; font-size: 17px; }
 .pill.sm { padding: 8px 14px; font-size: 16px; }
 .sync-note { color: rgba(255,255,255,.7); font-size: 13px; }
+.version { color: rgba(255,255,255,.45); font-size: 12px; }
 
 .kid-card {
   width: 100%; display: flex; align-items: center; gap: 14px; padding: 16px; border-radius: 30px; color: #fff;

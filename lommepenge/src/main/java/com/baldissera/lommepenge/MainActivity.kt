@@ -71,3 +71,9 @@ fun LommepengeApp(store: Store, fx: Feedback) {
         }
     }
 }
+
+/** "Version 1.0 · build 113": the build number is the CI run that made the APK, so it shows which download this is. */
+fun appVersion(context: Context): String = runCatching {
+    val info = context.packageManager.getPackageInfo(context.packageName, 0)
+    "Version ${info.versionName} · build ${androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(info)}"
+}.getOrDefault("")

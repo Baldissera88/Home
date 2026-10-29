@@ -31,6 +31,9 @@ jobs:
           mkdir _site
           cp -r web/. _site/
           rm -rf _site/test _site/README.md
+          echo "export const VERSION = 'build ${{ github.run_number }} (${GITHUB_SHA::7})';" > _site/version.js
+          # A new cache name makes phones fetch the new version instead of keeping the old one.
+          sed -i "s/lommepenge-v1/lommepenge-${GITHUB_SHA::7}/" _site/sw.js
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

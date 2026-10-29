@@ -353,7 +353,8 @@ private fun SettingsTab(store: Store, fx: Feedback) {
         }
         Note("💡", "Sådan virker det",
             "Ugepenge lægges automatisk i grisen hver mandag. Daglige pligter nulstilles hver morgen, ugentlige hver mandag. " +
-                if (store.online) "Alt deles online med jeres andre telefoner." else "Alt gemmes kun på denne telefon.")
+                (if (store.online) "Alt deles online med jeres andre telefoner." else "Alt gemmes kun på denne telefon.") +
+                "\n\n" + appVersion(LocalContext.current))
     }
 }
 
