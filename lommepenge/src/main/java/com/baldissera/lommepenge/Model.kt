@@ -163,7 +163,7 @@ class Store(
         base = tree
         pending.clear()
         pending += all
-        setCode(newCode)
+        rememberCode(newCode)
         save()
         connect()
         return newCode
@@ -175,7 +175,7 @@ class Store(
         disconnect()
         base = JSONObject()
         pending.clear()
-        setCode(c)
+        rememberCode(c)
         refresh()
         save()
         connect()
@@ -187,12 +187,12 @@ class Store(
         disconnect()
         base = display()
         pending.clear()
-        setCode("")
+        rememberCode("")
         refresh()
         save()
     }
 
-    private fun setCode(c: String) {
+    private fun rememberCode(c: String) {
         code = c
         prefs.edit().putString(CODE, c).apply()
     }

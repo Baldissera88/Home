@@ -35,6 +35,7 @@ A fourth app in the `lommepenge/` module: a colourful chores and pocket-money ap
 
 - **For the kids.** Each child taps their own card and sees today's and this week's chores as big cards with an emoji and a reward. Ticking one off sets off confetti and coins, a coin sound and a spoken cheer; finishing every chore for the day plays a fanfare. A drawn piggy bank shows the balance, a progress bar tracks the savings goal (e.g. LEGO for 300 kr), and the piggy-bank diary lists what came in and went out.
 - **For parents** (behind a 4-digit code, default `1234`): approve or reject ticked-off chores, create and edit chores (daily, weekly or one-off, reward, icon, which kids), add or edit kids (name, figure, colour, weekly allowance, savings goal), give a bonus or pay money out, change the code and turn approval off.
-- Weekly allowance is added automatically every Monday. Everything is stored on the device only.
+- Weekly allowance is added automatically every Monday.
+- **Online sharing and iPhone.** Parents can share the family online (Firebase Realtime Database); other phones join with the family code. The same app exists as an installable web app in `web/` for iPhones, published to GitHub Pages, and both versions share the same data. See `web/README.md` for setting up the database.
 
 Download `lommepenge-apk` from the CI run. Screens are rendered by `./gradlew :lommepenge:testDebugUnitTest` and published to `lommepenge/screens/`.
